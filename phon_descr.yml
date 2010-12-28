@@ -1,0 +1,213 @@
+syllable_slots:
+  - "+syllabic: V"
+  - "-syllabic dorsal +resonant -lateral -tap_or_trill: G"
+  - "-syllabic +resonant: R"
+  - "-syllabic +nasal: N"
+  - "-syllabic: C"
+  - ": *" # should never come up
+
+
+extra_natural_classes:
+  - "-fricative -nasal"
+  - "-resonant -nasal"
+
+
+table_structure:
+  subtables: syllabic
+  name: phone
+  name_first: 1
+  0:
+    name: consonant
+    caption: Consonants
+    order: "resonant fricative affricate !nasal !prenasalised implosive !tap_or_trill !trill long; !labial !coronal !dorsal labiodental !anterior !retroflex !laminal anterior_sibilant !high front lateral pharyngealised back round !consonant_palatal !ATR low; voice constricted_glottis !spread_glottis"
+    flips:
+      "dorsal": front
+      "-dorsal -coronal -labial": pharyngealised
+    undefineds:
+      "-dorsal -coronal -labial +pharyngealised -constricted_glottis": "+fricative +spread_glottis" # mostly to keep them from nestling alongside /h/ 
+      "-dorsal -coronal -labial +constricted_glottis": "-fricative -affricate"
+      "-dorsal -coronal -labial +spread_glottis": "+fricative"
+      "-dorsal -coronal -labial": "-resonant -prenasalised -implosive -lateral -tap_or_trill -trill -retroflex"
+      "dorsal +resonant +front": "+consonant_palatal"
+      "-anterior": "+anterior_sibilant"
+    collapse: "low ATR long consonant_palatal affricate labiodental anterior_sibilant laminal trill lateral tap_or_trill implosive spread_glottis constricted_glottis back round pharyngealised front retroflex high anterior prenasalised voice" 
+    # TODO: we should not collapse anterior unless there we have collapsed retroflex and laminal
+    labels:
+      rows:
+      - "-resonant +nasal -fricative -affricate: nasal"
+      - "-resonant -fricative +affricate: affricate"
+      - "-resonant +implosive -fricative: implosive"
+      - "-resonant -nasal -fricative: stop"
+      - "-resonant +fricative: fricative"
+      - "-resonant -fricative: stop or nasal"
+      - "-resonant -nasal: obstruent"  # can we get "sonorant" in as the non- form or some such?
+      - "-resonant: obstruent or nasal"
+      - "+resonant +tap_or_trill +trill: trill"
+      - "+resonant +tap_or_trill -trill: tap"
+      - "+resonant +tap_or_trill: tap or trill"
+      - "+resonant -tap_or_trill: approximant"
+      - "+resonant: resonant"
+      rows_mod:
+      - "+nasal: nasal []"
+      - "+implosive: implosive []"
+      - "+prenasalised: prenasalised []"
+      - "+long: long []"
+      columns: 
+      - "labial -labiodental: bilabial"
+      - "labial +labiodental: labiodental"
+      - "labial: labial"
+      - "coronal +anterior: alveolar"
+      - "coronal -anterior +retroflex: retroflex"
+      - "coronal -anterior -retroflex +front -dorsal: alveopal{atal}" # -dorsal is a stopgap against my crude modifiers
+      - "coronal -anterior -retroflex: palatoalv{eolar}"
+      - "coronal -anterior: postalv{eolar}"
+      - "coronal: coronal"
+      - "dorsal -front +high +back: velar" # so we don't see "back velar"
+      - "dorsal -front +high: velar"
+      - "dorsal -high: uvular"
+      - "dorsal -front: vel{ar} or uvul{ar}"
+      - "dorsal +front -back +consonant_palatal: palatal"
+      - "dorsal +front -back -consonant_palatal: palatalised velar"
+      - "dorsal +front -back -high: palatalised uvular"
+      - "dorsal +front -back +high: palatal"
+      - "dorsal +high: pal{atal} or vel{ar}"
+      - "dorsal: dorsal"
+      - "-dorsal -coronal -labial +pharyngealised: pharyngeal"
+      - "-dorsal -coronal -labial -pharyngealised: glottal"
+      - "-dorsal -coronal -labial: radical"
+      columns_mod: # Beware of flip triggers here.
+      # special-cased a little, so they only show when unmarked
+      - "+laminal coronal +anterior: laminal []"
+      - "+laminal coronal +retroflex: laminal []"
+      - "-laminal coronal -anterior -retroflex: apical []"
+      - "-back -front dorsal: fronted []"
+      - "+back -front -dorsal: velarised []"
+      - "+pharyngealised: pharyng{ealised} []"
+      - "+round: rounded []"
+      - "+front -back -dorsal: palatalised []"
+      - "+lateral: [] lateral"
+      - "+anterior_sibilant +anterior: [] sibilant"
+      modificate: columns
+      pre_other:
+      - "+resonant dorsal -tap_or_trill -lateral: semivowel" 
+      # strippings screw the thing up.  TODO: this is a big kluge; fix it
+      - "-dorsal -coronal -labial -pharyngealised +constricted_glottis: glottal stop"
+      - "-dorsal -coronal -labial -pharyngealised +spread_glottis: glottal fricative"
+      - "-dorsal -coronal -labial -pharyngealised: glottal"
+      - "-dorsal -coronal -labial +pharyngealised: pharyngeal"
+      - "-dorsal -coronal -labial: radical"
+      pre_other_mod:
+      - "+high -low -ATR +resonant dorsal -tap_or_trill -lateral: near-high []"
+      - "+high -low +resonant dorsal -tap_or_trill -lateral: high []"
+      - "-high -low +ATR +resonant dorsal -tap_or_trill -lateral: mid-high []"
+      - "-high -low -ATR +resonant dorsal -tap_or_trill -lateral: mid-low []"
+      - "-high -low +resonant dorsal -tap_or_trill -lateral: mid []"
+      - "+low -high +resonant dorsal -tap_or_trill -lateral: low []"
+      other_mod:
+      - "-voice +constricted_glottis: ejective []"
+      - "-voice: voiceless []"
+      - "+voice +spread_glottis: breathy-voiced []"
+      - "+voice +constricted_glottis: creaky-voiced []"
+      - "+voice: voiced []"
+      - "+spread_glottis: aspirated []"
+      - "+constricted_glottis: glottalised []"
+      - "+front: front []" # I think this is clearer than "palatalised" or the like
+      - "+back: back []" # ditto
+      - "+laminal: laminal []"
+      - "-laminal: apical []"
+      - "+anterior_sibilant: sibilant []" # not "or postalveolar" I think
+      - "-anterior_sibilant: alveolar non-sibilant []"
+      - "-ATR: lax []"
+      - "+ATR: tense []"
+      - "-long: short []"
+      #- "-round: unrounded []"
+      - "-spread_glottis: unaspirated []"
+    nominalised: 
+      other: # several never happen
+      - "dorsal coronal labial retroflex front back round labiodental anterior laminal high consonant_palatal: place of articulation" # this is the list generated.  TODO: make this be used in cases where one of these accidentally gets taken out, somehow
+      - "dorsal: dorsality"
+      - "coronal: coronality"
+      - "labial: labiality"
+      - "resonant: resonancy"
+      - "nasal: nasality"
+      - "prenasalised: prenasalisation"
+      - "fricative: fricativity"
+      - "affricate: affrication"
+      - "tap_or_trill: vibrancy"
+      - "trill: trill-hood"
+      - "implosive: implosivity"
+      - "voice: voice"
+      - "spread_glottis: aspiration"
+      - "constricted_glottis: glottalisation"
+      - "labiodental: labiodentality"
+      - "anterior: anteriority"
+      - "laminal: laminality"
+      - "anterior_sibilant: sibilancy"
+      - "retroflex: retroflexion"
+      - "high: uvularity" # which it loves to use as a term for height
+      - "front: palatalisation" # secondary more common than primary?
+      - "consonant_palatal: whether palatal or palatalised velar" # ick
+      - "round: rounding"
+      - "back: velarisation" # secondary more common than primary?
+      - "ATR: laxity"
+      - "lateral: laterality"
+      - "pharyngeal: pharyngealisation"
+      - "long: length"
+  1:
+    name: vowel
+    caption: Vowels
+    order: "resonant fricative affricate !prenasalised implosive !tap_or_trill trill low !high !ATR; !labial !coronal !dorsal labiodental !anterior anterior_sibilant !laminal lateral !consonant_palatal !front back; round retroflex pharyngealised nasal long !voice constricted_glottis spread_glottis"
+    collapse: "consonant_palatal spread_glottis constricted_glottis affricate labiodental anterior_sibilant trill lateral tap_or_trill implosive laminal pharyngealised retroflex anterior prenasalised voice round ATR"
+    labels:
+      rows:
+      - "+high -low -ATR: near-high"
+      - "+high -low: high"
+      - "-high -low +ATR: mid-high"
+      - "-high -low -ATR: mid-low"
+      - "-high -low: mid"
+      - "+low -high: low"
+      rows_mod: ~
+      columns:
+      - "+front -back: front"
+      - "-front -back: central" # FIXME: there seem to be problems naming central
+      - "+back -front: back"
+      - "-front: central or back" 
+      - "-back: front or central"
+      columns_mod: ~
+      modificate: rows columns
+      other_mod:
+      - "-ATR: lax []"
+      - "+ATR: tense []"
+      - "+round: rounded []"
+      - "+retroflex: retroflex []"
+      - "+pharyngealised: pharyngealised []"
+      - "+nasal: nasal []"
+      - "+long: long []"
+      - "-voice +constricted_glottis: ejective []"
+      - "-voice: voiceless []"
+      - "+voice +spread_glottis: breathy-voiced []"
+      - "+voice +constricted_glottis: creaky-voiced []"
+      - "+voice: voiced []"
+      - "+spread_glottis: aspirated []"
+      - "+constricted_glottis: glottalised []"
+      - "-long: short []"
+      #- "-round: unrounded []"
+      - "-spread_glottis: unaspirated []"
+    nominalised:
+      other:
+      - "high low: height"
+      - "high: highness"
+      - "low: lowness"
+      - "front: frontness"
+      - "back: backness"
+      - "ATR: tenseness"
+      - "round: rounding"
+      - "retroflex: retroflexion"
+      - "pharyngealised: pharyngealisation"
+      - "nasal: nasality"
+      - "long: length"
+      - "voice: voice"
+      - "spread_glottis: aspiration"
+      - "constricted_glottis: glottalisation"
+
+
