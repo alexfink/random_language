@@ -1,0 +1,5 @@
+digraph sex {
+	graph [odds = 0];
+	edge [twoway = 1];
+	masculine -> feminine;
+}

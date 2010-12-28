@@ -1,0 +1,13 @@
+digraph definiteness {
+	graph [odds = 0.2]; // WALS
+	// conflation with deictic_distance smallish, because deictic_distance by itself gives much the same effect.
+	graph [conflation = "{deictic_distance: 0.075}"]; 
+	edge [twoway = 1];
+	indefinite -> specific [weight = .666667, label = .666667];
+	specific [seed_retention = 0.075];
+	specific [product_with = "[deictic_distance]"];
+	specific [syncretism = "{deictic_distance: 2}"];
+	specific -> definite [weight = .666667, label = .666667];
+	definite [product_with = "[deictic_distance]"];
+	definite [syncretism = "{deictic_distance: 2}"];
+}

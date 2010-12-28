@@ -1,0 +1,35 @@
+digraph number {
+	graph [odds = 7]; // WALS ch. 34 says 9, including systems where using the plural marking is optional.  Lessened because I assume that in some of those cases the system is synthetic rather than morphological.
+	/* 
+	animacy is WALS, under a generous interpretation of the optionals
+	associativity is WALS too, the bound ones
+	*/
+	graph [conflation = "{animacy: 0.25, associativity: 0.25, definiteness: 0.05, arbitrary_noun_class: 0.05}"]; 
+	edge [twoway = 1];
+	singular -> dual [weight = .333333, label = .333333];
+
+	// These are for all non-singular numbers.
+	node [syncretism = "{case: 2}"];
+	node [product_with = "[associativity]"];
+	dual [syncretism = "{case: 2}"];
+	dual [product_with = "[associativity]"];
+	/*
+	The dual is perhaps too frequent.
+	DM says 'rare' on nominals, less rare on pronouns.  
+	Of course sometimes it won't be distinctive in our implementation, even if it's kept.
+	*/
+	dual [retention = 0.05];
+	dual -> trial;
+	trial [retention = 0.005];
+	trial [necessitates = "[dual]"];
+	trial -> quadrual;
+	quadrual [retention = 0.0005];
+	quadrual [necessitates = "[dual, trial]"];
+	quadrual -> paucal;
+	paucal [retention = 0.025];
+	paucal -> plural;
+	plural -> large_plural;
+	large_plural [retention = 0.015];
+	// what else?  distributivity is a separate contrast. 
+}
+

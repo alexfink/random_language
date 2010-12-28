@@ -1,0 +1,23 @@
+digraph animacy {
+	/*
+	This is a semantic feature of the noun so I'm proceeding for now with the 
+	assumption it wouldn't be marked by itself in inflection.  Maybe I should do otherwise.  
+	*/
+	graph [odds = 0];
+	graph [conflation = "{sex: 0.25}"];
+	edge [twoway = 1];
+	/* 
+	WALS says inanimates never take associativity productively.  
+	(This doesn't quite achieve that; both ends might be seeds.)
+	*/
+	inanimate [syncretism = "{associativity: 40}"];
+	inanimate -> animate;
+	// Often there is no three-way distinction.
+	animate [seed_retention = 0.5]; 
+	animate [syncretism = "{number: 0.1}"];
+	animate [product_with = "[sex]"];
+	animate -> human;
+	human [syncretism = "{number: 0.01}"]; // this doesn't _quite_ behave as a strict universal, eh
+	human [product_with = "[sex]"];
+	// more, incl. 'is a pronoun'?  see for inst WALS ch. 34
+}

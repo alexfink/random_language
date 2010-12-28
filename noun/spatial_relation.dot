@@ -1,0 +1,47 @@
+digraph spatial_relation {
+	graph [odds = 0.1];
+	under [retention = 0.05];
+	under -> at;
+	under -> in_contact;
+	nearby [retention = 0.15];
+	nearby -> at;
+	on_top [retention = 0.2];
+	on_top -> at;
+	on_top -> above;
+	on_top -> in_contact;
+	in_contact [retention = 0.1];
+	in_contact -> at;
+	in_contact -> inside;
+	in_contact -> on_top;
+	in_contact -> under;
+	possession_relation [retention = 0.025];
+	possession_relation [replaces = "[possesser, recipient, possession_source]"];
+	possession_relation -> at;
+	among [retention = 0.05];
+	among -> at;
+	among -> inside;
+	no_spatial_relation [no_product_with = "[case]"];
+	state_relation [retention = 0.1];
+	state_relation [replaces = "[state, state_entered]"];
+	state_relation -> at;
+	above [retention = 0.05];
+	above -> at;
+	above -> on_top;
+	time_relation [retention = 0.05];
+	time_relation [replaces = "[time]"];
+	time_relation -> at;
+	at [necessitates = "[location]"];
+	at -> in_contact;
+	at -> above;
+	at -> on_top;
+	at -> under;
+	at -> among;
+	at -> nearby;
+	at -> state_relation;
+	at -> time_relation;
+	at -> possession_relation;
+	inside [retention = 0.666667];
+	inside -> in_contact;
+	inside -> among;
+}
+

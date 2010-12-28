@@ -1,0 +1,154 @@
+digraph case {
+	graph [odds = 1.6]; // WALS
+	graph [conflation = "{spatial_relation: 0.333333, number: 0.05, animacy: 0.05, definiteness: 0.025, arbitrary_noun_class: 0.025}"];
+	// Core roles up top.
+	intransitive_subject [seed_weight = 0.0625]; // anti-tripartite bias: we don't want a correlation between large case systems and tripartiteness
+	intransitive_subject [uncorrelated_retention = 0.95]; // for active-stative.  WALS ch. 98 says .979; I'm generous
+	intransitive_subject -> agent [weight = .5, label = .5];
+	intransitive_subject -> experiencer [weight = .25, label = .25];
+	intransitive_subject -> focus [weight = .25, label = .25];
+	intransitive_subject -> patient [weight = .25, label = .25];
+	intransitive_subject -> form_of_address [weight = .25, label = .25];
+	agent [seed_weight = 2]; // the agent -- patient contrast is fundamental
+	agent -> intransitive_subject [weight = 2, label = 2];
+	agent -> force [weight = .25, label = .25]; // they say agent -> force is rare
+	agent -> experiencer [weight = 1.5, label = 1.5];
+	agent -> cause [weight = .5, label = .5];
+	experiencer [seed_retention = 0.25];
+	experiencer -> intransitive_subject;
+	experiencer -> agent [weight = 1.5, label = 1.5];
+	experiencer -> focus [weight = 1.5, label = 1.5];
+	experiencer -> recipient;
+	focus [seed_retention = 0.25];
+	focus -> intransitive_subject;
+	focus -> experiencer [weight = 1.5, label = 1.5];
+	focus -> patient [weight = 1.5, label = 1.5];
+	focus -> goal [weight = .5, label = .5];
+	focus -> recipient [weight = .5, label = .5];
+	patient [seed_weight = 2];
+	patient -> intransitive_subject;
+	patient -> focus [weight = 1.5, label = 1.5];
+	patient -> goal [weight = .5, label = .5];
+	patient -> recipient [weight = .5, label = .5];
+	force [seed_weight = 0.025];
+	force [retention = 0.5]; 
+	force -> agent [weight = .25, label = .25];
+	force -> instrument;
+	force -> cause;
+	source [retention = 0.4];
+	source [product_with = "[spatial_relation]"];
+	source -> agent [weight = .5, label = .5];
+	source -> instrument;
+	source -> possesser;
+	source -> possession_source;
+	source -> thing_avoided;
+	time [retention = 0.1];
+	time -> location;
+	purpose [retention = 0.1];
+	purpose -> goal;
+	purpose -> cause;
+	purpose -> beneficiary;
+	purpose -> maleficiary;
+	thing_per_which [retention = 0.05]; // distributive.  what am I supposed to call the role?
+	thing_per_which -> location;
+	thing_per_which -> beneficiary;
+	state [retention = 0.25]; // essive; but this might be better handled among the local cases
+	state -> location;
+	state -> similar_thing;
+	state -> state_entered;
+	/*
+	form_of_address is for the vocative.  
+	If it's a case it's probably fairly extrasystematic.  Nonetheless we connect it in the graph
+	so that it can be special in one number but not another, etc. */
+	form_of_address [retention = 0.15]; 
+	form_of_address -> intransitive_subject [weight = .25, label = .25];
+	beneficiary [retention = 0.25];
+	beneficiary -> recipient;
+	beneficiary -> goal;
+	beneficiary -> possesser;
+	beneficiary -> purpose;
+	beneficiary -> maleficiary;
+	beneficiary -> cause;
+	beneficiary -> thing_per_which;
+	cause [retention = 0.1]; // these three are probably little used on nouns
+	cause -> agent [weight = .5, label = .5];
+	cause -> force;
+	cause -> beneficiary;
+	cause -> purpose;
+	manner [retention = 0.1];
+	manner -> similar_thing;
+	manner -> instrument;
+	manner -> path;
+	possession_source [retention = 0.1]; // "I borrowed the book _from Cecil_"
+	possession_source -> source;
+	possession_source -> possesser;
+	possesser [retention = 0.666667];
+	possesser -> source;
+	possesser -> possession_source;
+	possesser -> location;
+	possesser -> recipient;
+	possesser -> beneficiary;
+	possesser -> maleficiary;
+	possesser -> accompanier;
+	thing_lacked [retention = 0.1]; // I have no better idea for an edge, except for from local cases
+	thing_lacked -> thing_avoided;
+	similar_thing [retention = 0.1];
+	similar_thing -> manner;
+	similar_thing -> state;
+	recipient [retention = 0.666667];
+	recipient -> experiencer;
+	recipient -> goal;
+	recipient -> beneficiary;
+	recipient -> maleficiary;
+	recipient -> possesser;
+	recipient -> focus [weight = .5, label = .5];
+	recipient -> patient [weight = .5, label = .5];
+	location [retention = 0.5];
+	location [product_with = "[spatial_relation]"];
+	location -> goal;
+	location -> instrument;
+	location -> possesser;
+	location -> path;
+	location -> time;
+	location -> state;
+	location -> accompanier;
+	location -> thing_per_which;
+	instrument [retention = 0.5];
+	instrument -> force;
+	instrument -> location;
+	instrument -> source;
+	instrument -> accompanier;
+	instrument -> manner;
+	path [retention = 0.2];
+	path [product_with = "[spatial_relation]"];
+	path -> location;
+	path -> beneficiary;
+	path -> manner;
+	thing_avoided [retention = 0.05];
+	thing_avoided -> source;
+	thing_avoided -> thing_lacked;
+	goal [retention = 0.4];
+	goal [product_with = "[spatial_relation]"];
+	goal -> recipient;
+	goal -> beneficiary;
+	goal -> maleficiary;
+	goal -> focus;
+	goal -> patient;
+	goal -> location;
+	goal -> purpose;
+	goal -> state_entered;
+	state_entered [retention = 0.1];
+	state_entered -> goal;
+	state_entered -> state;
+	accompanier [retention = 0.333333]; // what about 'with' -- 'and'?
+	accompanier -> instrument;
+	accompanier -> possesser;
+	accompanier -> location;
+	maleficiary [retention = 0.05];
+	maleficiary -> recipient;
+	maleficiary -> goal;
+	maleficiary -> possesser;
+	maleficiary -> purpose;
+	maleficiary -> beneficiary;
+}
+

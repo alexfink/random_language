@@ -1,0 +1,28 @@
+Lots of this is fabricated from whole cloth, the retention probabilities and weights and so forth especially.
+
+Categories left to do: shape etc. based noun class; possessor.  (Possessor is hard because we have to figure out pronoun systems.)
+
+| Corbett's Gender doesn't attempt a comprehensive list, but mentions
+| contrasts such as
+| 
+| Animate / Inanimate
+| Rational / Non-rational
+| Human / Non-human
+| Male / Female
+| Large / Small
+| Shiny / Matt
+| Edible / Inedible
+| Concrete / Abstract
+| Liquid / Solid
+[http://listserv.brown.edu/archives/cgi-bin/wa?A2=ind1006b&L=conlang&D=0&O=D&T=0&P=20383]
+
+There are also syntactic functions like
+predicate nominal, object of adposition, standard of comparison
+but whether the lang needs those depends on the syntax...
+Likewise, the case of demoted agent in passives, etc.,
+depends on if we have those voices.
+
+Inanimate agent (for instance) is pretty infelicitous, but should we take it out at the graph stage?  I'm inclined to say no, instead just to let us generate the form that virtually never arises.
+
+TODO implement double (or multiple) forms for certain categories, and optionality, which it may be sufficient to implement as multiple forms one of which is the zero-marked form.
+

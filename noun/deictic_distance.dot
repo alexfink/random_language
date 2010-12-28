@@ -1,0 +1,8 @@
+digraph deictic_distance {
+	graph [odds = 0.05];
+	edge [twoway = 1];
+	no_deictic_distance [no_product_with = "[definiteness]"];
+	proximal -> medial [weight = .5, label = .5];
+	medial -> distal;
+	medial -> near_listener;
+}

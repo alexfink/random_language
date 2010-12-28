@@ -1,0 +1,6 @@
+digraph associativity {
+	graph [odds = 0]; // let it only occur with the plural
+	edge [twoway = 1];
+	nonassociative -> associative [weight = 1.5, label = 1.5];
+	associative [syncretism = "{animacy: 0.2}"]; // this is to bias in favour of systems where the associative on animates is the more distinct member
+}
