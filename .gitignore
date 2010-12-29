@@ -1,5 +1,8 @@
 .DS_Store
+*.tgz
 old/
 old-notes/
 discards/
+temp.html
+jimhenry/
 
