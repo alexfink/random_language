@@ -1575,7 +1575,7 @@ sub reenrich {
 # Make a label as tabulate needs.
 
 # I guess this kind of duplicates some functionality of name_phone.  
-# Maybe I can unify later, if I get zealous.
+# Maybe I can unify later, if I get zealous.  But right now I'm scared of these things.
 
 sub tabulate_label {
   my ($reenriched, $p, $pmod, $l, $lmod, %args) = @_;
@@ -1831,6 +1831,11 @@ sub str_part {
   $skeleton;
 }
 
+sub English_indefinite {
+  my $a = shift;
+  return ($a =~ /^[aeiou]/ ? 'an ' : 'a ') . $a;
+}
+
 sub English_plural {
   my $a = shift;
   return substr($a, 0, -1) . 'ies' if $a =~ /[^aeiou]y$/;
@@ -1907,6 +1912,7 @@ sub name_natural_class {
       for (@{$str->{$scheme}{$thing}}) {
         my ($phone, $label) = split /: */;
         $phone = parse_feature_string $phone, 1;
+        # TODO: 'and' should be among the scheme data, but then needs better treatment of 'and' below.
         $label .= ' and []' if $args{scheme} eq 'nominalised';
         $label .= " [$thing]" if defined $modificate{$thing};
         if ($label =~ /\[.*\]/) {
@@ -1934,7 +1940,7 @@ sub name_natural_class {
                             significant => $significant,
                             nons => ($args{bar_nons} ? undef : $inventory),
                             nobase => $args{nobase}; 
-  $name = ($name =~ /^[aeiou]/ ? 'an ' : 'a ') . $name if ($args{morpho} eq 'indef');
+  $name = English_indefinite $name if ($args{morpho} eq 'indef');
 
   if ($args{morpho} eq 'plural' and $name !~ / $/) {
     my @bits = split / or /, $name;
@@ -2408,7 +2414,7 @@ sub describe_rules {
     # TODO: consolidate multiple frames.
     my @susceptible;
     my $insusceptibles_exist = 0;
-    my %dev_distilled; # %dev_distilled maps frames to lists of condition, phones pairs
+    my %dev_distilled; # %dev_distilled maps frames to lists of (condition, phones) pairs
     my %any_nondeviates; # is there any phone which behaves normally?
     if (keys %outcome) {
       for my $frame (keys %outcome) {
@@ -2442,6 +2448,8 @@ sub describe_rules {
         } # phone
 
         # Distill the deviations.  
+        #
+        # Deviations form a partial order, where D > D' if D makes every change D' makes.
         # For D a deviation running smallest to largest, 
         # as a general rule we want to handle the whole up-set of D, if we can.
         # So we want to just name D within its down-set and transfer that naming to the up-set.
@@ -2627,28 +2635,39 @@ sub describe_rules {
 
     # Describe the deviations.
     for my $frame (keys %dev_distilled) {
-      $text .= ".  [$frame]"; # temporary
+      $text .= ".  [$frame]"; # temporary, except the period
       $text .= ' (all deviants!)' unless $any_nondeviates{$frame}; # temporary
+      # FIXME: this 'before' / 'after' should I guess remention pause, so as not to suggest pause is special-cased
+      my $frame_text = '';
+      if ($effect =~ /[<>]/) {
+        $frame_text = $effect !~ />/ ? 'After ' : 
+                        ($effect !~ /</ ? 'Before ' : 'Assimilating to ');
+        $frame_text .= name_natural_class(overwrite(($effect !~ />/ ? $old_pre : 
+                        ($effect !~ /</ ? $old_post : '.' x @{$FS->{features}})), $frame), 
+            \@inventory, significant => $frame, morpho => 'indef') . ',';
+      }
 
       my $f = 0;
       for (@{$dev_distilled{$frame}}) {
-        $text .= ';' if $f;
+        $frame_text .= ';' if $f;
+        $f = 0;
         my ($deviation, $all_deviants) = @$_;
         next unless my @deviants = grep $outcome{$frame}{$_} ne $_, @$all_deviants;
-        $text .= ' ' . describe_set(\@deviants, \@inventory, within => $precondition, 
+        $frame_text .= ' ' . describe_set(\@deviants, \@inventory, within => $precondition, 
             morpho => 'plural', suppress_ie => 1, etic => 1);
         $f = 1;
         if (length($deviation) > 0) {
           # temporary
           $_ = name_natural_class(overwrite(overwrite($precondition, $frame), $deviation), 
               \@new_inventory,
-              significant => overwrite($simple_effect, $deviation), morpho => 'plural', nobase => 1);
-          $text .=  ' become ' . ($_ ? $_ : "GD".feature_string(overwrite(overwrite($precondition, $frame), $deviation)));
+              significant => $deviation, morpho => 'plural', nobase => 1, bar_nons => 1); 
+          $frame_text .=  ' become ' . ($_ ? $_ : "GD".feature_string(overwrite(overwrite($precondition, $frame), $deviation)));
         }
         else {
-          $text .= ' are deleted';
+          $frame_text .= ' are deleted';
         }
       }
+      $text .= ' ' . $frame_text;
     }
     
 # TEMPORARY!!! 
