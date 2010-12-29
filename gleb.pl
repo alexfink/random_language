@@ -1963,17 +1963,19 @@ sub name_natural_class {
 # and mentioning a feature costs one plus epsilon,
 # except that table-determining features are free ('cause they're necessary for naming).
 
-# Optional argument within is a class within which we are to describe this one.  (working on it)
-# Optional argument suppress_ie suppresses the exemplificatory lists.
+# arg 'within' is a class within which we are to describe this one.  (working on it)
+# arg 'suppress_ie' suppresses the exemplificatory lists.
+# arg 'sort_phones' sorts the input reference to a list of phones in the way the output needs.
 
-# If optional argument extend is present, this behaves quite differently:
+# If arg 'extend' is present, this behaves quite differently:
 # rather than trying to name the set of phones, it tries to return the analogous
 # subset of $args{extend}.
 # It's far from perfect at this: it will ignore exceptions.
 
 # FIXME: [?\] is written as [h\_?\] by name_phone from within here.  Dunno why.
 sub describe_set {
-  my ($phones, $inventory, %args) = (shift, shift, @_);
+  my ($orig_phones, $inventory, %args) = (shift, shift, @_);
+  my $phones = $orig_phones;
   my $morpho = defined $args{morpho} ? $args{morpho} : 'indef';
   my $extend = defined $args{extend};
   my $lb = $args{etic} ? '[' : '/';
@@ -1995,13 +1997,17 @@ sub describe_set {
     substr($pattern, $feature_indices{$str->{subtables}}, 1) = $subtable;
     $str = $str->{$subtable};
   }
+
   $phones = [map add_false_features($_, $str), @$phones];
   $inventory = [map add_false_features($_, $str), @$inventory];
   my %sortkey = map(($_ => table_sortkey($_, $phon_descr->{table_structure})), 
       grep $_, @$inventory);
   @$phones = sort {$sortkey{$a} cmp $sortkey{$b}} @$phones;
   @$inventory = sort {$sortkey{$a} cmp $sortkey{$b}} @$inventory;
-  
+  if ($args{sort_phones}) {
+    @$orig_phones = sort {$sortkey{add_false_features($a, $str)} cmp $sortkey{add_false_features($b, $str)}} @$orig_phones;
+  }
+
   my @comparanda = grep /^$pattern$/, @$inventory;
   my $str_pattern = $pattern;
 
@@ -2505,13 +2511,40 @@ sub describe_rules {
     $simple_effect =~ y/<>/../;
     my $modified = overwrite $precondition, $simple_effect; 
 
+    my $text;
+    if ($insusceptibles_exist) {
+      $text = describe_set(\@susceptible, \@inventory, within => $precondition, 
+          morpho => 'plural', suppress_ie => 1, etic => 1, sort_phones => 1);
+      # maybe break off "other than" here and handle among the exception texts
+    } else {
+      $text = name_natural_class($precondition, \@inventory, morpho => 'plural');
+    }
+    my $subject_is_list = ($text =~ /^\[.*\]$/); # klugy
+    my @exception_texts;
+    if (defined $rule->{except}{$locus}) {
+      my @exceptions = split / /, $rule->{except}{$locus};
+      @exception_texts = map name_natural_class(overwrite($precondition, $_), 
+          \@inventory, morpho => 'plural', significant => $_, no_nothing => 1), @exceptions;
+      @exception_texts = grep $_, @exception_texts; # this is the first one
+    }
+    $text .= ' except for ' . join ' and ', @exception_texts if @exception_texts;
+    # It is friendliest not to describe rules which survive till before the _next_ rule as persistent.
+    $text .= ' persistently' unless (defined $rule->{inactive} and $rule->{inactive} <= $i + 1);
+
     my $main_VP = '';
     if ($effect =~ /[01]/) {
       #$main_VP .= ' and' if $main_VP; # this is the first one
       $main_VP .= ' become ';
-      my $object = name_natural_class($modified, \@new_inventory, significant => $simple_effect, morpho => 'plural', nobase => 1);
-      if ($object =~ / and /) {
-        $object .= ', respectively,'; 
+      my $object;
+      # if the subject is a list, make the object one too
+      if ($subject_is_list and scalar keys %outcome <= 1) { 
+        my ($frame) = keys %outcome; 
+        $object = '[' . join(' ', map name_phone($outcome{$frame}{$_}), @susceptible) . ']';
+      } else {
+        $object = name_natural_class($modified, \@new_inventory, significant => $simple_effect, morpho => 'plural', nobase => 1);
+        if ($object =~ / and /) {
+          $object .= ', respectively,'; 
+        }
       }
       $main_VP .= $object;
     }
@@ -2579,24 +2612,7 @@ sub describe_rules {
     # - The inventory should shrink when changes are unconditioned.  (Actually, branch off inventory tracking.)
     # - Persistent rules might need their statements recast when the inventory enlarges,
     #   given the above.  But I'll probably ignore this.
-    my $text;
-    if ($insusceptibles_exist) {
-      $text = describe_set(\@susceptible, \@inventory, within => $precondition, 
-          morpho => 'plural', suppress_ie => 1, etic => 1);
-      # maybe break off "other than" here and handle among the exception texts
-    } else {
-      $text = name_natural_class($precondition, \@inventory, morpho => 'plural');
-    }
-    my @exception_texts;
-    if (defined $rule->{except}{$locus}) {
-      my @exceptions = split / /, $rule->{except}{$locus};
-      @exception_texts = map name_natural_class(overwrite($precondition, $_), 
-          \@inventory, morpho => 'plural', significant => $_, no_nothing => 1), @exceptions;
-      @exception_texts = grep $_, @exception_texts; # this is the first one
-    }
-    $text .= ' except for ' . join ' and ', @exception_texts if @exception_texts;
-    # It is friendliest not to describe rules which survive till before the _next_ rule as persistent.
-    $text .= ' persistently' unless (defined $rule->{inactive} and $rule->{inactive} <= $i + 1);
+
     $text .= $main_VP;
     my ($pre_text, $post_text);
     if (defined $pre) {
@@ -2635,8 +2651,6 @@ sub describe_rules {
 
     # Describe the deviations.
     for my $frame (keys %dev_distilled) {
-      $text .= ".  [$frame]"; # temporary, except the period
-      $text .= ' (all deviants!)' unless $any_nondeviates{$frame}; # temporary
       # FIXME: this 'before' / 'after' should I guess remention pause, so as not to suggest pause is special-cased
       my $frame_text = '';
       if ($effect =~ /[<>]/) {
@@ -2647,27 +2661,37 @@ sub describe_rules {
             \@inventory, significant => $frame, morpho => 'indef') . ',';
       }
 
-      my $f = 0;
+      my $f = 0; my $keep_frame = 0;
       for (@{$dev_distilled{$frame}}) {
         $frame_text .= ';' if $f;
         $f = 0;
         my ($deviation, $all_deviants) = @$_;
         next unless my @deviants = grep $outcome{$frame}{$_} ne $_, @$all_deviants;
-        $frame_text .= ' ' . describe_set(\@deviants, \@inventory, within => $precondition, 
-            morpho => 'plural', suppress_ie => 1, etic => 1);
-        $f = 1;
+        my $subject = describe_set(\@deviants, \@inventory, within => $precondition, 
+            morpho => 'plural', suppress_ie => 1, etic => 1, sort_phones => 1);
+        $frame_text .= ' ' . $subject;
+        $f = 1; $keep_frame = 1;
         if (length($deviation) > 0) {
-          # temporary
-          $_ = name_natural_class(overwrite(overwrite($precondition, $frame), $deviation), 
-              \@new_inventory,
-              significant => $deviation, morpho => 'plural', nobase => 1, bar_nons => 1); 
-          $frame_text .=  ' become ' . ($_ ? $_ : "GD".feature_string(overwrite(overwrite($precondition, $frame), $deviation)));
+          $frame_text .= ' become ';
+          # if the subject is a list, make the object one too
+          if ($subject =~ /^\[.*\]$/) { # klugy
+            $frame_text .= '[' . join(' ', map name_phone($outcome{$frame}{$_}), @deviants) . ']';
+          } else {
+            $_ = name_natural_class(overwrite(overwrite($precondition, $frame), $deviation), 
+                \@new_inventory,
+                significant => $deviation, morpho => 'plural', nobase => 1, bar_nons => 1); 
+            $frame_text .= ($_ ? $_ : "GD".feature_string(overwrite(overwrite($precondition, $frame), $deviation)));
+          }
         }
         else {
           $frame_text .= ' are deleted';
         }
       }
-      $text .= ' ' . $frame_text;
+      
+      if ($keep_frame) {
+        $text .= ". [$frame] " . $frame_text; # frame is temporary
+        $text .= ' (all deviants!)' unless $any_nondeviates{$frame}; # temporary
+      }
     }
     
 # TEMPORARY!!! 
