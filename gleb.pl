@@ -1304,8 +1304,8 @@ sub gen_phonology {
   }
   my @repair_rule_tags;
   for my $k (0..@{$FS->{marked}}-1) {
-#print STDERR "$prevent_marked{$FS->{marked}[$k]{prevent_marked}}\n" if defined $FS->{marked}[$k]{prevent_marked}; # debugdebug
-    next if defined $FS->{marked}[$k]{prevent_marked} and $prevent_marked{$FS->{marked}[$k]{prevent_marked}};
+#print STDERR "$prevent_marked{$FS->{marked}[$k]{prevented_by}}\n" if defined $FS->{marked}[$k]{prevented_by}; # debugdebug
+    next if defined $FS->{marked}[$k]{prevented_by} and $prevent_marked{$FS->{marked}[$k]{prevented_by}};
     my $f = parse_feature_string $FS->{marked}[$k]{condition};
     my $when = 0;
     for (0..length($f)-1) {
@@ -1332,8 +1332,8 @@ sub gen_phonology {
     push @rule_tags, @{$repair_rule_tags[$i]} if defined $repair_rule_tags[$i];
   }
   for my $k (0..@{$FS->{marked}}-1) {
-#print STDERR "$prevent_marked{$FS->{marked}[$k]{prevent_marked}}\n" if defined $FS->{marked}[$k]{prevent_marked}; # debugdebug
-    next if defined $FS->{marked}[$k]{prevent_marked} and $prevent_marked{$FS->{marked}[$k]{prevent_marked}};
+#print STDERR "$prevent_marked{$FS->{marked}[$k]{prevented_by}}\n" if defined $FS->{marked}[$k]{prevented_by}; # debugdebug
+    next if defined $FS->{marked}[$k]{prevented_by} and $prevent_marked{$FS->{marked}[$k]{prevented_by}};
     push @rule_tags, "repair $k" if defined $FS->{marked}[$k]{phonemic_only};
   }
   push @rule_tags, '#'; # false tag for end of phoneme straightening-out
