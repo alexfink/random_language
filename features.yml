@@ -1580,8 +1580,8 @@ marked:
 # often to velar nasal glide
 
 # It's wrong to prevent back glottals.  We want not to form them, though.  
-- condition: "-dorsal -coronal -labial +back"
-  prob: 0.99
+#- condition: "-dorsal -coronal -labial +back" # HEREHERE
+#  prob: 0.99
 
 # This needs revision when coarticulates are actually sometimes generable.
 - condition: "coronal dorsal"
@@ -2015,13 +2015,25 @@ marked:
   flip:
     back: 15
 
-# stopgap primarily against /n_G/oids
 - condition: "-dorsal +back" 
   prob: 0.95
   phonemic_only: true
+#  prevent_marked: back
   flip:
     dorsal: 0
     back: 50
+  related_weight:
+    "": 0
+
+# identical version for sound changes
+- condition: "-dorsal +back" 
+  prob: 0.95
+#  prevent_marked: back
+  flip:
+    dorsal: 0
+    back: 50
+  related_weight:
+    "": 0
 
 # TODO: syllabic is wrong here.  this needs an except
 - condition: "+pharyngealised +front -syllabic"

@@ -717,7 +717,10 @@ sub gen_one_rule {
   #
   # It should also be predisposed to conditions that avoid a situation which has a
   # persisting rule against it.
-  
+
+  # FIXME: this can currently do weird idiocy of the type of adding an innocuous feature 
+  # to a constraint, then resolving by changing that innocuous feature.  
+
   if ($add_a_condition and $kind ne 'stripping') {
     my @phones = split / /, $precondition;
     my $r = int rand @phones;
@@ -1175,6 +1178,7 @@ sub gen_phonology {
   $family_inventories{$_} = { parse_feature_string($FS->{families}{$_}, 1) => 1 }
       for (keys %{$FS->{families}});
   my %special_filling; # which features we're using a U in the syllable structure in
+  my %prevent_marked; # when we look through the markeds, which ones we don't do
   
   # Sometimes we generate things which we never generate a prerequisite for.  Not a problem though.
   for my $fi (0..@{$FS->{features}}-1) {
@@ -1268,7 +1272,14 @@ sub gen_phonology {
             delete $family_inventories{$fam}{$phone}; 
           }
         }
-      } # rand
+        
+        # If the same string appears as the value of key 'prevent_marked' on both a
+        # generable situation and a marked, then -- if the generable situation is chosen,
+        # the marked will never be.   
+        if (defined $sit->{prevent_marked}) {
+          $prevent_marked{$sit->{prevent_marked}} = 1;
+        }
+      } # rand() < $sit->{contrast}
     } # situations for generation
     
     if (defined $f->{structural}) {
@@ -1277,6 +1288,8 @@ sub gen_phonology {
       $generable_val[1][$fi] = [-1]; # hope it doesn't screw up other things
     }
   } # features in the phone generator
+
+#print STDERR join(' ', keys %prevent_marked) . "\n"; # debugdebug
 
   # Choose the order the rules are going to appear in; write down a list of rule tag strings.
   # Default provision rules come in random order; subject to that, repair rules come 
@@ -1291,6 +1304,8 @@ sub gen_phonology {
   }
   my @repair_rule_tags;
   for my $k (0..@{$FS->{marked}}-1) {
+#print STDERR "$prevent_marked{$FS->{marked}[$k]{prevent_marked}}\n" if defined $FS->{marked}[$k]{prevent_marked}; # debugdebug
+    next if defined $FS->{marked}[$k]{prevent_marked} and $prevent_marked{$FS->{marked}[$k]{prevent_marked}};
     my $f = parse_feature_string $FS->{marked}[$k]{condition};
     my $when = 0;
     for (0..length($f)-1) {
@@ -1317,6 +1332,8 @@ sub gen_phonology {
     push @rule_tags, @{$repair_rule_tags[$i]} if defined $repair_rule_tags[$i];
   }
   for my $k (0..@{$FS->{marked}}-1) {
+#print STDERR "$prevent_marked{$FS->{marked}[$k]{prevent_marked}}\n" if defined $FS->{marked}[$k]{prevent_marked}; # debugdebug
+    next if defined $FS->{marked}[$k]{prevent_marked} and $prevent_marked{$FS->{marked}[$k]{prevent_marked}};
     push @rule_tags, "repair $k" if defined $FS->{marked}[$k]{phonemic_only};
   }
   push @rule_tags, '#'; # false tag for end of phoneme straightening-out
@@ -2417,7 +2434,7 @@ sub describe_rules {
     # Note that this doesn't have any particular handling of 
     # "foos do A, except for bar foos, which do B instead".
 
-    # TODO: consolidate multiple frames.
+    # TODO: (proximately) consolidate multiple frames; rewrite non-assimilatory all-deviates rules
     my @susceptible;
     my $insusceptibles_exist = 0;
     my %dev_distilled; # %dev_distilled maps frames to lists of (condition, phones) pairs
@@ -2550,7 +2567,7 @@ sub describe_rules {
       # if the subject is a list, make the object one too
       if ($subject_is_list and scalar keys %outcome <= 1) { 
         my ($frame) = keys %outcome; 
-        $object = '[' . join(' ', map name_phone($outcome{$frame}{$_}), @susceptible) . ']';
+        $object = '[' . join(' ', map spell_out([split ' ', $outcome{$frame}{$_}], null => 1), @susceptible) . ']';
       } else {
         $object = name_natural_class($modified, \@new_inventory, significant => $simple_effect, morpho => 'plural', nobase => 1);
         if ($object =~ / and /) {
@@ -2616,7 +2633,8 @@ sub describe_rules {
 
     # Things TODO: 
     # - Implement a non-heavy behaviour wrt lists of sounds.  
-    #     I think a method with three, four examples ... chosen for their salience is good.  
+    #     I think a method with three, four examples ... chosen for their salience is good. 
+    #     Remember to use spell_out. 
     # - Do better with the verb.  Include exceptions in this.
     # - Describe deletions.
     # - Understand syllable position.
@@ -2676,7 +2694,7 @@ sub describe_rules {
       for (@{$dev_distilled{$frame}}) {
         my ($deviation, $all_deviants) = @$_;
         next unless my @deviants = grep $outcome{$frame}{$_} ne $_, @$all_deviants;
-#        $frame_text .= '[' . join(' ', map(($_ . ':' . $outcome{$frame}{$_} . '<>' . add_entailments overwrite($_, $frame)), @deviants)) . ']'; # debugdebug
+#        $frame_text .= '[' . join(' ', map(($_ . ':' . $outcome{$frame}{$_} . '<>' . add_entailments overwrite($_, $frame)), @deviants)) . ']'; # debug
         my $subject = describe_set(\@deviants, \@inventory, within => $precondition, 
             morpho => 'plural', suppress_ie => 1, etic => 1, sort_phones => 1);
         $frame_text .= $subject;
