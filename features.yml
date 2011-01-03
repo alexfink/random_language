@@ -373,7 +373,7 @@ features:
   - {condition: "", value: 0}
   slots:
     coda: [0.4]
-    peripheral: [0.5]
+    peripheral: [0.666667]
     glide: [0, 0, 0.833333]
   assimilation:
   - condition: "+voice, +voice"
@@ -415,7 +415,7 @@ features:
   - {condition: "", value: 0}
   slots:
     coda: [0.4]
-    peripheral: [0.5]
+    peripheral: [0.666667]
     glide: [0, 0, 0.833333]
   assimilation:
   - condition: "+voice, +voice"
@@ -1579,6 +1579,7 @@ marked:
   phonemic_only: true
 # often to velar nasal glide
 
+# It's wrong to prevent back glottals.  We want not to form them, though.  
 - condition: "-dorsal -coronal -labial +back"
   prob: 0.99
 
@@ -2157,8 +2158,8 @@ marked:
 - condition: "-syllabic dorsal +resonant -lateral -tap_or_trill -front -round" 
   prob: 0.9
   flip:
-    dorsal: 2.5
-    round: 2 # I think [w] healthily beats [j]
+    dorsal: 2.25
+    round: 1.5 # I think [w] may beat [j]
     back: 0
     resonant: 0.05
     lateral: 0.05
