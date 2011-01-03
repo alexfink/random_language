@@ -2462,7 +2462,7 @@ sub describe_rules {
         my $any_deviations;
         do {
           $any_deviations = 0;
-          for my $dev (sort {grep(1,($a =~ /[^.]/g)) <=> grep(1,($b =~ /[^.]/g))} keys %deviations) {
+          for my $dev (sort {grep(1,($a =~ /[^.]/g)) <=> grep(1,($b =~ /[^.]/g))} keys %deviations) { # D
             next if $dev !~ /[^.]/ and length($dev);
             next unless @{$deviations{$dev}};
             $any_deviations = 1;
@@ -2481,7 +2481,7 @@ sub describe_rules {
                 describe_set $deviations{$dev}, \@downset, extend => $matcheds{$locus});
             
             my @covered;
-            for my $dev2 (keys %deviations) {
+            for my $dev2 (keys %deviations) { # a member of the up-set
               if ($dev2 =~ /^$dev$/ or length($dev2) == 0) {
                 push @covered, grep defined($extension{$_}), @{$deviations{$dev2}};
                 if (length($dev2) > 0) { # this aspect of the deviation is handled; don't remark on it again
@@ -2496,7 +2496,18 @@ sub describe_rules {
             } # dev2
             delete $deviations{''} if ($dev eq '');
             
-            push @{$dev_distilled{$frame}}, [$dev, \@covered];
+            # Throw out distilled deviations which do nothing aside from fill in undefineds.
+            my $only_undefineds = 0;
+            if ($dev ne '') {
+              $only_undefineds = 1;
+              ONLY_UNDEF: for my $phone (@covered) {
+                for (0..length($phone)-1) {
+                  $only_undefineds = 0, last ONLY_UNDEF if substr($dev, $_, 1) =~ /[01]/ and substr($phone, $_, 1) ne 'u';
+                }
+              }
+            }
+
+            push @{$dev_distilled{$frame}}, [$dev, \@covered] unless $only_undefineds;
           } # dev
         } while ($any_deviations);
 
@@ -2651,26 +2662,25 @@ sub describe_rules {
 
     # Describe the deviations.
     for my $frame (keys %dev_distilled) {
-      # FIXME: this 'before' / 'after' should I guess remention pause, so as not to suggest pause is special-cased
+      # really this 'before' / 'after' should I guess remention pause, so as not to suggest pause is special-cased
       my $frame_text = '';
       if ($effect =~ /[<>]/) {
         $frame_text = $effect !~ />/ ? 'After ' : 
                         ($effect !~ /</ ? 'Before ' : 'Assimilating to ');
         $frame_text .= name_natural_class(overwrite(($effect !~ />/ ? $old_pre : 
                         ($effect !~ /</ ? $old_post : '.' x @{$FS->{features}})), $frame), 
-            \@inventory, significant => $frame, morpho => 'indef') . ',';
+            \@inventory, morpho => 'indef', bar_nons => 1) . ', '; # disallowing nons isn't right, but it makes the thing readable
       }
 
-      my $f = 0; my $keep_frame = 0;
+      my $keep_frame = 0;
       for (@{$dev_distilled{$frame}}) {
-        $frame_text .= ';' if $f;
-        $f = 0;
         my ($deviation, $all_deviants) = @$_;
         next unless my @deviants = grep $outcome{$frame}{$_} ne $_, @$all_deviants;
+#        $frame_text .= '[' . join(' ', map(($_ . ':' . $outcome{$frame}{$_} . '<>' . add_entailments overwrite($_, $frame)), @deviants)) . ']'; # debugdebug
         my $subject = describe_set(\@deviants, \@inventory, within => $precondition, 
             morpho => 'plural', suppress_ie => 1, etic => 1, sort_phones => 1);
-        $frame_text .= ' ' . $subject;
-        $f = 1; $keep_frame = 1;
+        $frame_text .= $subject;
+        $keep_frame = 1;
         if (length($deviation) > 0) {
           $frame_text .= ' become ';
           # if the subject is a list, make the object one too
@@ -2686,11 +2696,13 @@ sub describe_rules {
         else {
           $frame_text .= ' are deleted';
         }
+        $frame_text .= '; ';
       }
+      $frame_text = substr($frame_text, 0, -2) if $frame_text =~ /; $/; # eh
       
       if ($keep_frame) {
-        $text .= ". [$frame] " . $frame_text; # frame is temporary
-        $text .= ' (all deviants!)' unless $any_nondeviates{$frame}; # temporary
+        $text .= ". " . ucfirst $frame_text;
+        $text .= ' (all deviants!)' unless $any_nondeviates{$frame}; # temporary!!
       }
     }
     
@@ -2698,7 +2710,7 @@ sub describe_rules {
     my $table = '';
     if (1) {
       if ($use_html) {
-        $table = ".  Cases:\n<table>";
+        $table = "Cases:\n<table>";
         my @frames = keys %outcome;
         my $one_frame = 0;
         if (@frames <= 1) {
@@ -2737,7 +2749,7 @@ sub describe_rules {
     }
 
 
-    $descriptions{$i}{rule} = $text . $table;
+    $descriptions{$i}{rule} = ucfirst $text . '. ' . $table;
 
     my %new_inventory = map(($_ => 1), @new_inventory);
     @inventory = keys %new_inventory;
