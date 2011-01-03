@@ -1579,10 +1579,6 @@ marked:
   phonemic_only: true
 # often to velar nasal glide
 
-# It's wrong to prevent back glottals.  We want not to form them, though.  
-#- condition: "-dorsal -coronal -labial +back" # HEREHERE
-#  prob: 0.99
-
 # This needs revision when coarticulates are actually sometimes generable.
 - condition: "coronal dorsal"
   prob: 0.99
