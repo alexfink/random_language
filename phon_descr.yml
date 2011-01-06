@@ -158,6 +158,8 @@ table_structure:
       - "lateral: laterality"
       - "pharyngeal: pharyngealisation"
       - "long: length"
+      modificate: other # kluge.  necessary for repeat_ behaviour
+      repeat_other: " and "
   1:
     name: vowel
     caption: Vowels

@@ -73,7 +73,7 @@ sub parse_feature_string {
     if ($f =~ /^([+-])(.*)/) {
       substr($phone, $feature_indices{$2}, 1) = $1 eq '+' ? '1' : '0'; 
     } else {
-      substr($phone, $feature_indices{$f}, 1) = 1;
+      substr($phone, $feature_indices{$f}, 1) = '1';
     }
   }
   $phone;
@@ -1641,7 +1641,7 @@ sub tabulate_label {
       # if repeat_mod isn't defined, don't allow repeating
       next if $thing and !$args{repeat_mod}{$thing};
       my $inner_label = $lmod->[$i];
-      $label =~ s/ ([^ ]*)/$args{repeat_mod}{$thing}\1/ if $args{repeat_mod}{$thing} and $repeated{$thing};
+      $label =~ s/ \[/$args{repeat_mod}{$thing}\[/ if $args{repeat_mod}{$thing} and $repeated{$thing};
       $repeated{$thing} = 1 if $thing;
       $label =~ s/\[.*\]/$inner_label/;
       for (0..length($pmod->[$i])) {
@@ -1938,8 +1938,6 @@ sub name_natural_class {
       for (@{$str->{$scheme}{$thing}}) {
         my ($phone, $label) = split /: */;
         $phone = parse_feature_string $phone, 1;
-        # TODO: (imminent) 'and' should be among the scheme data, but then needs better treatment of 'and' below.
-        $label .= ' and []' if $args{scheme} eq 'nominalised';
         $label .= " [$thing]" if $modificate{$thing};
         if ($label =~ /\[.*\]/) {
           push @pmod, $phone;
@@ -1979,7 +1977,6 @@ sub name_natural_class {
   }
   chop $name while $name =~ / $/; # nobase 
   $name = substr($name, 1) while $name =~ /^ /; # nobase 
-  $name = substr($name, 0, -4) if $args{scheme} eq 'nominalised'; # drop ' and'
   return $name; # debug_bit here
 }
 
