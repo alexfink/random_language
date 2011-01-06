@@ -131,6 +131,7 @@ features:
   generated:
   # come back to coarticulates
   - {condition: "-syllabic -dorsal", contrast: 1, prob: 0.666667}
+  - {condition: "-syllabic +dorsal", contrast: 0.0025, prob: 0.333333, prevent_marked: alveolar_velar}
   default:
   - {condition: "dorsal", value: 0}
   - {condition: "", value: 0.05} # sometimes the default place for Cs
@@ -145,6 +146,8 @@ features:
   families: place
   generated:
   - {condition: "-syllabic -dorsal -coronal", contrast: 1, prob: 0.9}
+  - {condition: "-syllabic +dorsal", contrast: 0.0909, prob: 0.333333, prevent_marked: labial_velar}
+  - {condition: "-syllabic +coronal", contrast: 0.005, prob: 0.333333, prevent_marked: labial_alveolar}
   default:
   - {condition: "", value: 0}
   slots:
@@ -531,8 +534,7 @@ features:
   families: place
   requires: "coronal"
   generated:
-  - {condition: "+anterior", contrast: 0.0506, prob: 0.5, by_family_prob: 0.666667, by_family: manner, each_family_prob: 0.333333} 
-  - {condition: "+anterior", contrast: 0.0033, prob: 0.5, by_family_prob: 0.666667, by_family: manner, each_family_prob: 0.333333} # langs like Toda distinguish two retroflexes (i.e. non-domed postalveolars), one laminal and one *sub*apical.
+  - {condition: "+anterior", contrast: 0.0129, prob: 0.5, by_family_prob: 0.666667, by_family: manner, each_family_prob: 0.333333} # langs like Toda distinguish two retroflexes (i.e. non-domed postalveolars), one laminal and one *sub*apical.  no idea about the prob though
   default: # subject to revision
   - {condition: "+retroflex", value: 0.333333}
   - {condition: "-anterior", value: 0.9}
@@ -1579,20 +1581,23 @@ marked:
   phonemic_only: true
 # often to velar nasal glide
 
-# This needs revision when coarticulates are actually sometimes generable.  
-# HERE do this next?
+# TODO: coarticulate fricatives are quite selected against
+
 - condition: "coronal dorsal"
   prob: 0.99
+  prevented_by: alveolar_velar
   flip:
     dorsal: 2
 
 - condition: "labial dorsal"
   prob: 0.875
+  prevented_by: labial_velar
   flip:
     dorsal: 2
 
 - condition: "labial coronal"
   prob: 0.975
+  prevented_by: labial_alveolar
 
 # +high +low and +front +back are dealt with by antitheticality.
 

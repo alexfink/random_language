@@ -11,7 +11,7 @@
 # - Finish aspects of the rule describer.  Inserting passed-over rules when they become applicable,
 #   and changing the verb when in fact outcoming sounds always have a different outcome (like deletion), 
 #   seem good ideas.
-# - Allow consonant inventory tables to merge coronal posterior and palatal columns.
+# - Allow consonant inventory tables to merge coronal posterior and palatal columns, and /kp)/ and /w/.
 # - Make phone proportions saner?  Perhaps each unlikely distinction should propagate favour up into
 #   its prerequisites, or something, in a way that fixes overrare but doesn't exacerbate overcommon.
 # - Better extra conditions.
@@ -1304,7 +1304,7 @@ sub gen_phonology {
   }
   my @repair_rule_tags;
   for my $k (0..@{$FS->{marked}}-1) {
-#print STDERR "$prevent_marked{$FS->{marked}[$k]{prevented_by}}\n" if defined $FS->{marked}[$k]{prevented_by}; # debugdebug
+#print STDERR "$FS->{marked}[$k]{prevented_by} $prevent_marked{$FS->{marked}[$k]{prevented_by}}\n" if defined $FS->{marked}[$k]{prevented_by}; # debugdebug
     next if defined $FS->{marked}[$k]{prevented_by} and $prevent_marked{$FS->{marked}[$k]{prevented_by}};
     my $f = parse_feature_string $FS->{marked}[$k]{condition};
     my $when = 0;
@@ -1332,7 +1332,7 @@ sub gen_phonology {
     push @rule_tags, @{$repair_rule_tags[$i]} if defined $repair_rule_tags[$i];
   }
   for my $k (0..@{$FS->{marked}}-1) {
-#print STDERR "$prevent_marked{$FS->{marked}[$k]{prevented_by}}\n" if defined $FS->{marked}[$k]{prevented_by}; # debugdebug
+#print STDERR "$FS->{marked}[$k]{prevented_by} $prevent_marked{$FS->{marked}[$k]{prevented_by}}\n" if defined $FS->{marked}[$k]{prevented_by}; # debugdebug
     next if defined $FS->{marked}[$k]{prevented_by} and $prevent_marked{$FS->{marked}[$k]{prevented_by}};
     push @rule_tags, "repair $k" if defined $FS->{marked}[$k]{phonemic_only};
   }
@@ -1589,10 +1589,11 @@ sub reenrich {
   $k;
 }
 
-# Make a label as tabulate needs.
+# Make a label as tabulate needs.  @$p are the patterns for bases, @$pmod for modifiers;
+# @$l and @$lmod the labels for these, respectively.
 
-# I guess this kind of duplicates some functionality of name_phone.  
-# Maybe I can unify later, if I get zealous.  But right now I'm scared of these things.
+# If $args{repeat_base} is true, multiple bases will be used if they match irredundantly, 
+# strings joined by its value.  $args{repeat_mod} is a hash doing similarly for modificated things.
 
 sub tabulate_label {
   my ($reenriched, $p, $pmod, $l, $lmod, %args) = @_;
@@ -1608,7 +1609,7 @@ sub tabulate_label {
   }
   for my $i (0..@$l-1) {
     if ($reenriched =~ /^$p->[$i]$/) {
-      if ($args{nobase}) {
+      if ($args{nobase} or $args{repeat_base}) {
         # if we fail to pick anything from $p in this case, that's okay.
         my $irredundant;
         for (0..length($p->[$i])-1) {
@@ -1616,14 +1617,18 @@ sub tabulate_label {
         }
         next unless $irredundant;
       }
-      $label = $l->[$i];
+      $label .= $args{repeat_base} if $label and $args{repeat_base};
+      $label .= $l->[$i];
       for (0..length($p->[$i])) {
         $taken_care_of[$_] = 1 if substr($p->[$i], $_, 1) ne '.';
       }
-      last;
+      last unless $args{repeat_base};
     }
   }
-  my %modificated_types;
+  my $base = $label;
+
+  $label = '[]';
+  my %repeated;
   for my $i (0..@$lmod-1) {
     if ($reenriched =~ /^$pmod->[$i]$/) {
       my $irredundant;
@@ -1631,18 +1636,20 @@ sub tabulate_label {
         $irredundant = 1 if substr($pmod->[$i], $_, 1) ne '.' and !$taken_care_of[$_];
       }
       next unless $irredundant;
-      # Don't use two modificateds from the same class.
-      $label =~ /\[(.*)\]/;
-      next if defined $modificated_types{$1};
-      $modificated_types{$1} = 1 if $1;
-      my $old_label = $label;
-      $label = $lmod->[$i];
-      $label =~ s/\[.*\]/$old_label/;
+      $lmod->[$i] =~ /\[(.*)\]/;
+      my $thing = $1;
+      # if repeat_mod isn't defined, don't allow repeating
+      next if $thing and !$args{repeat_mod}{$thing};
+      my $inner_label = $lmod->[$i];
+      $label =~ s/ ([^ ]*)/$args{repeat_mod}{$thing}\1/ if $args{repeat_mod}{$thing} and $repeated{$thing};
+      $repeated{$thing} = 1 if $thing;
+      $label =~ s/\[.*\]/$inner_label/;
       for (0..length($pmod->[$i])) {
         $taken_care_of[$_] = 1 if substr($pmod->[$i], $_, 1) ne '.';
       }
     }
   }
+  $label =~ s/\[.*\]/$base/;
 
   if ($args{nons}) {
     # Spell out even features which take the value not normally given a word.
@@ -1660,7 +1667,6 @@ sub tabulate_label {
       next if $taken_care_of[$i];
       next if substr($reenriched, $i, 1) eq '.';
       next if $dont_spell{$i};
-      # TODO: respect_univalent isn't the correct thing; the names in nasal assimilation are still gross
       next if $args{respect_univalent} and substr($reenriched, $i, 1) eq '0' and $FS->{features}[$i]{univalent};
       my $non = '.' x length($reenriched);
       substr($non, $i, 1) = 1 - substr($reenriched, $i, 1);
@@ -1802,7 +1808,8 @@ sub tabulate {
     my $label = tabulate_label $reenriched_columns{$column}, 
                                $label_phones{columns}, $label_phones{columns_mod},
                                $labels{columns}, $labels{columns_mod},
-                               header => 1;
+                               header => 1,
+                               repeat_base => $str->{labels}{repeat_columns};
     $label =~ s/ /<br \/>/g;
     $table .= "<th colspan=\"" . keys(%spots) . "\">" .
               ($label ? "\u$label" : '?') . 
@@ -1814,7 +1821,8 @@ sub tabulate {
     $table .= '<tr>';
     my $label = tabulate_label $reenriched_rows{$row}, 
                                $label_phones{rows}, $label_phones{rows_mod},
-                               $labels{rows}, $labels{rows_mod};
+                               $labels{rows}, $labels{rows_mod},
+                               repeat_base => $str->{labels}{repeat_rows};
     $table .= "<th style=\"text-align: right;\">" .
               ($label ? "\u$label" : '?') . 
               '</th>'; 
@@ -1926,12 +1934,13 @@ sub name_natural_class {
     my %modificate = map(($_ => 1), split / /, $str->{$scheme}{modificate});
     for my $thing (qw/pre_other pre_other_mod columns rows other columns_mod rows_mod other_mod/) {
       next unless defined $str->{$scheme}{$thing};
+      $str->{$scheme}{name_classes}{repeat_mod}{$thing} = $str->{$scheme}{'repeat_' . $thing} if $str->{$scheme}{'repeat_' . $thing};
       for (@{$str->{$scheme}{$thing}}) {
         my ($phone, $label) = split /: */;
         $phone = parse_feature_string $phone, 1;
-        # TODO: 'and' should be among the scheme data, but then needs better treatment of 'and' below.
+        # TODO: (imminent) 'and' should be among the scheme data, but then needs better treatment of 'and' below.
         $label .= ' and []' if $args{scheme} eq 'nominalised';
-        $label .= " [$thing]" if defined $modificate{$thing};
+        $label .= " [$thing]" if $modificate{$thing};
         if ($label =~ /\[.*\]/) {
           push @pmod, $phone;
           push @lmod, $label;
@@ -1956,7 +1965,8 @@ sub name_natural_class {
                             %args,
                             significant => $significant,
                             nons => ($args{bar_nons} ? undef : $inventory),
-                            nobase => $args{nobase}; 
+                            nobase => $args{nobase},
+                            repeat_mod => $str->{$scheme}{name_classes}{repeat_mod}; 
   $name = English_indefinite $name if ($args{morpho} eq 'indef');
 
   if ($args{morpho} eq 'plural' and $name !~ / $/) {
@@ -1980,11 +1990,11 @@ sub name_natural_class {
 # and mentioning a feature costs one plus epsilon,
 # except that table-determining features are free ('cause they're necessary for naming).
 
-# arg 'within' is a class within which we are to describe this one.  (working on it)
-# arg 'suppress_ie' suppresses the exemplificatory lists.
-# arg 'sort_phones' sorts the input reference to a list of phones in the way the output needs.
+# $args{within} is a class within which we are to describe this one.  (working on it)
+# $args{suppress_ie} suppresses the exemplificatory lists.
+# $args{sort_phones} sorts the input reference to a list of phones in the way the output needs.
 
-# If arg 'extend' is present, this behaves quite differently:
+# If $args{extend} is present, this behaves quite differently:
 # rather than trying to name the set of phones, it tries to return the analogous
 # subset of $args{extend}.
 # It's far from perfect at this: it will ignore exceptions.
@@ -2434,7 +2444,8 @@ sub describe_rules {
     # Note that this doesn't have any particular handling of 
     # "foos do A, except for bar foos, which do B instead".
 
-    # TODO: (proximately) consolidate multiple frames; rewrite non-assimilatory all-deviates rules
+    # TODO: (proximately) consolidate multiple frames; rewrite non-assimilatory all-deviates rules;
+    # handle describing assimilation in most place features better
     my @susceptible;
     my $insusceptibles_exist = 0;
     my %dev_distilled; # %dev_distilled maps frames to lists of (condition, phones) pairs

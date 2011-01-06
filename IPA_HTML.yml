@@ -124,9 +124,9 @@ characters:
 
 ligations:
   # the "-lateral"s here are cheats, especially the last
-  "labial coronal": ["-coronal -lateral", "-labial", "[]&#x361;[]"]
-  "labial dorsal": ["-dorsal -lateral", "-labial", "[]&#x361;[]"]
-  "coronal dorsal": ["-dorsal", "-coronal -lateral", "[]&#x361;[]"]
+  "labial coronal": ["-labial", "-coronal -lateral", "[]&#x361;[]"]
+  "labial dorsal": ["-labial", "-dorsal -lateral", "[]&#x361;[]"]
+  "coronal dorsal": ["-coronal -lateral", "-dorsal", "[]&#x361;[]"]
   "+long +affricate": ["-affricate", "+fricative -affricate -prenasalised", "[]&#x2d0;&#x361;[]"] # David's hack
   "+affricate": ["-affricate", "+fricative -affricate -prenasalised", "[]&#x361;[]"]
   "+prenasalised": ["+nasal -affricate -fricative -prenasalised", "-prenasalised", "<sup>[]</sup>[]"]

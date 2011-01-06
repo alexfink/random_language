@@ -92,6 +92,7 @@ table_structure:
       - "+lateral: [] lateral"
       - "+anterior_sibilant +anterior: [] sibilant"
       modificate: columns
+      repeat_columns: "-"
       pre_other:
       - "+resonant dorsal -tap_or_trill -lateral: semivowel" 
       # strippings screw the thing up.  TODO: this is a big kluge; fix it
