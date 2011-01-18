@@ -128,8 +128,12 @@ table_structure:
       #- "-round: unrounded []"
       - "-spread_glottis: unaspirated []"
     nominalised: 
-      other: # several never happen
-      - "dorsal coronal labial retroflex front back round labiodental anterior laminal high consonant_palatal: place of articulation" # this is the list generated.  TODO: make this be used in cases where one of these accidentally gets taken out, somehow
+      eliminate:
+        "dorsal coronal labial": "retroflex front back round labiodental anterior laminal high consonant_palatal" 
+        "dorsal retroflex labiodental": "dorsal coronal labial retroflex front back round labiodental anterior laminal high consonant_palatal"
+      other:
+      - "dorsal coronal labial: place of articulation"
+      - "dorsal retroflex labiodental: place of articulation" # a total revolting kluge, but needed for the counterstripping rules
       - "dorsal: dorsality"
       - "coronal: coronality"
       - "labial: labiality"
@@ -167,19 +171,17 @@ table_structure:
     collapse: "consonant_palatal spread_glottis constricted_glottis affricate labiodental anterior_sibilant trill lateral tap_or_trill implosive laminal pharyngealised retroflex anterior prenasalised voice round ATR"
     labels:
       rows:
-      - "+high -low -ATR: near-high"
-      - "+high -low: high"
+      - "+high -ATR: near-high"
+      - "+high: high"
       - "-high -low +ATR: mid-high"
       - "-high -low -ATR: mid-low"
       - "-high -low: mid"
-      - "+low -high: low"
+      - "+low: low"
       rows_mod: ~
       columns:
-      - "+front -back: front"
-      - "-front -back: central" # FIXME: there seem to be problems naming central
-      - "+back -front: back"
-      - "-front: central or back" 
-      - "-back: front or central"
+      - "+front: front"
+      - "-front -back: central"
+      - "+back: back"
       columns_mod: ~
       modificate: rows columns
       other_mod:

@@ -6,15 +6,19 @@
 # and Marcus and UPSID for being proximal sources for various numbers.
 # (A greater proportion of the numbers are wholly fabricated, though!)
 
-# List of priorities.
-# - Excepts on markeds ought to be quick.
-# - Finish aspects of the rule describer.  Inserting passed-over rules when they become applicable,
+# These are candidates for relatively proximal things.
+# - Finish aspects of the rule describer.  Inserting passed-over rules when they become applicable
+#   (actually, no, save that for the bigram tracker which sound change will also need),
 #   and changing the verb when in fact outcoming sounds always have a different outcome (like deletion), 
 #   seem good ideas.
 # - Allow consonant inventory tables to merge coronal posterior and palatal columns, and /kp)/ and /w/.
 # - Make phone proportions saner?  Perhaps each unlikely distinction should propagate favour up into
 #   its prerequisites, or something, in a way that fixes overrare but doesn't exacerbate overcommon.
 # - Better extra conditions.
+# - Excepts on markeds ought to be quick.  But what for?  If we're to screw with markeds,
+#   something which actually needs doing is, somehow, allowing split handling of resolutions 
+#   for such things as breathy voicing: devoicing should be relatively favoured for 
+#   breathy-voiced _stops_ but I think pretty much forbidden for breathy-voiced _resonants_.
 
 use strict;
 use YAML::Any;
@@ -1289,8 +1293,6 @@ sub gen_phonology {
     }
   } # features in the phone generator
 
-#print STDERR join(' ', keys %prevent_marked) . "\n"; # debugdebug
-
   # Choose the order the rules are going to appear in; write down a list of rule tag strings.
   # Default provision rules come in random order; subject to that, repair rules come 
   # as soon as they can (and we lazily haven't randomised them yet).
@@ -1304,7 +1306,6 @@ sub gen_phonology {
   }
   my @repair_rule_tags;
   for my $k (0..@{$FS->{marked}}-1) {
-#print STDERR "$FS->{marked}[$k]{prevented_by} $prevent_marked{$FS->{marked}[$k]{prevented_by}}\n" if defined $FS->{marked}[$k]{prevented_by}; # debugdebug
     next if defined $FS->{marked}[$k]{prevented_by} and $prevent_marked{$FS->{marked}[$k]{prevented_by}};
     my $f = parse_feature_string $FS->{marked}[$k]{condition};
     my $when = 0;
@@ -1332,7 +1333,6 @@ sub gen_phonology {
     push @rule_tags, @{$repair_rule_tags[$i]} if defined $repair_rule_tags[$i];
   }
   for my $k (0..@{$FS->{marked}}-1) {
-#print STDERR "$FS->{marked}[$k]{prevented_by} $prevent_marked{$FS->{marked}[$k]{prevented_by}}\n" if defined $FS->{marked}[$k]{prevented_by}; # debugdebug
     next if defined $FS->{marked}[$k]{prevented_by} and $prevent_marked{$FS->{marked}[$k]{prevented_by}};
     push @rule_tags, "repair $k" if defined $FS->{marked}[$k]{phonemic_only};
   }
@@ -1639,13 +1639,14 @@ sub tabulate_label {
       $lmod->[$i] =~ /\[(.*)\]/;
       my $thing = $1;
       # if repeat_mod isn't defined, don't allow repeating
-      next if $thing and !$args{repeat_mod}{$thing};
+      next if $thing and $repeated{$thing} and !$args{repeat_mod}{$thing};
       my $inner_label = $lmod->[$i];
       $label =~ s/ \[/$args{repeat_mod}{$thing}\[/ if $args{repeat_mod}{$thing} and $repeated{$thing};
       $repeated{$thing} = 1 if $thing;
       $label =~ s/\[.*\]/$inner_label/;
       for (0..length($pmod->[$i])) {
         $taken_care_of[$_] = 1 if substr($pmod->[$i], $_, 1) ne '.';
+        $taken_care_of[$_] = 1 if defined $args{eliminate}{$pmod->[$i]} and substr($args{eliminate}{$pmod->[$i]}, $_, 1) ne '.';
       }
     }
   }
@@ -1954,6 +1955,10 @@ sub name_natural_class {
     $str->{$scheme}{name_classes}{pmod} = \@pmod;
     $str->{$scheme}{name_classes}{l} = \@l;
     $str->{$scheme}{name_classes}{lmod} = \@lmod;
+    while (my ($k, $v) = each %{$str->{$scheme}{eliminate}}) {
+      $str->{$scheme}{name_classes}{eliminate}{parse_feature_string($k, 1)} = 
+          parse_feature_string($v, 1);
+    }
   }
 
   my $significant = defined $args{significant} ? $args{significant} : $phone;
@@ -1964,7 +1969,8 @@ sub name_natural_class {
                             significant => $significant,
                             nons => ($args{bar_nons} ? undef : $inventory),
                             nobase => $args{nobase},
-                            repeat_mod => $str->{$scheme}{name_classes}{repeat_mod}; 
+                            repeat_mod => $str->{$scheme}{name_classes}{repeat_mod},
+                            eliminate => $str->{$scheme}{name_classes}{eliminate}; 
   $name = English_indefinite $name if ($args{morpho} eq 'indef');
 
   if ($args{morpho} eq 'plural' and $name !~ / $/) {
@@ -2441,8 +2447,9 @@ sub describe_rules {
     # Note that this doesn't have any particular handling of 
     # "foos do A, except for bar foos, which do B instead".
 
-    # TODO: (proximately) consolidate multiple frames; rewrite non-assimilatory all-deviates rules;
-    # handle describing assimilation in most place features better
+    # TODO: (proximately) consolidate multiple frames; 
+    # rewrite non-assimilatory all-deviates rules (but mind the cases like [t] > [tK] "coronals become laterals.  no, they become affricates!");
+    # perhaps get rid of some redundant modifiers?
     my @susceptible;
     my $insusceptibles_exist = 0;
     my %dev_distilled; # %dev_distilled maps frames to lists of (condition, phones) pairs
@@ -2581,6 +2588,7 @@ sub describe_rules {
         if ($object =~ / and /) {
           $object .= ', respectively,'; 
         }
+        $object = "GD".feature_string($modified) unless $object;
       }
       $main_VP .= $object;
     }
