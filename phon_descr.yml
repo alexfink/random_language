@@ -125,7 +125,6 @@ table_structure:
       - "-ATR: lax []"
       - "+ATR: tense []"
       - "-long: short []"
-      #- "-round: unrounded []"
       - "-spread_glottis: unaspirated []"
     nominalised: 
       eliminate:

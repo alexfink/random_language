@@ -2002,7 +2002,7 @@ sub name_natural_class {
 # subset of $args{extend}.
 # It's far from perfect at this: it will ignore exceptions.
 
-# FIXME: [?\] is written as [h\_?\] by name_phone from within here.  Dunno why.
+# FIXME: [?\] is written as [h\_?\] by name_phone from within here.  I think it's add_false_features' fault.
 sub describe_set {
   my ($orig_phones, $inventory, %args) = (shift, shift, @_);
   my $phones = $orig_phones;
@@ -2723,7 +2723,7 @@ sub describe_rules {
           } else {
             $_ = name_natural_class(overwrite(overwrite($precondition, $frame), $deviation), 
                 \@new_inventory,
-                significant => $deviation, morpho => 'plural', nobase => 1, bar_nons => 1); 
+                significant => $deviation, morpho => 'plural', nobase => 1); 
             $frame_text .= ($_ ? $_ : "GD".feature_string(overwrite(overwrite($precondition, $frame), $deviation)));
           }
         }
