@@ -57,6 +57,9 @@ syllable_template:
   presence: 0.142857
   features: "-syllabic +resonant dorsal -nasal -lateral -tap_or_trill"
 
+# TODO: (proximalish) make this be resonant _or_ nasal somehow, maybe?
+# then we can cut down the resolution frequencies in the phonemic_only
+# rule that makes all the [N_w] and stuff, especially [n_w].  
 - tag: coda_resonant
   prob: 0.166667
   presence: 0.2
@@ -124,6 +127,8 @@ features:
   # TODO: rightward place assimilation?  maybe after a very prominent syllable.  I've also seen [sk] > [st] I think more or less unconditioned but that's probably the strength of the sibilancy somehow; no idea how I'd generally frame it.
   # What about funny [p] <> [k] before [t]?
   # and a form of place dissimilation, [tl] > [kl]
+
+  # TODO: (proximalish?) formation of coarticulates from sequences
 
 - name: coronal
   univalent: true
@@ -280,6 +285,7 @@ features:
   slots:
     coda: [0.125]
     peripheral: [0.25]
+  # Mingrelian has long-distance dissimilatory deaffrication
 
 - name: tap_or_trill
   families: manner manner_phonation
@@ -290,9 +296,10 @@ features:
   - {condition: "coronal -lateral", value: 0.75} 
   - {condition: "", value: 0}
   assimilation:
+  # TODO: this seems a wrong handling; better with coalescence rules.
   - condition: "coronal, coronal"
     target: 0
-    prob: 0.083333
+    prob: 0.020833
 
 # This won't generate the /4 r/ contrast without also having nontaps.
 # /r\/ is often gotten rid of though.
@@ -339,7 +346,7 @@ features:
   - condition: "-syllabic, -resonant"
     target: 0
     prob: 0.727273
-    extras: {"-resonant 0": 0.8, "-nasal 0": 0.933333, "-nasal 1": 0.75, "# 1": 0.4, "-fricative 0": 0.1} # Blevins: sometimes fricatives are voice-distinguished by their noisiness
+    extras: {"-resonant 0": 0.8, "-nasal 0": 0.96, "-nasal 1": 0.75, "# 1": 0.4, "-fricative 0": 0.1} # Blevins: sometimes fricatives are voice-distinguished by their noisiness
     pause_phone: "-voice"
   - condition: "-resonant, -syllabic"
     target: 1
@@ -459,7 +466,7 @@ features:
   families: place
   requires: "labial"
   generated:
-  - {condition: "", contrast: 0.005, prob: 0.5}
+  - {condition: "", contrast: 0.0025, prob: 0.5}
   default:
   - {condition: "+affricate", value: 0.8}
   - {condition: "+fricative", value: 0.8}
@@ -496,57 +503,6 @@ features:
     prob: 0.8
     extras: {"-anterior 1": 0.6}
   # at a distance
-
-- name: retroflex
-  families: place
-  generated:
-  - {condition: "-anterior", contrast: 0.1041, prob: 0.5}
-  - {condition: "+syllabic", contrast: 0.0089, prob: 0.166667}
-  default:
-  - {condition: "-anterior", value: 0.1}
-  - {condition: "", value: 0}
-  slots:
-    coda: [0, 0, 0.125]
-    peripheral: [0, 0, 0.5]
-  assimilation:
-  # Retroflexion being cued by VC transitions mostly, it ought to assimilate left-to-right.  
-  - condition: "coronal -anterior, coronal -anterior"
-    target: 1
-    prob: 0.95
-  - condition: "+syllabic, +retroflex"
-    target: 0
-    prob: 0.1
-  - condition: "+retroflex, +syllabic"
-    target: 1
-    prob: 0.1
-  # at a distance?
-
-# Versions prior to v4 had a dental-alveolar distinction
-# in place of the current apical-laminal distinction.  Dental vs. alveolar
-# is not really the relevant thing:
-# http://listserv.brown.edu/archives/cgi-bin/wa?A2=ind1009b&L=conlang&T=0&F=&S=&P=4490
-
-# "Dentals" are laminal, most "alveolars" are apical (but "dentialveolars" are laminal).  
-# Retroflexes can have either position; I'm not sure if one is more typical.
-# Usual postalveolars are laminal; palatalised ones are only attested laminal.
-
-- name: laminal
-  families: place
-  requires: "coronal"
-  generated:
-  - {condition: "+anterior", contrast: 0.0129, prob: 0.5, by_family_prob: 0.666667, by_family: manner, each_family_prob: 0.333333} # langs like Toda distinguish two retroflexes (i.e. non-domed postalveolars), one laminal and one *sub*apical.  no idea about the prob though
-  default: # subject to revision
-  - {condition: "+retroflex", value: 0.333333}
-  - {condition: "-anterior", value: 0.9}
-  - {condition: "", value: 0.333333}
-  slots:
-    coda: [0, 0, 0.125]
-    peripheral: [0, 0, 0.5]
-  assimilation:
-  - condition: ", coronal"
-    target: 0
-    prob: 0.9375
-    extras: {"!+tap_or_trill 0": 0.8}
 
 - name: anterior_sibilant
   families: place
@@ -625,7 +581,7 @@ features:
   antithetical: low
   generated:
   - {condition: "+syllabic -low", contrast: 0.799, prob: 0.571429, by_family_prob: 0.25, by_family: vowel_length, each_family_prob: 0.5}
-  - {condition: "-syllabic -resonant", contrast: 0.184, prob: 0.5, by_family_prob: 0.5, by_family: manner, each_family_prob: 0.125}
+  - {condition: "-syllabic -resonant", contrast: 0.145, prob: 0.5, by_family_prob: 0.5, by_family: manner, each_family_prob: 0.125} # less than UPSID 'cause we sometimes supply -high in fricatives.
   - {condition: "-syllabic +tap_or_trill", contrast: 0.0523, prob: 1} # if uvular trills are gonna exist we may as well embrace them
   default:
   - {condition: "+low", value: 0}
@@ -639,7 +595,7 @@ features:
   - condition: "-syllabic, dorsal -syllabic"
     target: 0
     prob: 0.875
-    extras: {"-resonant 1": 0.75}
+    extras: {"!+resonant -lateral -tap_or_trill 1": 0.975, "-tap_or_trill 0": 0.8}
   - condition: "dorsal +resonant -lateral -tap_or_trill, -high dorsal -syllabic"
     target: 0
     prob: 0.75
@@ -647,6 +603,7 @@ features:
     target: 1
     prob: 0.375
   # chance of glide formation, for the last two, and high chances at that.  since I've made the changes apply to semivowels too, glidings will have to have enough knowledge for that
+  # huh, uvular > velar near high vowels.  have I ever actually seen that?
   - condition: "+syllabic, -high dorsal -syllabic"
     target: 1
     prob: 0.0125
@@ -761,10 +718,10 @@ features:
 - name: round
   families: place
   generated:
-  - {condition: "+syllabic -front", contrast: 0.2439, prob: 0.666667, by_family_prob: 0.333333, by_family: height, each_family_prob: 0.5}
-  - {condition: "+syllabic +front", contrast: 0.1020, prob: 0.2, by_family_prob: 0.333333, by_family: height, each_family_prob: 0.5}
+  - {condition: "+syllabic -front", contrast: 0.2439, prob: 0.666667, by_family_prob: 0.333333, by_family: height, each_family_prob: 0.5, prevent_marked: back_unrounded}
+  - {condition: "+syllabic +front", contrast: 0.1020, prob: 0.2, by_family_prob: 0.333333, by_family: height, each_family_prob: 0.5, prevent_marked: front_rounded}
   - {condition: "-syllabic dorsal -front", contrast: 0.1663, prob: 0.333333}
-  - {condition: "-syllabic", contrast: 0.03, prob: 0.2, by_family_prob: 0.8, by_family: place, each_family_prob: 0.333333}
+  - {condition: "-syllabic", contrast: 0.0222, prob: 0.2, by_family_prob: 0.833333, by_family: place, each_family_prob: 0.25}
   default:
   - {condition: "+lateral", value: 0} # bit ugly eh
   - {condition: "+tap_or_trill", value: 0}
@@ -887,22 +844,77 @@ features:
   generated:
   - {condition: "+resonant -syllabic", contrast: 0.6123, prob: 0.5, by_family_prob: 0.8, by_family: place, each_family_prob: 0.333333}
   - {condition: "-resonant", contrast: 0.1043, prob: 0.25, by_family_prob: 1, by_family: place, each_family_prob: 0.05} # turned up then down some
+  # Is selective removal of these in sound change the way we mean to get things like [K] > [l] without corresponding damage to other fricatives?
   default:
   - {condition: "coronal +resonant", value: 0.5}
   - {condition: "", value: 0}
   slots:
     coda: [0, 0, 0.05]
-    peripheral: [0, 0, 0.5]
+    peripheral: [0, 0, 0.4]
   assimilation:
   # Laterality is one of these weird things that isn't actually really homologous at different major places.  So just this for now.
+  # TODO: apparently in these langs with velar laterals, some are related to velar + (colonal lateral) clusters.
   - condition: "coronal, coronal"
     target: 0
     prob: 0.075
     extras: {"-resonant 0": 0.5, "!+resonant +lateral 0": 0.8, "-nasal 0": 0.875, "+resonant 1": 0.25, "!-fricative 1": 0.5, "!-affricate 1": 0.5}
+  # TODO: why does this one get special treatment?  Consider folding in
+  # with coalescence rules instead.
   - condition: "coronal +resonant, coronal +resonant"
     target: 0
     prob: 0.25
   # dissimilation at a distance
+
+- name: retroflex
+  families: place
+  generated:
+  - {condition: "-anterior", contrast: 0.1041, prob: 0.5}
+  - {condition: "+syllabic", contrast: 0.0089, prob: 0.166667, by_family_prob: 0.75, by_family: height, each_family_prob: 0.2}
+  default:
+  - {condition: "-anterior", value: 0.1}
+  - {condition: "", value: 0}
+  slots:
+    coda: [0, 0, 0.125]
+    peripheral: [0, 0, 0.5]
+  assimilation:
+  # Retroflexion being cued by VC transitions mostly, it ought to assimilate left-to-right.  
+  - condition: "coronal -anterior, coronal -anterior"
+    target: 1
+    prob: 0.95
+  - condition: "+syllabic, +retroflex"
+    target: 0
+    prob: 0.1
+  - condition: "+retroflex, +syllabic"
+    target: 1
+    prob: 0.1
+  # at a distance?
+
+# Versions prior to v4 had a dental-alveolar distinction
+# in place of the current apical-laminal distinction.  Dental vs. alveolar
+# is not really the relevant thing:
+# http://listserv.brown.edu/archives/cgi-bin/wa?A2=ind1009b&L=conlang&T=0&F=&S=&P=4490
+
+# "Dentals" are laminal, most "alveolars" are apical (but "dentialveolars" are laminal).  
+# Retroflexes can have either position; I'm not sure if one is more typical.
+# Usual postalveolars are laminal; palatalised ones are only attested laminal.
+
+- name: laminal
+  families: place
+  requires: "coronal"
+  generated:
+  - {condition: "+anterior", contrast: 0.0129, prob: 0.5, by_family_prob: 0.666667, by_family: manner, each_family_prob: 0.333333} # langs like Toda distinguish two retroflexes (i.e. non-domed postalveolars), one laminal and one *sub*apical.  no idea about the prob though
+  default: # subject to revision
+  - {condition: "+retroflex", value: 0.333333}
+  - {condition: "-anterior", value: 0.9}
+  - {condition: "", value: 0.333333}
+  slots:
+    coda: [0, 0, 0.125]
+    peripheral: [0, 0, 0.5]
+  assimilation:
+  - condition: ", coronal"
+    target: 0
+    prob: 0.9375
+    extras: {"!+tap_or_trill 0": 0.8}
 
 - name: pharyngealised
   families: place
@@ -950,8 +962,8 @@ relations:
     except: {1: "-dorsal -coronal -labial"}
     further_features: dorsal coronal labial front back round retroflex labiodental anterior laminal high consonant_palatal
     target: 0
-    prob: 0.05
-    extras: {"-nasal 1": 0.5, "-fricative 1": 0.333333, "-voice 0": 0.75}
+    prob: 0.025
+    extras: {"-nasal 1": 0.8, "-fricative 1": 0.5, "-voice 0": 0.75}
 
 # Counterstripping spread for [h].
 - from: "-resonant"
@@ -990,6 +1002,12 @@ relations:
     prob: 0.125 
     extras: {"-labial 0": 0.166667, "-coronal -labial 1": 0.125, "-voice 0": 0.9375, "-fricative 0": 0.333333, "-voice 1": 0.75}
 
+# [?] <> [h] variation is found, a little.
+- from: "-dorsal -coronal -labial +constricted_glottis"
+  to: "-dorsal -coronal -labial +spread_glottis"
+  weight: 0.0625
+  twoway: true
+
 # In lieu of a dorsal <> coronal rule, we include various special cases.  
 # TODO: rethink.  What of the Polynesian [t] > [k] gapfilling, or the same in southern Athabaskan, or the [p] > [k] elsewhere in America somewhere?  Are these always gapfillings?
 - from: "coronal +resonant"
@@ -1024,8 +1042,8 @@ relations:
   otherway_assimilation: 
   - condition: ", , +resonant" 
     target: 1
-    prob: 0.142857
-    extras: {"dorsal 0": 0.5, "dorsal 2": 0.5, "-nasal 1": 0.8, "-long 1": 1, "+voice 1": 0.75, "-constricted_glottis 1": 0.875} # dorsal stands in for vowellike
+    prob: 0.166667
+    extras: {"dorsal 0": 0.7, "dorsal 2": 0.7, "-nasal 1": 0.8, "-long 1": 1, "+voice 1": 0.8, "-constricted_glottis 1": 0.875, "dorsal 1": 0.125, "# 2": 0.125} # dorsal 0 or 2 stands in for vowellike
 
 # another rhotacism
 - from: "+resonant"
@@ -1085,7 +1103,7 @@ relations:
     prob: 0.2
     extras: {"# 1": 0.666667}
 
-# TODO: if prenasals get special simplification rules like the above, what for other complex segment types?  Frankly I think it would be sensibler not to implement those as single segments.  
+# TODO: if prenasals get special simplification rules like the above, what for other complex segment types?  Frankly I think it would be sensibler not to implement those as single segments.  But consider this for affricates.
 
 - from: "+affricate"
   to: "+fricative"
@@ -1182,7 +1200,7 @@ relations:
 
 - from: "dorsal -resonant -high"
   to: "-dorsal"
-  weight: 1 # for [X] > [X\] kinds of things
+  weight: 1 # for uvulars falling
 
 - from: "dorsal +front"
   to: "coronal -dorsal -anterior -retroflex +laminal"
@@ -1258,7 +1276,7 @@ relations:
 # a labial effect of fronting
 - from: "labial +front"
   to: "+labiodental"
-  weight: 0.125
+  weight: 0.25
 
 - from: "+retroflex"
   to: "coronal -anterior +retroflex"
@@ -1304,21 +1322,33 @@ relations:
   weight: 3 # high since this has to work with the coarticulate resolution rule
 
 - from: "labial"
-  to: "dorsal +back +round -labial" 
-  weight: 0.2
+  to: "+round" 
+  weight: 0
+  spread_only: true
   assimilation:
   - condition: "-syllabic, dorsal"
     target: 1
-    prob: 0.015
+    prob: 0.016667
     extras: {"+resonant -lateral -tap_or_trill 1": 0.5, "-resonant 1": 0.4}
   - condition: "dorsal, -syllabic"
     target: 0
-    prob: 0.03
+    prob: 0.05
     extras: {"+resonant -lateral -tap_or_trill 0": 0.5, "-resonant 0": 0.4}
+
+# Tropylium says the only categorical examples of this he knows are for rounded labials and linguolabials.
+- from: "labial"
+  to: "dorsal +back +round -labial" 
+  weight: 0.2
+
+- from: "labial +round"
+  to: "dorsal +back +round -labial" 
+  weight: 0.3
 
 - from: "labial +resonant"
   to: "dorsal +back +round -labial"
   weight: 1.8
+
+# TODO: does [S] > [x] need its own thing, or is that always via like [s`]?
 
 - from: "+pharyngealised"
   to: "-ATR"
@@ -1384,6 +1414,7 @@ relations:
   to: "+dorsal -high -syllabic"
   weight: 0.5
   twoway: true
+  # will this still work when epiglottal trill is in?
 
 - from: "+implosive"
   to: "+constricted_glottis"
@@ -1447,9 +1478,26 @@ relations:
   to: "-ATR"
   weight: 1
 
-# TODO nasality can raise vowels
+# TODO: nasality can raise vowels
 
-# TODO one should include influence of phonation on height (and frontness??): creaky lowers, breathy raises, for formant reasons.  This is found in Khmer.  See Thurgood.
+# TODO: one should include influence of phonation on height (and frontness??): creaky lowers, breathy raises, for formant reasons.  This is found in Khmer.  See Thurgood.  (What's the southern Spanish [e a] > [E &] before an [s] > [h] then?)
+
+# velar > uvular near _nonfront_ vowels is what's seen, not nonhigh
+- from: "-front"
+  to: "-high"
+  weight: 0
+  spread_only: true
+  assimilation:
+  - condition: "-syllabic dorsal -front, dorsal +resonant -lateral -tap_or_trill"
+    except: {0: "+resonant -lateral -tap_or_trill"}
+    target: 0
+    prob: 0.033333
+    extras: {"+back 1": 0.25, "-high 1": 0.6, "+low 1": 0.142857}
+  - condition: "dorsal +resonant -lateral -tap_or_trill, -syllabic dorsal -front"
+    except: {1: "+resonant -lateral -tap_or_trill"}
+    target: 1
+    prob: 0.016667
+    extras: {"+back 0": 0.25, "-high 0": 0.6, "+low 0": 0.142857}
 
 - from: "+high -ATR"
   to: "-high -low +ATR"
@@ -1459,12 +1507,12 @@ relations:
 # front-back mixing with rounding
 - from: "+round +front +syllabic"
   to: "-round -front -back +syllabic"
-  weight: 0.75
+  weight: 0.25
   twoway: true
 
 - from: "+round -front -back +syllabic"
   to: "-round +back +syllabic"
-  weight: 0.75
+  weight: 0.25
   twoway: true
 
 - from: "+high"
@@ -1574,6 +1622,7 @@ relations:
 
 
 
+# marked situations start here
 marked:
 
 - condition: "-dorsal -coronal -labial +nasal"
@@ -1581,7 +1630,20 @@ marked:
   phonemic_only: true
 # often to velar nasal glide
 
-# TODO: coarticulate fricatives are quite selected against
+# Nearly always, coloured radicals can be resurrected, always to resonants.
+# [j] and [w] can't be deleted, then, except by _actual_ deletion.
+# This was a recent change; all the kinks may not yet be out.  
+- condition: "-dorsal -coronal -labial +front"
+  prob: 0.9
+  flip:
+    dorsal: 4
+  univalent_addition: "+resonant"
+
+- condition: "-dorsal -coronal -labial +round"
+  prob: 0.9
+  flip:
+    dorsal: 4
+  univalent_addition: "+resonant"
 
 - condition: "coronal dorsal"
   prob: 0.99
@@ -1598,6 +1660,13 @@ marked:
 - condition: "labial coronal"
   prob: 0.975
   prevented_by: labial_alveolar
+
+# TODO: coarticulate fricatives are quite selected against.
+# for now just one case
+- condition: "labial dorsal +fricative"
+  prob: 0.99
+  related_weight:
+    "-dorsal -coronal -labial": 0
 
 # +high +low and +front +back are dealt with by antitheticality.
 
@@ -1638,6 +1707,36 @@ marked:
   flip:
     resonant: 0
 
+# This isn't quite aligned with how rounding differences are generated:
+# they condition on front, this on back.  So this might cut down /u\/
+# by too much...
+- condition: "+syllabic dorsal +resonant -lateral -tap_or_trill -back +round"
+  prob: 0.75
+  prevented_by: front_rounded
+  flip:
+    dorsal: 0
+    resonant: 0
+    lateral: 0
+    tap_or_trill: 0
+    round: 2
+  related_weight:
+    "+nasal": 0
+    "+fricative": 0
+
+- condition: "+syllabic dorsal +resonant -lateral -tap_or_trill +back -low -round"
+  prob: 0.5
+  prevented_by: back_unrounded
+  flip:
+    dorsal: 0
+    resonant: 0
+    lateral: 0
+    tap_or_trill: 0
+    round: 2
+    low: 0.125
+  related_weight:
+    "+nasal": 0
+    "+fricative": 0
+
 # Writing "-low" here is a kluge, but it prevents *"+low +ATR" and
 # *"+high -ATR" from being thought to conflict.
 # (I probably ought to have more systematic machinery for this.)
@@ -1647,10 +1746,11 @@ marked:
     resonant: 0
     low: 0
 
-# phonemic central mid vowels are a little uncommon.
-# I hope that when vowel reduction in weak syllables exists, it will tend to be stronger than this.
+# central mid vowels are a little uncommon as phonemes;
+# they're of course prevalent as reductions
 - condition: "+syllabic dorsal -high -low -front -back"
-  prob: 0.55
+  prob: 0.625
+  phonemic_only: true
   flip:
     resonant: 0
     dorsal: 0
@@ -1696,19 +1796,6 @@ marked:
    nasal: 2
    high: 2
 
-# Sometimes coloured radicals can be resurrected, always to resonants.
-- condition: "-dorsal -coronal -labial +front"
-  prob: 0.6
-  flip:
-    dorsal: 4
-  univalent_addition: "+resonant"
-
-- condition: "-dorsal -coronal -labial +round"
-  prob: 0.6
-  flip:
-    labial: 4
-  univalent_addition: "+resonant"
-
 - condition: "+nasal +affricate"
   prob: 0.997
   flip:
@@ -1728,6 +1815,8 @@ marked:
   prob: 0.997
   flip:
     lateral: 50
+  related_weight:
+    "-nasal +resonant": 20 # nasal > resonant, I hope
 
 - condition: "+prenasalised +fricative"
   prob: 0.85
@@ -1740,23 +1829,25 @@ marked:
 # delete; going to fricatives is I think a pretty distant third.  
 # On the other hand voiceless resonants don't just delete.
 # (They can placelessise, but is that ever as a class?)
+
+# TODO: (proximal) We still seem to see vl resonant > stop too much.
 - condition: "+resonant -voice"
   prob: 0.9
   flip:
-    voice: 2
-    resonant: 0.75 # which goes to a stop
+    voice: 3
+    resonant: 0.5 # which goes to a stop, for consonants
     # and should be 2 to a fricative
   related_weight: # These are multiplicative.
-    "+nasal": 0.025
+    "+nasal": 0
 
-# -resonant here is kinda a kluge, meant to stop the application to glottals;
+# -resonant here is meant to stop the application to glottals;
 # without it generated glottal voiceless nasals tend to produce [h\]
 - condition: "+nasal -voice -resonant"
   prob: 0.96
   flip:
-    voice: 3
+    voice: 4
   related_weight:
-    "+resonant": 0.01
+    "+resonant": 0
 
 - condition: "+prenasalised -voice"
   prob: 0.85
@@ -1782,7 +1873,7 @@ marked:
   related_weight:
     "-dorsal -coronal -labial": 0
 
-# impossible radicals
+# impossible radicals.  first the nothing-at-all consonant
 - condition: "-dorsal -coronal -labial -constricted_glottis -spread_glottis -pharyngealised"
   prob: 1
   flip:
@@ -1817,10 +1908,6 @@ marked:
     spread_glottis: 15
 
 # Voiced phonation rules.  
-- condition: "-syllabic +voice +spread_glottis"
-  prob: 0.96
-  related_weight:
-    "": 0.1
 
 # Unfortunately it's necessary with current
 # setup to break out the creaky rule by whether the 
@@ -1829,6 +1916,7 @@ marked:
 # given I don't have excepts here.
 - condition: "-syllabic +voice +constricted_glottis -implosive"
   prob: 0.833333
+  phonemic_only: true
   flip:
     resonant: 0
     nasal: 0
@@ -1850,9 +1938,20 @@ marked:
   related_weight:
     "+resonant": 0
 
+# And again here.  TODO: This one's actually a problem.
+# We mustn't ever try to resolve by flipping voice for sonorants,
+# but flipping voice is a very good resolution for obstruents.
+- condition: "-syllabic +voice +spread_glottis"
+  prob: 0.96
+  phonemic_only: true
+  related_weight:
+    "": 0.1
+    "+fricative": 0
+    "+nasal": 0
+
 # More phonation things.
 - condition: "+resonant -voice +spread_glottis"
-  prob: 0.99
+  prob: 0.995
   flip:
     spread_glottis: 31
 
@@ -1890,16 +1989,16 @@ marked:
   flip:
     resonant: 4 # so that nasals behave resonantly on generation
   related_weight:
-    "+fricative": 0.1
+    "+fricative": 0.05
 
 # again, a less frequent identical version for sound changes.  TODO: consolidate such?
 # This change, anyway, should be fairly likely, 'cause it's the route by which I mean to do V~ > VN breaking.
 - condition: "-syllabic +nasal +resonant" 
   prob: 0.4
   flip:
-    resonant: 3
+    resonant: 4
   related_weight:
-    "+fricative": 0.1
+    "+fricative": 0.05
 
 - condition: "+voice +fricative"
   prob: 0.444444
@@ -1964,8 +2063,8 @@ marked:
 
 - condition: "dorsal +tap_or_trill +high"
   prob: 1
-  deletion: 1
   flip:
+    dorsal: 2
     high: 2
 
 - condition: "+resonant dorsal -high +tap_or_trill -trill"
@@ -2048,7 +2147,8 @@ marked:
   prob: 0.8
   flip:
    labial: 0
-   round: 7
+   round: 2
+   # 0.5 to rounded velars.
 
 - condition: "-laminal -anterior -retroflex"
   prob: 0.75
@@ -2131,20 +2231,22 @@ marked:
 - condition: "+resonant -anterior -retroflex"
   prob: 0.95
   flip:
-    resonant: 0.01
+    resonant: 0
     retroflex: 0.1
   related_weight:
-    "+nasal": 0.01
-    "+fricative": 0.01
+    "+nasal": 0
+    "+fricative": 0.1
 
 - condition: "+nasal -resonant -anterior -retroflex"
   prob: 0.95
+  phonemic_only: true # testing!!!
   flip:
     nasal: 0
+    resonant: 0 # was intended for [n_-] > [j] type stuff, but in the end made [R\] too much for comfort
     retroflex: 0.1
   related_weight:
     "dorsal": 1.5
-    "+resonant": 0.01
+    "+resonant": 0
 
 - condition: "dorsal -resonant -nasal +front"
   prob: 0.4
@@ -2172,19 +2274,22 @@ marked:
 - condition: "-syllabic dorsal +resonant -lateral -tap_or_trill -front -round" 
   prob: 0.9
   flip:
-    dorsal: 2.25
-    round: 1.5 # I think [w] may beat [j]
+    dorsal: 2
+    # I'm going equal for [w] and [j]
     back: 0
-    resonant: 0.05
-    lateral: 0.05
-    tap_or_trill: 0.05
+    resonant: 0.025
+    lateral: 0.025
+    tap_or_trill: 0.025
   related_weight:
-    "+fricative": 0.075 # times 2
+    "+fricative": 0.2 # times 2
     "coronal": 0.2
 
 - condition: "-syllabic dorsal +resonant -lateral -tap_or_trill"
   prob: 0.2 # was 0.125
   flip:
+    dorsal: 0 # these varmints are resistant to placelessising, now
+    deletion: 2 # that'll git 'em.
+    #
     resonant: 0.25 # 'cause this goes straight to stops
 
 - condition: "dorsal +implosive"
@@ -2261,13 +2366,25 @@ marked:
 
 
 
-# Not in yet: preaspirates (related to post-aspirates as realisations of [+sg] -- is it purely breaking?); prestopping (easy?); unreleased stops; superhigh ~ fricative vowels [yielding 'noisy' Cs and C transitions, and which should have a fair chance just to go back to resonant vowels]; fricative trills; whistled sibilants; subapicals, and laminal "closed" postalveolars; prenasalised resonants(!); epiglottals, and vowels coarticulated with them; linguolabials; voiceless laryngealised obstruents distinct from ejectives; generation of syllabic Cs; generation of coarticulates; clicks.  Then the big ones: tone; stress; length and autosegmentalish timing.
+# Not in yet: 
+# - preaspirates (mean to do purely as situational breaking of aspirates)
+# - prestopping (situational reinforcement w/ a new segment)
+# - prenasalised resonants(!)
+# - unreleased stops (never contrastive > not to be represented?)
+# - superhigh ~ fricative vowels (these are representable, it's just that their change infrastructure isn't there.  they yielding 'noisy' Cs and C transitions, and should have a fair chance just to go back to resonant vowels)
+# - fricative trills
+# - whistled sibilants
+# - subapicals, and laminal "closed" postalveolars
+# - epiglottals, and vowels coarticulated with them = strident Vs
+# - voiceless laryngealised obstruents distinct from ejectives
+# - linguolabials
+# - generation of syllabic Cs
+# - clicks
+# Then the big ones: tone; stress; length and autosegmentalish timing.
 
 # For syllabic Cs, perhaps we should really just generate deleting the vowel in suitable circumstances.
 
 # (Should the process that unreleases stops do anything to fricatives?)
 
-# On another note, I should read Blevins' _Evolutionary phonology_ and take from it.
-
-# Broader problem: there's no real accommodation for marked situations other than giving them particular resolutions (eg. *sonority increase across a syllable).  Though maybe Blevins would still give me some idea.
+# Broader problem: there's no real accommodation for marked situations other than spelling out particular resolutions (eg. *sonority increase across a syllable; *tl).  Though maybe Blevins would still give me some idea.
 
