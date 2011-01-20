@@ -57,13 +57,10 @@ syllable_template:
   presence: 0.142857
   features: "-syllabic +resonant dorsal -nasal -lateral -tap_or_trill"
 
-# TODO: (proximalish) make this be resonant _or_ nasal somehow, maybe?
-# then we can cut down the resolution frequencies in the phonemic_only
-# rule that makes all the [N_w] and stuff, especially [n_w].  
 - tag: coda_resonant
   prob: 0.166667
   presence: 0.2
-  features: "-syllabic +resonant"
+  features: "-syllabic +resonant 1 -syllabic +nasal -resonant 1" # this is an or
 
 - tag: coda
   prob: 0.714286
@@ -685,12 +682,12 @@ features:
     extras: {"-resonant 1": 0.5}
   - condition: "-syllabic, dorsal +resonant -lateral -tap_or_trill"
     target: 1
-    prob: 0.083333
-    extras: {"+front 0": 0.875}
+    prob: 0.0625
+    extras: {"+front 0": 0.95}
   - condition: "dorsal +resonant -lateral -tap_or_trill, -syllabic"
     target: 0
     prob: 0.025
-    extras: {"+front 1": 0.875}
+    extras: {"+front 1": 0.95}
   - condition: "dorsal +resonant -lateral -tap_or_trill, -syllabic dorsal +resonant -lateral -tap_or_trill"
     target: 0
     prob: 0.2
@@ -1983,20 +1980,24 @@ marked:
   related_weight:
     "+resonant": 0.05
 
-- condition: "-syllabic +nasal +resonant" 
+# This is *not* identical to the below change, because of the weightings.
+# We disfavour generated e.g. /w~/ going to /N_w/ 'cause that
+# makes too many /N_w/, though it's not clear if the present
+# solution achieves anything.
+# HERE: testing; maybe we should change the generation of [+nasal].
+- condition: "-syllabic +nasal +resonant"
   prob: 0.9812
   phonemic_only: true
   flip:
-    resonant: 4 # so that nasals behave resonantly on generation
+    resonant: 0.5
   related_weight:
     "+fricative": 0.05
 
-# again, a less frequent identical version for sound changes.  TODO: consolidate such?
 # This change, anyway, should be fairly likely, 'cause it's the route by which I mean to do V~ > VN breaking.
 - condition: "-syllabic +nasal +resonant" 
   prob: 0.4
   flip:
-    resonant: 4
+    resonant: 4 # for the V~ > VN thing
   related_weight:
     "+fricative": 0.05
 
@@ -2089,6 +2090,7 @@ marked:
     "": 0.05
 
 # This version is identical; it's meant for sound changes.
+# TODO: consolidate such?
 - condition: "-syllabic +resonant -lateral -tap_or_trill -high"
   prob: 0.333333
   flip:
@@ -2223,7 +2225,7 @@ marked:
 # is initial_prob really a sensible handling?  original prob was 0.45
 - condition: "dorsal +nasal -resonant" # [N]
   initial_prob: 0.666667 # inflated but perhaps what we need
-  prob: 0.3
+  prob: 0.25
   deletion: 0.0625
   flip:
     nasal: 0.25

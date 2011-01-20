@@ -1160,6 +1160,11 @@ sub gen_one_rule {
 # This still needs some thought on what to do about features in an alternation
 # that don't fulfill their requisites for generation (think also about sound change).  
 
+# The most general allowable form of a syllable position features specification
+# consists of feature strings alternated with weights.  Each probability
+# associates to the feature string before it; a missing final weight will be chosen
+# to make the sum 1.
+
 sub gen_phonology {
   my (@phone_generator, @phonology);
   my @syllable_structure;
@@ -1167,9 +1172,24 @@ sub gen_phonology {
   for my $slot (@{$FS->{syllable_template}}) {
     next if rand() >= $slot->{prob};
     do {
+      # Prepare syllable structure for the cases where there are alternates.
+      # Fuzz the probabilities.
+      my @featureses = split / *([0-9.]+) */, $slot->{features};
+      my %featureses;
+      my $remaining_weight = 1; # pre-fuzz weight
+      my $fuzzed_weight = 0; # post-fuzz weight
+      while (@featureses) {
+        my $phone = parse_feature_string shift @featureses;
+        $remaining_weight -= @featureses[0] if @featureses;
+        $_ = (@featureses ? shift @featureses : $remaining_weight) * (rand() + rand());
+        $fuzzed_weight += $_;
+        $featureses{$phone} = $_;
+      }
+      $featureses{$_} /= $fuzzed_weight for (keys %featureses);
+
       push @syllable_structure, {
         prob => fuzz($slot->{presence}),
-        features => parse_feature_string($slot->{features}),
+        features => \%featureses, # parse_feature_string($slot->{features}), # HERE testing
         tag => $slot->{tag},
       };
     } while (defined $slot->{prob_more} and rand() < $slot->{prob_more});
@@ -1244,23 +1264,32 @@ sub gen_phonology {
         $generable_val[1][$fi] = [];
         
         for my $slot (@syllable_structure) {
-          my $phone = $slot->{features};
-          $phone =~ s/u/./g;
-          next unless compatible $phone, $precondition;
-          if (defined $f->{slots}{$slot->{tag}}) {
-            my $r = rand();
-            if ($r < $f->{slots}{$slot->{tag}}[0]) {
-              $slot->{features} = overwrite $slot->{features}, $rule{antieffects}{0};
-            } elsif ($r < $f->{slots}{$slot->{tag}}[0] + $f->{slots}{$slot->{tag}}[1]) {
-              $slot->{features} = overwrite $slot->{features}, $rule{effects}{0};
-              $slot->{features} = overwrite $slot->{features}, parse_feature_string($f->{slot_if_on}, 1)
-                  if defined $f->{slot_if_on};
-            } elsif ($r < $f->{slots}{$slot->{tag}}[0] + $f->{slots}{$slot->{tag}}[1] +  $f->{slots}{$slot->{tag}}[2]) {
-              substr($slot->{features}, $feature_indices{$f->{name}}, 1) = 'U';
-              $special_filling{$feature_indices{$f->{name}}} = 1;
+          my $r = rand(); 
+          while (my ($phone, $weight) = each %{$slot->{features}}) {
+            $_ = $phone;
+            s/u/./g;
+            next unless compatible $_, $precondition;
+
+            delete $slot->{features}{$phone};
+            if (defined $f->{slots}{$slot->{tag}}) {
+              if ($r < $f->{slots}{$slot->{tag}}[0]) {
+                $phone = overwrite $phone, $rule{antieffects}{0};
+              } elsif ($r < $f->{slots}{$slot->{tag}}[0] + $f->{slots}{$slot->{tag}}[1]) {
+                $phone = overwrite $phone, $rule{effects}{0};
+                $phone = overwrite $phone, parse_feature_string($f->{slot_if_on}, 1)
+                    if defined $f->{slot_if_on};
+              } elsif ($r < $f->{slots}{$slot->{tag}}[0] + $f->{slots}{$slot->{tag}}[1] +  $f->{slots}{$slot->{tag}}[2]) {
+                substr($phone, $feature_indices{$f->{name}}, 1) = 'U';
+                $special_filling{$feature_indices{$f->{name}}} = 1;
+              }
             }
-          }
-        }
+            if (defined $slot->{features}{$phone}) {
+              $slot->{features}{$phone} += $weight;
+            } else {
+              $slot->{features}{$phone} = $weight;
+            }
+          } # each %{$slot->{features}}
+        } # @syllable_structure # HERE testing
 
         for my $fam (split / /, $f->{families}) {
           $_ = $precondition;
@@ -1449,9 +1478,13 @@ sub inventory {
   # between phones into account for these numbers, so they're kind of crude.
   my %inventory;
 
+  # HERE testing
   for my $i (0..@$syllable_structure-1) {
-    add_in \%inventory, $syllable_structure->[$i]{features}, 
-        [map(($_ == $i ? 1 : 0), (0..@$syllable_structure-1))];
+    for my $phone (keys %{$syllable_structure->[$i]{features}}) {
+      add_in \%inventory, $phone, 
+          [map(($_ == $i ? $syllable_structure->[$i]{features}{$phone} : 0), 
+               (0..@$syllable_structure-1))];
+    }
   }
 
   # Revise this if ever first-pass resolvent rules can cause splits or whatever.
@@ -2449,7 +2482,7 @@ sub describe_rules {
 
     # TODO: (proximately) consolidate multiple frames; 
     # rewrite non-assimilatory all-deviates rules (but mind the cases like [t] > [tK] "coronals become laterals.  no, they become affricates!");
-    # perhaps get rid of some redundant modifiers?
+    # don't list a sound in the main change and as an exception, or as two exceptions.
     my @susceptible;
     my $insusceptibles_exist = 0;
     my %dev_distilled; # %dev_distilled maps frames to lists of (condition, phones) pairs
