@@ -19,7 +19,7 @@ table_structure:
   0:
     name: consonant
     caption: Consonants
-    order: "resonant fricative affricate !nasal !prenasalised implosive !tap_or_trill !trill long; !labial !coronal !dorsal labiodental !anterior !retroflex !laminal anterior_sibilant !high front lateral pharyngealised back round !consonant_palatal !ATR low; voice constricted_glottis !spread_glottis"
+    order: "resonant fricative affricate !nasal !prenasalised implosive !tap_or_trill !trill long; !labial !coronal !dorsal labiodental !anterior !retroflex !laminal sibilant !high front lateral pharyngealised back round !consonant_palatal !ATR low; voice constricted_glottis !spread_glottis"
     flips:
       "dorsal": front
       "-dorsal -coronal -labial": pharyngealised
@@ -29,8 +29,7 @@ table_structure:
       "-dorsal -coronal -labial +spread_glottis": "+fricative"
       "-dorsal -coronal -labial": "-resonant -prenasalised -implosive -lateral -tap_or_trill -trill -retroflex"
       "dorsal +resonant +front": "+consonant_palatal"
-      "-anterior": "+anterior_sibilant"
-    collapse: "low ATR long consonant_palatal affricate labiodental anterior_sibilant laminal trill lateral tap_or_trill implosive spread_glottis constricted_glottis back round pharyngealised front retroflex high anterior prenasalised voice" 
+    collapse: "low ATR long consonant_palatal affricate labiodental sibilant laminal trill lateral tap_or_trill implosive spread_glottis constricted_glottis back round pharyngealised front retroflex high anterior prenasalised voice" 
     # TODO: we should not collapse anterior unless there we have collapsed retroflex and laminal
     labels:
       rows:
@@ -90,7 +89,7 @@ table_structure:
       - "+round: rounded []"
       - "+front -back -dorsal: palatalised []"
       - "+lateral: [] lateral"
-      - "+anterior_sibilant +anterior: [] sibilant"
+      - "+sibilant: [] sibilant"
       modificate: columns
       repeat_columns: "-"
       pre_other:
@@ -120,8 +119,8 @@ table_structure:
       - "+back: back []" # ditto
       - "+laminal: laminal []"
       - "-laminal: apical []"
-      - "+anterior_sibilant: sibilant []" # not "or postalveolar" I think
-      - "-anterior_sibilant: alveolar non-sibilant []"
+#      - "+sibilant: sibilant []" # not "or postalveolar" I think # testing, and next line
+      - "-sibilant: non-sibilant []"
       - "-ATR: lax []"
       - "+ATR: tense []"
       - "-long: short []"
@@ -150,7 +149,7 @@ table_structure:
       - "labiodental: labiodentality"
       - "anterior: anteriority"
       - "laminal: laminality"
-      - "anterior_sibilant: sibilancy"
+      - "sibilant: sibilancy"
       - "retroflex: retroflexion"
       - "high: uvularity" # which it loves to use as a term for height
       - "front: palatalisation" # secondary more common than primary?
@@ -166,8 +165,8 @@ table_structure:
   1:
     name: vowel
     caption: Vowels
-    order: "resonant fricative affricate !prenasalised implosive !tap_or_trill trill low !high !ATR; !labial !coronal !dorsal labiodental !anterior anterior_sibilant !laminal lateral !consonant_palatal !front back; round retroflex pharyngealised nasal long !voice constricted_glottis spread_glottis"
-    collapse: "consonant_palatal spread_glottis constricted_glottis affricate labiodental anterior_sibilant trill lateral tap_or_trill implosive laminal pharyngealised retroflex anterior prenasalised voice round ATR"
+    order: "resonant fricative affricate !prenasalised implosive !tap_or_trill trill low !high !ATR; !labial !coronal !dorsal labiodental !anterior sibilant !laminal lateral !consonant_palatal !front back; round retroflex pharyngealised nasal long !voice constricted_glottis spread_glottis"
+    collapse: "consonant_palatal spread_glottis constricted_glottis affricate labiodental sibilant trill lateral tap_or_trill implosive laminal pharyngealised retroflex anterior prenasalised voice round ATR"
     labels:
       eliminate:
         "+high": "low"

@@ -91,12 +91,12 @@ characters:
   "-resonant +fricative +voice coronal -lateral -anterior -retroflex -front -laminal": 'Z_a'
   "-resonant +fricative -voice coronal -lateral -anterior +retroflex": 's`'
   "-resonant +fricative +voice coronal -lateral -anterior +retroflex": 'z`'
-  "-resonant +fricative -voice coronal -lateral +anterior +anterior_sibilant": 's'
-  "-resonant +fricative +voice coronal -lateral +anterior +anterior_sibilant": 'z'
-  "-resonant +fricative -voice coronal -lateral +anterior -anterior_sibilant +laminal": 'T'
-  "-resonant +fricative +voice coronal -lateral +anterior -anterior_sibilant +laminal": 'D' 
-  "-resonant +fricative -voice coronal -lateral +anterior -anterior_sibilant -laminal": 'T_a' # less distracting than the Z-SAMPA
-  "-resonant +fricative +voice coronal -lateral +anterior -anterior_sibilant -laminal": 'D_a' 
+  "-resonant +fricative -voice coronal -lateral +anterior +sibilant": 's'
+  "-resonant +fricative +voice coronal -lateral +anterior +sibilant": 'z'
+  "-resonant +fricative -voice coronal -lateral -sibilant +laminal": 'T'
+  "-resonant +fricative +voice coronal -lateral -sibilant +laminal": 'D' 
+  "-resonant +fricative -voice coronal -lateral -sibilant -laminal": 'T_a' # less distracting than the Z-SAMPA
+  "-resonant +fricative +voice coronal -lateral -sibilant -laminal": 'D_a' 
   "-resonant +fricative -voice coronal +lateral": 'K'
   "-resonant +fricative +voice coronal +lateral": 'K\' 
   "-resonant +fricative -voice labial -labiodental": 'p\'

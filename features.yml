@@ -501,11 +501,11 @@ features:
     extras: {"-anterior 1": 0.6}
   # at a distance
 
-- name: anterior_sibilant
+- name: sibilant
   families: place
-  requires: "coronal +anterior -resonant"
+  requires: "coronal -resonant"
   generated:
-  - {condition: "", contrast: 0.2, prob: 0.5, by_family_prob: 1, by_family: place, each_family_prob: 0.1} 
+  - {condition: "+anterior", contrast: 0.2, prob: 0.5, by_family_prob: 1, by_family: place, each_family_prob: 0.1} 
   default:
   - {condition: "+affricate", value: 1}
   - {condition: "+fricative", value: 1}
@@ -514,7 +514,7 @@ features:
     coda: [0, 0, 0.125]
     peripheral: [0, 0, 0.5]
   assimilation:
-  - condition: "-resonant -nasal, coronal +anterior -resonant -nasal"
+  - condition: "-resonant -nasal, coronal -resonant -nasal"
     target: 0
     prob: 0.25
     extras: {"+fricative 1": 0.95}
@@ -1028,7 +1028,7 @@ relations:
   weight: 0.125
 
 # this should not be prominent at all.  I forget what convinced me to include it, actually.  but shd [S] > [x] go here?
-#- from: "coronal -anterior_sibilant"
+#- from: "coronal -sibilant"
 #  to: "dorsal -coronal"
 #  weight: 0.005
 
@@ -1125,8 +1125,8 @@ relations:
 
 # This rule is only here 'cause [ts)] > [t] type things are conspired against
 # without it.
-- from: "coronal +anterior +affricate"
-  to: "-affricate -anterior_sibilant -lateral"
+- from: "coronal +affricate"
+  to: "-affricate -sibilant -lateral"
   weight: 0.333333
 
 - from: "+high"
@@ -1140,14 +1140,15 @@ relations:
     extras: {"-nasal 0": 0.95, "+spread_glottis 0": 0.333333, "+ATR 1": 0.8, "labial 0": 0.2, "coronal 0": 0.1, "dorsal 0": 0.2, "+syllabic 1": 0.4}
 
 - from: "+high"
-  to: "+anterior_sibilant"
+  to: "+sibilant"
   weight: 0
   spread_only: true
   assimilation:
-  - condition: "coronal +anterior -fricative, +resonant dorsal -lateral -tap_or_trill"
+  - condition: "coronal -fricative, +resonant dorsal -lateral -tap_or_trill"
     target: 0
     prob: 0.05
     extras: {"-nasal 0": 0.95, "+spread_glottis 0": 0.333333, "+ATR 1": 0.8}
+    # any reason to differentiate by anterior?
 
 - from: "+spread_glottis -voice"
   to: "-voice"
@@ -1465,7 +1466,7 @@ relations:
   to: "-anterior +retroflex"
   weight: 0.333333
 
-- from: "-anterior_sibilant +fricative" # Blevins suggests laminal only
+- from: "+anterior -sibilant +fricative" # Blevins suggests laminal only
   to: "+labiodental -coronal"
   weight: 0.666667
 
@@ -2079,10 +2080,10 @@ marked:
 - condition "-high +lateral" 
   prob: 0.997
 
-- condition: "+anterior_sibilant +lateral"
+- condition: "+sibilant +lateral"
   prob: 1
   flip:
-    anterior_sibilant: 10
+    sibilant: 10
 
 - condition: "+long +tap_or_trill -trill"
   prob: 1
@@ -2209,30 +2210,47 @@ marked:
   prob: 0.875
 
 # plosive types that are usually affricates.  
-- condition: "+anterior_sibilant -affricate +nasal"
+- condition: "+sibilant -affricate +nasal"
   prob: 1
   flip:
-    anterior_sibilant: 8
+    sibilant: 8
     affricate: 0 # this can cause a loop.
     nasal: 0
   related_weight:
     "": 0.05
 
-- condition: "+anterior_sibilant -affricate -nasal"
+- condition: "+sibilant -affricate -nasal"
   prob: 1 # sibilancy isn't meaningful on a stop
   flip:
     affricate: 8
     nasal: 0
 
-- condition: "-anterior_sibilant -lateral +affricate"
+- condition: "-sibilant -lateral +affricate"
   prob: 0.8
   flip:
     lateral: 0.666667
 
-- condition: "-anterior_sibilant -lateral +fricative"
+- condition: "-sibilant -lateral +fricative"
   prob: 0.8
   flip:
     lateral: 0.666667
+
+# Same for posteriors but way stronger.  Perhaps a little absolutist.
+- condition: "-sibilant -anterior -lateral +affricate"
+  prob: 0.99
+  flip:
+    lateral: 0
+    affricate: 0.125
+    anterior: 0.125
+    sibilant: 16
+
+- condition: "-sibilant -anterior -lateral +fricative"
+  prob: 0.99
+  flip:
+    lateral: 0
+    fricative: 0.125
+    anterior: 0.125
+    sibilant: 16
 
 - condition: "-anterior -retroflex -affricate -nasal"
   prob: 0.925
