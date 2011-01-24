@@ -19,7 +19,7 @@ table_structure:
   0:
     name: consonant
     caption: Consonants
-    order: "resonant fricative affricate !nasal !prenasalised implosive !tap_or_trill !trill long; !labial !coronal !dorsal labiodental !anterior !retroflex !laminal sibilant !high front lateral pharyngealised back round !consonant_palatal !ATR low; voice constricted_glottis !spread_glottis"
+    order: "resonant fricative affricate !nasal !prenasalised implosive !tap_or_trill !trill long; !labial !coronal !dorsal labiodental !anterior !retroflex !laminal sibilant !high front lateral pharyngealised back round palatalised_velar !ATR low; voice constricted_glottis !spread_glottis"
     flips:
       "dorsal": front
       "-dorsal -coronal -labial": pharyngealised
@@ -28,8 +28,8 @@ table_structure:
       "-dorsal -coronal -labial +constricted_glottis": "-fricative -affricate"
       "-dorsal -coronal -labial +spread_glottis": "+fricative"
       "-dorsal -coronal -labial": "-resonant -prenasalised -implosive -lateral -tap_or_trill -trill -retroflex"
-      "dorsal +resonant +front": "+consonant_palatal"
-    collapse: "low ATR long consonant_palatal affricate labiodental sibilant laminal trill lateral tap_or_trill implosive spread_glottis constricted_glottis back round pharyngealised front retroflex high anterior prenasalised voice" 
+      "dorsal +resonant +front": "-palatalised_velar"
+    collapse: "low ATR long palatalised_velar affricate labiodental sibilant laminal trill lateral tap_or_trill implosive spread_glottis constricted_glottis back round pharyngealised front retroflex high anterior prenasalised voice" 
     # TODO: we should not collapse anterior unless there we have collapsed retroflex and laminal
     labels:
       rows:
@@ -67,10 +67,10 @@ table_structure:
       - "dorsal -front -high +back: uvular"
       - "dorsal -high: uvular"
       - "dorsal -front: vel{ar} or uvul{ar}"
-      - "dorsal +front -back +consonant_palatal +high: palatal"
-      - "dorsal +front -back -consonant_palatal +high: palatalised velar"
-      - "dorsal +front -back +consonant_palatal: palatal"
-      - "dorsal +front -back -consonant_palatal: palatalised velar"
+      - "dorsal +front -back -palatalised_velar +high: palatal"
+      - "dorsal +front -back +palatalised_velar +high: palatalised velar"
+      - "dorsal +front -back -palatalised_velar: palatal"
+      - "dorsal +front -back +palatalised_velar: palatalised velar"
       - "dorsal +front -back -high: palatalised uvular"
       - "dorsal +front -back +high: palatal"
       - "dorsal +high: pal{atal} or vel{ar}"
@@ -127,8 +127,8 @@ table_structure:
       - "-spread_glottis: unaspirated []"
     nominalised: 
       eliminate:
-        "dorsal coronal labial": "retroflex front back round labiodental anterior laminal high consonant_palatal" 
-        "dorsal retroflex labiodental": "dorsal coronal labial retroflex front back round labiodental anterior laminal high consonant_palatal"
+        "dorsal coronal labial": "retroflex front back round labiodental anterior laminal high palatalised_velar" 
+        "dorsal retroflex labiodental": "dorsal coronal labial retroflex front back round labiodental anterior laminal high palatalised_velar"
       other:
       - "dorsal coronal labial: place of articulation"
       - "dorsal retroflex labiodental: place of articulation" # a total revolting kluge, but needed for the counterstripping rules
@@ -153,7 +153,7 @@ table_structure:
       - "retroflex: retroflexion"
       - "high: uvularity" # which it loves to use as a term for height
       - "front: palatalisation" # secondary more common than primary?
-      - "consonant_palatal: whether palatal or palatalised velar" # ick
+      - "palatalised_velar: whether palatal or palatalised velar" # ick
       - "round: rounding"
       - "back: velarisation" # secondary more common than primary?
       - "ATR: laxity"
@@ -165,8 +165,8 @@ table_structure:
   1:
     name: vowel
     caption: Vowels
-    order: "resonant fricative affricate !prenasalised implosive !tap_or_trill trill low !high !ATR; !labial !coronal !dorsal labiodental !anterior sibilant !laminal lateral !consonant_palatal !front back; round retroflex pharyngealised nasal long !voice constricted_glottis spread_glottis"
-    collapse: "consonant_palatal spread_glottis constricted_glottis affricate labiodental sibilant trill lateral tap_or_trill implosive laminal pharyngealised retroflex anterior prenasalised voice round ATR"
+    order: "resonant fricative affricate !prenasalised implosive !tap_or_trill trill low !high !ATR; !labial !coronal !dorsal labiodental !anterior sibilant !laminal lateral palatalised_velar !front back; round retroflex pharyngealised nasal long !voice constricted_glottis spread_glottis"
+    collapse: "palatalised_velar spread_glottis constricted_glottis affricate labiodental sibilant trill lateral tap_or_trill implosive laminal pharyngealised retroflex anterior prenasalised voice round ATR"
     labels:
       eliminate:
         "+high": "low"

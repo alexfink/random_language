@@ -1,11 +1,11 @@
 version: "4"
 
 # a big one: final place neutralisation done right.  again a coronal more likely thing
-# stop phonation neutralisation before obstruents!
+# plosive phonation neutralisation before obstruents
 # TODO: palatalisation, labialisation, velarisation can be release-timed so should be losable finally or pre-obstruentally (like that phonation)
 # retroflexion and apicality most prominent in VC contexts!  they can neutralise initially!
 # collect all the flat: velarised, pharyngealised, labialised, retroflex
-# Blevins knows of no cases of V-coloring-C coarticulatory effects in pharyngealiseation, creaky or breathy, or rhoticity
+# Blevins knows of no cases of V-coloring-C coarticulatory effects in pharyngealiseation, creaky or breathy (handled), or rhoticity
 
 # vl stop aspiration before things like pause
 #   (often pause alone, so that wants a code change)
@@ -111,7 +111,7 @@ features:
   # all the place assimilation is done here
   assimilation:
   - bound_features: coronal labial
-    further_features: front back round retroflex labiodental anterior laminal high consonant_palatal
+    further_features: front back round retroflex labiodental anterior laminal high palatalised_velar
     no_value_restriction: true 
       # the above stops random choices of which places to do
     condition: "-resonant, -syllabic"
@@ -383,14 +383,16 @@ features:
     peripheral: [0.666667]
     glide: [0, 0, 0.833333]
   assimilation:
+    # breathiness here, and creakiness below, are very unlikely to spread
+    # _from_ a vowel, per Blevins
   - condition: "+voice, +voice"
     target: 0
     prob: 0.5
-    extras: {"+resonant dorsal 0": 0.666667, "+spread_glottis 1": 0.875} # can't get nasals but not stops this way.  problem?
+    extras: {"+resonant dorsal -lateral -tap_or_trill 0": 0.333333, "+spread_glottis 1": 0.875, "!+resonant dorsal -lateral -tap_or_trill 1": 0.9875} # can't get nasals but not stops this way.  problem?
   - condition: "+voice, +voice"
     target: 1
     prob: 0.5
-    extras: {"+resonant dorsal 1": 0.666667, "+spread_glottis 0": 0.875}
+    extras: {"+resonant dorsal -lateral -tap_or_trill 1": 0.333333, "+spread_glottis 0": 0.875, "!+resonant dorsal -lateral -tap_or_trill 0": 0.9875}
   - condition: "-resonant, -dorsal -coronal -labial +spread_glottis"
     target: 0
     prob: 0.4
@@ -428,11 +430,11 @@ features:
   - condition: "+voice, +voice"
     target: 0
     prob: 0.5
-    extras: {"+resonant dorsal 0": 0.666667, "+constricted_glottis 1": 0.875}
+    extras: {"+resonant dorsal -lateral -tap_or_trill 0": 0.333333, "+constricted_glottis 1": 0.875, "!+resonant dorsal -lateral -tap_or_trill 1": 0.9875}
   - condition: "+voice, +voice"
     target: 1
     prob: 0.5
-    extras: {"+resonant dorsal 1": 0.666667, "+constricted_glottis 0": 0.875}
+    extras: {"+resonant dorsal -lateral -tap_or_trill 1": 0.333333, "+constricted_glottis 0": 0.875, "!+resonant dorsal -lateral -tap_or_trill 0": 0.9875}
   - condition: "-resonant, -dorsal -coronal -labial +constricted_glottis"
     target: 0
     prob: 0.333333
@@ -697,18 +699,18 @@ features:
     prob: 0.1
     extras: {"+front 0": 0.333333, "-back 1: 0.333333"}
 
-- name: consonant_palatal
+- name: palatalised_velar
   families: place
-  requires: "dorsal -resonant +front"
+  requires: "dorsal -resonant"
   generated:
-  - {condition: "", contrast: 0.005, prob: 0.5}
+  - {condition: "+front", contrast: 0.005, prob: 0.5}
   default:
-  - {condition: "", value: 0.857142}
+  - {condition: "", value: 0.142857}
   slots:
     coda: [0, 0, 0.125]
     peripheral: [0, 0, 0.5]
   assimilation:
-  - condition: ", dorsal -resonant +front"
+  - condition: "dorsal -resonant +front, dorsal -resonant +front"
     target: 0
     prob: 0.975
 
@@ -965,7 +967,7 @@ relations:
   assimilation:
   - condition: "-dorsal -coronal -labial +constricted_glottis, "
     except: {1: "-dorsal -coronal -labial"}
-    further_features: dorsal coronal labial front back round retroflex labiodental anterior laminal high consonant_palatal
+    further_features: dorsal coronal labial front back round retroflex labiodental anterior laminal high palatalised_velar
     target: 0
     prob: 0.025
     extras: {"-nasal 1": 0.8, "-fricative 1": 0.5, "-voice 0": 0.75}
@@ -978,7 +980,7 @@ relations:
   assimilation:
   - condition: "-dorsal -coronal -labial +spread_glottis, "
     except: {1: "-dorsal -coronal -labial"}
-    further_features: dorsal coronal labial front back round retroflex labiodental anterior laminal high consonant_palatal
+    further_features: dorsal coronal labial front back round retroflex labiodental anterior laminal high palatalised_velar
     target: 0
     prob: 0.125
     extras: {"-labial 1": 0.25, "-coronal -labial 1": 0.25, "-nasal 1": 0.5, "-fricative 1": 0.333333, "-voice 0": 0.75}
@@ -1246,7 +1248,7 @@ relations:
 # rules invoking -anterior -retroflex but not specifying resonancy,
 # this pair of rules won't take effect.
 - from: "-anterior -retroflex -resonant"
-  to: "dorsal -coronal +front +consonant_palatal"
+  to: "dorsal -coronal +front -palatalised_velar"
   weight: 2
 
 - from: "-anterior -retroflex +resonant"
@@ -1255,10 +1257,12 @@ relations:
     # to the postalveolars, it's okay to exclude it here.
   weight: 2
 
-# some stupid thing so that consonant_palatal has a little meaning
-- from: "-consonant_palatal"
-  to: "dorsal -resonant -front"
-  weight: 0.333333
+# The main thing distinguishing [k_j] from [c] here is that when
+# the former gets unpalatalised, it reverts to [k].
+# (If not for this there'd be no reason to support it on non-front.)
+- from: "+palatalised_velar -front"
+  to: "dorsal -resonant +back"
+  weight: 4
 
 # coronal Cs can spread to front(er) Vs. 
 
@@ -1751,6 +1755,7 @@ marked:
   related_weight:
     "+nasal": 0
     "+fricative": 0
+    "coronal": 0.01
 
 - condition: "+syllabic dorsal +resonant -lateral -tap_or_trill +back -low -round"
   prob: 0.5
@@ -1765,6 +1770,7 @@ marked:
   related_weight:
     "+nasal": 0
     "+fricative": 0
+    "coronal": 0.01
 
 # Writing "-low" here is a kluge, but it prevents *"+low +ATR" and
 # *"+high -ATR" from being thought to conflict.
@@ -1978,7 +1984,7 @@ marked:
 # Relatedly, breathy stops are produced way too often in assimilation.
 - condition: "-syllabic +voice +spread_glottis"
   prob: 0.96
-  phonemic_only: true
+#  phonemic_only: true # why was this here?
 
 # More phonation things.
 - condition: "+resonant -voice +spread_glottis"
@@ -2208,6 +2214,8 @@ marked:
 
 - condition: "dorsal +retroflex +back"
   prob: 0.875
+  flip:
+    dorsal: 0
 
 # plosive types that are usually affricates.  
 - condition: "+sibilant -affricate +nasal"
@@ -2235,22 +2243,26 @@ marked:
   flip:
     lateral: 0.666667
 
-# Same for posteriors but way stronger.  Perhaps a little absolutist.
+# Same for posteriors but way stronger.  
 - condition: "-sibilant -anterior -lateral +affricate"
-  prob: 0.99
+  prob: 0.993333
   flip:
     lateral: 0
     affricate: 0.125
     anterior: 0.125
     sibilant: 16
+  related_weight:
+    "": 0.0625
 
 - condition: "-sibilant -anterior -lateral +fricative"
-  prob: 0.99
+  prob: 0.993333
   flip:
     lateral: 0
     fricative: 0.125
     anterior: 0.125
     sibilant: 16
+  related_weight:
+    "": 0.0625
 
 - condition: "-anterior -retroflex -affricate -nasal"
   prob: 0.925
@@ -2280,6 +2292,13 @@ marked:
   deletion: 0
   flip:
     dorsal: 0 # and they should resolve one side or the other
+
+- condition: "+palatalised_velar -front"
+  prob: 1
+  flip:
+    palatalised_velar: 0
+    front: 0
+    # but shd be 4 to +back
 
 # is initial_prob really a sensible handling?  original prob was 0.45.
 # in any case [N] before a velar isn't marked, usually.
