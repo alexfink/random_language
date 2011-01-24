@@ -169,6 +169,11 @@ table_structure:
     order: "resonant fricative affricate !prenasalised implosive !tap_or_trill trill low !high !ATR; !labial !coronal !dorsal labiodental !anterior anterior_sibilant !laminal lateral !consonant_palatal !front back; round retroflex pharyngealised nasal long !voice constricted_glottis spread_glottis"
     collapse: "consonant_palatal spread_glottis constricted_glottis affricate labiodental anterior_sibilant trill lateral tap_or_trill implosive laminal pharyngealised retroflex anterior prenasalised voice round ATR"
     labels:
+      eliminate:
+        "+high": "low"
+        "+low": "high"
+        "+front": "back"
+        "+back": "front"
       rows:
       - "+high -ATR: near-high"
       - "+high: high"
