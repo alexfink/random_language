@@ -1,7 +1,9 @@
 version: "4"
 
+# TODO: (proximal) the saved 3760905022 deletes [h_w]!  seems wrong
+
 # a big one: final place neutralisation done right.  again a coronal more likely thing
-# plosive phonation neutralisation before obstruents
+# plosive phonation neutralisation before obstruents -- sometimes, like finally, to aspirates or glottaliseds
 # TODO: palatalisation, labialisation, velarisation can be release-timed so should be losable finally or pre-obstruentally (like that phonation)
 # retroflexion and apicality most prominent in VC contexts!  they can neutralise initially!
 # collect all the flat: velarised, pharyngealised, labialised, retroflex
@@ -118,7 +120,8 @@ features:
     except: {1: "-dorsal -coronal -labial"}
     target: 0
     prob: 0.925
-    extras: {"-resonant 1": 0.966667, "+nasal 0": 0.95, "-fricative 0": 0.666667, "-nasal 1": 0.25, "coronal -fricative -affricate 0": 0.181818} # nonsibilant coronal closures are less detectable before a C.  
+    extras: {"-resonant 1": 0.966667, "+nasal 0": 0.95, "-fricative 0": 0.833333, "-sibilant 0": 0.6, "-nasal 1": 0.25, "coronal -sibilant 0": 0.181818} # nonsibilant coronal closures are less detectable before a C.  
+  # TODO: affricates are treated wrong here; one never gets e.g. [ts)p] > [fp].  Instead this change shd just set 0 to [-affricate].  This is better for geminate formation too.  (It'll make it clash with e.g. sibilants are affricates, but so what.)
   # Blust 1979: in fact, coronal+non-coronal clusters are more likely to assimilate, or metathesise the coronal before Resonants, than others.  But sibilants are the other way; these are distinctive, and so they metathesise into less salient positions: KsR > sKR, sK(#,O) > Ks(#,O), where K is an obstruent (Steriade 2001).  From Hayes-Kirchner-Steriade [pk] > [kp] is also there. 
   # TODO: rightward place assimilation?  maybe after a very prominent syllable, as in German with syllabic nasals.  I've also seen [sk] > [st] I think more or less unconditioned; is sibilancy strong enough to do this sometimes?
   # TODO: there is rightward place assimilation to pause.  It's hard to get a compelling behaviour for nasals, just pulling this change out of nowhere; they should either have already spread nasalisation or get repaired to /N/ or velar nasal glide, but usually not simply vanish.  
@@ -270,7 +273,7 @@ features:
   slots:
     coda: [0.125]
     peripheral: [0.083333, 0.333333]
-  # dissimilation?
+  # dissimilation?  Howe has assimilation too in C clusters
 
 - name: affricate
   families: manner manner_phonation
@@ -388,11 +391,11 @@ features:
   - condition: "+voice, +voice"
     target: 0
     prob: 0.5
-    extras: {"+resonant dorsal -lateral -tap_or_trill 0": 0.333333, "+spread_glottis 1": 0.875, "!+resonant dorsal -lateral -tap_or_trill 1": 0.9875} # can't get nasals but not stops this way.  problem?
+    extras: {"+resonant dorsal -lateral -tap_or_trill 0": 0.333333, "+spread_glottis 1": 0.9375, "!+resonant dorsal -lateral -tap_or_trill 1": 0.9875} # can't get nasals but not stops this way.  problem?
   - condition: "+voice, +voice"
     target: 1
     prob: 0.5
-    extras: {"+resonant dorsal -lateral -tap_or_trill 1": 0.333333, "+spread_glottis 0": 0.875, "!+resonant dorsal -lateral -tap_or_trill 0": 0.9875}
+    extras: {"+resonant dorsal -lateral -tap_or_trill 1": 0.333333, "+spread_glottis 0": 0.9375, "!+resonant dorsal -lateral -tap_or_trill 0": 0.9875}
   - condition: "-resonant, -dorsal -coronal -labial +spread_glottis"
     target: 0
     prob: 0.4
@@ -430,11 +433,11 @@ features:
   - condition: "+voice, +voice"
     target: 0
     prob: 0.5
-    extras: {"+resonant dorsal -lateral -tap_or_trill 0": 0.333333, "+constricted_glottis 1": 0.875, "!+resonant dorsal -lateral -tap_or_trill 1": 0.9875}
+    extras: {"+resonant dorsal -lateral -tap_or_trill 0": 0.333333, "+constricted_glottis 1": 0.9375, "!+resonant dorsal -lateral -tap_or_trill 1": 0.9875}
   - condition: "+voice, +voice"
     target: 1
     prob: 0.5
-    extras: {"+resonant dorsal -lateral -tap_or_trill 1": 0.333333, "+constricted_glottis 0": 0.875, "!+resonant dorsal -lateral -tap_or_trill 0": 0.9875}
+    extras: {"+resonant dorsal -lateral -tap_or_trill 1": 0.333333, "+constricted_glottis 0": 0.9375, "!+resonant dorsal -lateral -tap_or_trill 0": 0.9875}
   - condition: "-resonant, -dorsal -coronal -labial +constricted_glottis"
     target: 0
     prob: 0.333333
@@ -705,7 +708,8 @@ features:
   generated:
   - {condition: "+front", contrast: 0.005, prob: 0.5}
   default:
-  - {condition: "", value: 0.142857}
+  - {condition: "+front", value: 0.142857}
+  - {condition: "", value: 0}
   slots:
     coda: [0, 0, 0.125]
     peripheral: [0, 0, 0.5]
@@ -1123,7 +1127,7 @@ relations:
 # ever dominate just flipping fricative?
 - from: "+fricative" 
   to: "+affricate"
-  weight: 0.1
+  weight: 0.166667
 
 # This rule is only here 'cause [ts)] > [t] type things are conspired against
 # without it.
@@ -1691,7 +1695,7 @@ marked:
     dorsal: 2
 
 - condition: "labial coronal"
-  prob: 0.975
+  prob: 0.95 # lowered a bit
   prevented_by: labial_alveolar
 
 # Coarticulate fricatives are quite selected against.
@@ -1804,14 +1808,14 @@ marked:
 - condition: "+low -resonant"
   prob: 1
 
-# Should I cast this for vowels too?  I think they can handle themselves.
+# Cast for vowels separately.
 - condition: "-syllabic +front +round"
   prob: 0.6
   flip:
     front: 2
     round: 2
-  related_weight: # These are multiplicative.
-    "labial": 0.01
+  related_weight:
+    "labial": 0.2 # for 0.6
 
 # For dorsals actually back is the unmarked one.  Flipping back is strong so that rounded dorsals resist fronting.
 - condition: "-syllabic dorsal -back +round"
@@ -1932,12 +1936,13 @@ marked:
   flip:
     spread_glottis: 50
 
-- condition: "-voice +constricted_glottis +nasal"
+# [-resonant] here so that [?~ h~] aren't selected against
+- condition: "-voice +constricted_glottis +nasal -resonant"
   prob: 1
   flip:
     constricted_glottis: 15
 
-- condition: "-voice +spread_glottis +nasal"
+- condition: "-voice +spread_glottis +nasal -resonant"
   prob: 0.997
   flip:
     spread_glottis: 15
@@ -2300,13 +2305,20 @@ marked:
     front: 0
     # but shd be 4 to +back
 
-# is initial_prob really a sensible handling?  original prob was 0.45.
-# in any case [N] before a velar isn't marked, usually.
-# more likely the main eliminator of [N] shd be syllable position-sensitive
-# changes.
+# Is initial_prob really a sensible handling?  original prob was 0.45.
+# It seems clear in any case that [N] needs some sort of special handling.
+# Before a velar it should mostly be left alone; it's not clear whether
+# for this we want a split resolution depending on surrounding sounds.
+# (If so, then its ordering has to be strange to prevent screwing with
+# a persistent nasal assimilation rule: first, do whatever to it
+# where not before a dorsal C; then nonpersistently send it to
+# coronal before a dorsal C.)
+# It's likely that the main eliminator of [N] shd be syllable 
+# position-sensitive changes.
 - condition: "dorsal +nasal -resonant" # [N]
   initial_prob: 0.625 # inflated but perhaps what we need
   prob: 0.2
+  phonemic_only: true # this in conjunction with an onset change...?
   deletion: 0.0625
   flip:
     nasal: 0.25
@@ -2456,7 +2468,7 @@ marked:
 # - prestopping (situational reinforcement w/ a new segment)
 # - prenasalised resonants(!)
 # - unreleased stops (never contrastive > not to be represented?)
-# - superhigh ~ fricative vowels (these are representable, it's just that their change infrastructure isn't there.  they yielding 'noisy' Cs and C transitions, and should have a fair chance just to go back to resonant vowels)
+# - superhigh ~ fricative vowels (and note their distribution in Mandarin) (these are representable, it's just that their change infrastructure isn't there.  they yield 'noisy' Cs and C transitions, and should have a fair chance just to go back to resonant vowels)
 # - fricative trills
 # - whistled sibilants
 # - subapicals, and laminal "closed" postalveolars
