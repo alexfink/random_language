@@ -7,25 +7,23 @@
 # (A greater proportion of the numbers are wholly fabricated, though!)
 
 # These are candidates for relatively proximal things.
+# - Split resolutions for marked situations.  (This is definitely better than yoking marked situations.
+#   I wonder whether excepts need to be separate.)
 # - Finish aspects of the rule describer.  Inserting passed-over rules when they become applicable
 #   (actually, no, save that for the bigram tracker which sound change will also need),
 #   and changing the verb when in fact outcoming sounds always have a different outcome (like deletion), 
 #   seem good ideas.
 # - Allow consonant inventory tables to merge coronal posterior and palatal columns, and /kp)/ and /w/.
+# - Better extra conditions.
 # - Make phone proportions saner?  Perhaps each unlikely distinction should propagate favour up into
 #   its prerequisites, or something, in a way that fixes overrare but doesn't exacerbate overcommon.
-# - Better extra conditions.
-# - Excepts on markeds ought to be quick.  But what for?  If we're to screw with markeds,
-#   something which actually needs doing is, somehow, allowing split handling of resolutions 
-#   for such things as breathy voicing: devoicing should be relatively favoured for 
-#   breathy-voiced _stops_ but I think pretty much forbidden for breathy-voiced _resonants_.
 
 use strict;
 use YAML::Any;
 use CGI;
 use constant INF => 9**9**9; # is there really nothing sensible better?
 
-my $version = '0.2.2';
+my $version = '0.3';
 my $credits = 'Gleb, a phonology generator, by Alex Fink' . 
               (' ' x (29 - length($version))) . # for a total length of 78
               "version $version";
@@ -1001,6 +999,7 @@ sub gen_one_rule {
       if ($threshold < 1) {
         $rule->{cede} = 1-$threshold;
       }
+
       my $persistence_weight = defined $FS->{marked}[$k]{persist} ? $FS->{marked}[$k]{persist} : $threshold;
       my @variants = persistence_variants $phonology, [$rule, $base_weight], $persistence_weight, 
                                           $no_persist, $args{generable_val};
@@ -2482,7 +2481,9 @@ sub describe_rules {
 
     # TODO: (proximately) consolidate multiple frames; 
     # rewrite non-assimilatory all-deviates rules (but mind the cases like [t] > [tK] "coronals become laterals.  no, they become affricates!");
-    # don't list a sound in the main change and as an exception, or as two exceptions.
+    # fix "[Cs or Vs] other than fricatives" being described as "other than vowels or fricatives"; -- I don't get why this is happening.  it's str behaviour but it shouldn't be there
+    # don't list a sound in the main change and as an exception, or as two exceptions;
+    # put in the examples.
     my @susceptible;
     my $insusceptibles_exist = 0;
     my %dev_distilled; # %dev_distilled maps frames to lists of (condition, phones) pairs
