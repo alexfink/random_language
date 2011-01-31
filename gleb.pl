@@ -1607,16 +1607,18 @@ sub table_sortkey {
 sub reenrich {
   my ($k, $inventory) = (shift, shift);
   my $old_k = $k;
+  my $test;
+  my @absent;
   REINSERTION: for my $i (0..length($k)-1) {
     next unless substr($k, $i, 1) eq '.';
-    for my $v (0..1) {
-      my $test = $old_k;
-      substr($test, $i, 1) = 1-$v;
-      unless (grep /^$test$/, @$inventory) {
-        substr($k, $i, 1) = $v;
-        next REINSERTION;
-      }
+    for my $v (0..2) {
+      $test = $old_k;
+      substr($test, $i, 1) = $v == 2 ? 'u' : $v;
+      $absent[$v] = !grep /^$test$/, @$inventory;
     }
+    substr($k, $i, 1) = '0', next REINSERTION if $absent[1] and $absent[2];
+    substr($k, $i, 1) = '1', next REINSERTION if $absent[0] and $absent[2];
+    substr($k, $i, 1) = 'u', next REINSERTION if $absent[0] and $absent[1];
   }
   $k;
 }
@@ -1908,9 +1910,8 @@ sub name_natural_class {
 
   my $reenriched = defined $inventory ? reenrich($phone, $inventory) : $phone;
 
-  if ($args{no_nothing}) {
-    return '' unless grep /^$reenriched$/, @$inventory;
-  }
+  return $args{no_nothing} ? '' : ($args{morpho} eq 'plural' ? 'no phones' : 'no phone') 
+      if defined $inventory and !grep /^$reenriched$/, @$inventory;
 
   my $str = $args{str};
   my $subtable_index;
@@ -1928,13 +1929,17 @@ sub name_natural_class {
   if (defined $str->{subtables}) {
     my $phone0 = $phone;
     substr($phone0, $subtable_index, 1) = '0';
-    my $name0 = name_natural_class($phone0, $inventory, %args, str => $str->{0}, nodebug => 1);
+    my $name0 = name_natural_class($phone0, $inventory, %args, str => $str->{0}, no_nothing => 1, nodebug => 1);
     my $phone1 = $phone;
     substr($phone1, $subtable_index, 1) = '1';
-    my $name1 = name_natural_class($phone1, $inventory, %args, str => $str->{1}, nodebug => 1);
+    my $name1 = name_natural_class($phone1, $inventory, %args, str => $str->{1}, no_nothing => 1, nodebug => 1);
+
+    return $name0 unless $name1;
+    return $name1 unless $name0;
+    return $name0 if ($name0 eq $name1);
+
     my $conjunction = $args{morpho} eq 'plural' ? ' and ' : ' or ';
 
-    return $name0 if ($name0 eq $name1);
     # Factor out a common string of all but at most one word.
     $name0 =~ /^(.* )?([^ ]*)$/;
     my ($fore0, $aft0) = ($1, $2);
@@ -2480,107 +2485,112 @@ sub describe_rules {
     # "foos do A, except for bar foos, which do B instead".
 
     # TODO: (proximately) consolidate multiple frames; 
-    # rewrite non-assimilatory all-deviates rules (but mind the cases like [t] > [tK] "coronals become laterals.  no, they become affricates!");
-    # fix "[Cs or Vs] other than fricatives" being described as "other than vowels or fricatives"; -- I don't get why this is happening.  it's str behaviour but it shouldn't be there
+    # rewrite non-assimilatory all-deviates rules (but mind the cases like [t] > [tK] "coronals become laterals.  no, they become affricates!": i.e. try to overwrite the change?);
+    #   why does saved 4109562841 say "phones" for resonants and glottals?
     # don't list a sound in the main change and as an exception, or as two exceptions;
     # put in the examples.
     my @susceptible;
     my $insusceptibles_exist = 0;
     my %dev_distilled; # %dev_distilled maps frames to lists of (condition, phones) pairs
     my %any_nondeviates; # is there any phone which behaves normally?
-    if (keys %outcome) {
-      for my $frame (keys %outcome) {
-        # %deviations maps deviations to the list of sounds that give them
-        my %deviations;
+    for my $frame (keys %outcome) {
+      # %deviations maps deviations to the list of sounds that give them
+      my %deviations;
 
-        # Collect the deviations.
-        for my $phone (@{$matcheds{$locus}}) {
-          my $susceptible = 0;
-          my $outcome = $outcome{$frame}{$phone};
-          if ($outcome =~ / /) { 
-            print STDERR "multiple sound outcome in finding deviations!\n"; # FIXME: multiple sound outcomes
+      # Collect the deviations.
+      for my $phone (@{$matcheds{$locus}}) {
+        my $susceptible = 0;
+        my $outcome = $outcome{$frame}{$phone};
+        if ($outcome =~ / /) { 
+          print STDERR "multiple sound outcome in finding deviations!\n"; # FIXME: multiple sound outcomes
+        }
+        my $changed = add_entailments overwrite($phone, $frame); # duplicative :-/
+        if (length($outcome)) { # one phone
+          for (0..length($outcome)-1) {
+            substr($outcome, $_, 1) = '.' if substr($outcome, $_, 1) eq substr($changed, $_, 1);
           }
-          my $changed = add_entailments overwrite($phone, $frame); # duplicative :-/
-          if (length($outcome)) { # one phone
-            for (0..length($outcome)-1) {
-              substr($outcome, $_, 1) = '.' if substr($outcome, $_, 1) eq substr($changed, $_, 1);
-            }
-            push @{$deviations{$outcome}}, $phone;
+          push @{$deviations{$outcome}}, $phone;
 
-            # Only announce the main clause of this rule if there's a nondeviate that actually changes.
-            $any_nondeviates{$frame} = 1 if $outcome eq '.' x length($frame) 
-                                        and $outcome{$frame}{$phone} ne $phone;
-          } else { # no phones: deletion is a deviation
-            push @{$deviations{''}}, $phone;              
+          # Only announce the main clause of this rule if there's a nondeviate that actually changes.
+          $any_nondeviates{$frame} = 1 if $outcome eq '.' x length($frame) 
+                                      and $outcome{$frame}{$phone} ne $phone;
+        } else { # no phones: deletion is a deviation
+          push @{$deviations{''}}, $phone;              
+        }
+
+        $susceptible = 1, push @susceptible, $phone # can't jump out or we might miss exceptionality
+            if $outcome{$frame}{$phone} ne $phone;
+        $insusceptibles_exist = 1 unless $susceptible;
+      } # phone
+
+      # Distill the deviations.  
+      #
+      # Deviations form a partial order, where D > D' if D makes every change D' makes.
+      # For D a deviation running smallest to largest, 
+      # as a general rule we want to handle the whole up-set of D, if we can.
+      # So we want to just name D within its down-set and transfer that naming to the up-set.
+      my $any_deviations;
+      do {
+        $any_deviations = 0;
+        for my $dev (sort {grep(1,($a =~ /[^.]/g)) <=> grep(1,($b =~ /[^.]/g))} keys %deviations) { # D
+          next if $dev !~ /[^.]/ and length($dev);
+          next unless @{$deviations{$dev}};
+          $any_deviations = 1;
+          
+          my @downset;
+          if (length($dev) > 0) { # deviation is not deletion
+            for (keys %deviations) {
+              push @downset, @{$deviations{$_}} if $dev =~ /^$_$/;
+            }
+          }
+          else { # deviation is deletion
+            @downset = @{$matcheds{$locus}};
           }
 
-          $susceptible = 1, push @susceptible, $phone # can't jump out or we might miss exceptionality
-              if $outcome{$frame}{$phone} ne $phone;
-          $insusceptibles_exist = 1 unless $susceptible;
-        } # phone
-
-        # Distill the deviations.  
-        #
-        # Deviations form a partial order, where D > D' if D makes every change D' makes.
-        # For D a deviation running smallest to largest, 
-        # as a general rule we want to handle the whole up-set of D, if we can.
-        # So we want to just name D within its down-set and transfer that naming to the up-set.
-        my $any_deviations;
-        do {
-          $any_deviations = 0;
-          for my $dev (sort {grep(1,($a =~ /[^.]/g)) <=> grep(1,($b =~ /[^.]/g))} keys %deviations) { # D
-            next if $dev !~ /[^.]/ and length($dev);
-            next unless @{$deviations{$dev}};
-            $any_deviations = 1;
-            
-            my @downset;
-            if (length($dev) > 0) { # deviation is not deletion
-              for (keys %deviations) {
-                push @downset, @{$deviations{$_}} if $dev =~ /^$_$/;
-              }
-            }
-            else { # deviation is deletion
-              @downset = @{$matcheds{$locus}};
-            }
-
-            my %extension = map(($_ => 1), 
-                describe_set $deviations{$dev}, \@downset, extend => $matcheds{$locus});
-            
-            my @covered;
-            for my $dev2 (keys %deviations) { # a member of the up-set
-              if ($dev2 =~ /^$dev$/ or length($dev2) == 0) {
-                push @covered, grep defined($extension{$_}), @{$deviations{$dev2}};
-                if (length($dev2) > 0) { # this aspect of the deviation is handled; don't remark on it again
-                  my $stripped_dev2 = $dev2;
-                  for (0..length($dev2)-1) {
-                    substr($stripped_dev2, $_, 1) = '.' if substr($dev2, $_, 1) eq substr($dev, $_, 1);
-                  }
-                  push @{$deviations{$stripped_dev2}}, grep defined($extension{$_}), @{$deviations{$dev2}};
-                  @{$deviations{$dev2}} = grep !defined($extension{$_}), @{$deviations{$dev2}};
+          my %extension = map(($_ => 1), 
+              describe_set $deviations{$dev}, \@downset, extend => $matcheds{$locus});
+          
+          my @covered;
+          for my $dev2 (keys %deviations) { # a member of the up-set
+            if ($dev2 =~ /^$dev$/ or length($dev2) == 0) {
+              push @covered, grep defined($extension{$_}), @{$deviations{$dev2}};
+              if (length($dev2) > 0) { # this aspect of the deviation is handled; don't remark on it again
+                my $stripped_dev2 = $dev2;
+                for (0..length($dev2)-1) {
+                  substr($stripped_dev2, $_, 1) = '.' if substr($dev2, $_, 1) eq substr($dev, $_, 1);
                 }
-              }
-            } # dev2
-            delete $deviations{''} if ($dev eq '');
-            
-            # Throw out distilled deviations which do nothing aside from fill in undefineds.
-            my $only_undefineds = 0;
-            if ($dev ne '') {
-              $only_undefineds = 1;
-              ONLY_UNDEF: for my $phone (@covered) {
-                for (0..length($phone)-1) {
-                  $only_undefineds = 0, last ONLY_UNDEF if substr($dev, $_, 1) =~ /[01]/ and substr($phone, $_, 1) ne 'u';
-                }
+                push @{$deviations{$stripped_dev2}}, grep defined($extension{$_}), @{$deviations{$dev2}};
+                @{$deviations{$dev2}} = grep !defined($extension{$_}), @{$deviations{$dev2}};
               }
             }
+          } # dev2
+          delete $deviations{''} if ($dev eq '');
+          
+          # Throw out distilled deviations which do nothing aside from fill in undefineds.
+          my $only_undefineds = 0;
+          if ($dev ne '') {
+            $only_undefineds = 1;
+            ONLY_UNDEF: for my $phone (@covered) {
+              for (0..length($phone)-1) {
+                $only_undefineds = 0, last ONLY_UNDEF if substr($dev, $_, 1) =~ /[01]/ and substr($phone, $_, 1) ne 'u';
+              }
+            }
+          }
 
-            push @{$dev_distilled{$frame}}, [$dev, \@covered] unless $only_undefineds;
-          } # dev
-        } while ($any_deviations);
+          push @{$dev_distilled{$frame}}, [$dev, \@covered] unless $only_undefineds;
+        } # dev
+      } while ($any_deviations);
 
-      } # frame
-    }
+    } # frame
+
+    # I suspect that this is the right place to merge frames.
 
     # Start to prepare the textual description.  First, what the change does.
+
+    # HERE If all frames have all deviates, we have to overwrite before preparing 
+    # the main VP, here.
+    # If more than one does, even after frame-merging, we can only import one
+    # to the place of the main VP, and have to leave the others trailing.  
 
     # Some of the features may appear redundant to list in the rule, given the current inventory.
     # But I leave them, just so that there isn't another thing to revise when persistence happens.
