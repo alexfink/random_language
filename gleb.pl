@@ -1604,7 +1604,7 @@ sub table_sortkey {
 }
 
 # Add the features which are redundantly present in a list.
-sub reenrich {
+sub enrich {
   my ($k, $inventory) = (shift, shift);
   my $old_k = $k;
   my $test;
@@ -1630,7 +1630,7 @@ sub reenrich {
 # strings joined by its value.  $args{repeat_mod} is a hash doing similarly for modificated things.
 
 sub tabulate_label {
-  my ($reenriched, $p, $pmod, $l, $lmod, %args) = @_;
+  my ($enriched, $p, $pmod, $l, $lmod, %args) = @_;
   my $label = '';
   $l = [] if !defined $l;
   $lmod = [] if !defined $lmod;
@@ -1642,7 +1642,7 @@ sub tabulate_label {
     }
   }
   for my $i (0..@$l-1) {
-    if ($reenriched =~ /^$p->[$i]$/) {
+    if ($enriched =~ /^$p->[$i]$/) {
       if ($args{nobase} or $args{repeat_base}) {
         # if we fail to pick anything from $p in this case, that's okay.
         my $irredundant;
@@ -1664,7 +1664,7 @@ sub tabulate_label {
   $label = '[]';
   my %repeated;
   for my $i (0..@$lmod-1) {
-    if ($reenriched =~ /^$pmod->[$i]$/) {
+    if ($enriched =~ /^$pmod->[$i]$/) {
       my $irredundant;
       for (0..length($pmod->[$i])-1) {
         $irredundant = 1 if substr($pmod->[$i], $_, 1) ne '.' and !$taken_care_of[$_];
@@ -1693,20 +1693,20 @@ sub tabulate_label {
     my $str = $phon_descr->{table_structure};
     while (defined $str->{subtables}) {
       $dont_spell{$feature_indices{$str->{subtables}}} = 1;
-      my $subtable = substr($reenriched, $feature_indices{$str->{subtables}}, 1);
+      my $subtable = substr($enriched, $feature_indices{$str->{subtables}}, 1);
       last if $subtable eq '.';
       $str = $str->{$subtable};
     }
 
-    for my $i (0..length($reenriched)-1) {
+    for my $i (0..length($enriched)-1) {
       next if $taken_care_of[$i];
-      next if substr($reenriched, $i, 1) eq '.';
+      next if substr($enriched, $i, 1) eq '.';
       next if $dont_spell{$i};
-      next if $args{respect_univalent} and substr($reenriched, $i, 1) eq '0' and $FS->{features}[$i]{univalent};
-      my $non = '.' x length($reenriched);
-      substr($non, $i, 1) = 1 - substr($reenriched, $i, 1);
-      my $reenriched_non = reenrich $non, $args{nons}; 
-      my $non_label = tabulate_label($reenriched_non, $p, $pmod, $l, $lmod, %args, 
+      next if $args{respect_univalent} and substr($enriched, $i, 1) eq '0' and $FS->{features}[$i]{univalent};
+      my $non = '.' x length($enriched);
+      substr($non, $i, 1) = 1 - substr($enriched, $i, 1);
+      my $enriched_non = enrich $non, $args{nons}; 
+      my $non_label = tabulate_label($enriched_non, $p, $pmod, $l, $lmod, %args, 
                                      nons => undef, significant => $non, nobase => 1);
       chop $non_label while $non_label =~ / $/; # for nobase
       $non_label = substr($non_label, 1) while $non_label =~ /^ /;
@@ -1832,15 +1832,15 @@ sub tabulate {
   # is undefined everywhere in the column.
   my @extant_rows = map substr($_, 0, $str->{lengths}[0]), keys %old_table;
   my @extant_columns = map substr($_, $str->{lengths}[0], $str->{lengths}[1]), keys %old_table;
-  my (%reenriched_rows, %reenriched_columns);
-  $reenriched_rows{$_} = reenrich $_, \@extant_rows for keys %rows;
-  $reenriched_columns{$_} = reenrich $_, \@extant_columns for keys %columns;
+  my (%enriched_rows, %enriched_columns);
+  $enriched_rows{$_} = enrich $_, \@extant_rows for keys %rows;
+  $enriched_columns{$_} = enrich $_, \@extant_columns for keys %columns;
 
   my $table = "<table style=\"text-align: center;\">\n<caption>$str->{caption}</caption>\n";
   $table .= '<tr style="vertical-align: bottom;"><th></th>';
   for my $column (sort keys %columns) {
     $table .= '<td></td>'; # empty cells for separation, yeah
-    my $label = tabulate_label $reenriched_columns{$column}, 
+    my $label = tabulate_label $enriched_columns{$column}, 
                                $label_phones{columns}, $label_phones{columns_mod},
                                $labels{columns}, $labels{columns_mod},
                                header => 1,
@@ -1854,7 +1854,7 @@ sub tabulate {
   $table .= "</tr>\n";
   for my $row (sort keys %rows) {
     $table .= '<tr>';
-    my $label = tabulate_label $reenriched_rows{$row}, 
+    my $label = tabulate_label $enriched_rows{$row}, 
                                $label_phones{rows}, $label_phones{rows_mod},
                                $labels{rows}, $labels{rows_mod},
                                repeat_base => $str->{labels}{repeat_rows};
@@ -1908,10 +1908,10 @@ sub name_natural_class {
   #$debug_bit = '<span style="font-size: small;">' . $debug_bit . '</span>' if $use_html; # debug
   #$debug_bit = '' if defined $args{nodebug}; # debug
 
-  my $reenriched = defined $inventory ? reenrich($phone, $inventory) : $phone;
+  my $enriched = defined $inventory ? enrich($phone, $inventory) : $phone;
 
   return $args{no_nothing} ? '' : ($args{morpho} eq 'plural' ? 'no phones' : 'no phone') 
-      if defined $inventory and !grep /^$reenriched$/, @$inventory;
+      if defined $inventory and !grep /^$enriched$/, @$inventory;
 
   my $str = $args{str};
   my $subtable_index;
@@ -1919,12 +1919,12 @@ sub name_natural_class {
     $str = $phon_descr->{table_structure};
     while (defined $str->{subtables}) {
       $subtable_index = $feature_indices{$str->{subtables}}; 
-      my $subtable = substr($reenriched, $subtable_index, 1);
+      my $subtable = substr($enriched, $subtable_index, 1);
       last if $subtable eq '.';
       $str = $str->{$subtable};
     }
   }
-  $reenriched = add_false_features $reenriched, $str;
+  $enriched = add_false_features $enriched, $str;
 
   if (defined $str->{subtables}) {
     my $phone0 = $phone;
@@ -1999,7 +1999,7 @@ sub name_natural_class {
   }
 
   my $significant = defined $args{significant} ? $args{significant} : $phone;
-  my $name = tabulate_label $reenriched,
+  my $name = tabulate_label $enriched,
                             $str->{$scheme}{name_classes}{p}, $str->{$scheme}{name_classes}{pmod},
                             $str->{$scheme}{name_classes}{l}, $str->{$scheme}{name_classes}{lmod},
                             %args,
@@ -2353,7 +2353,7 @@ sub describe_rules {
     $old_pre = $pre = $rule->{precondition}{$locus-1} if defined $rule->{precondition}{$locus-1};
     $old_post = $post = $rule->{precondition}{$locus+1} if defined $rule->{precondition}{$locus+1};
     $far = grep(($_ ne $locus-1 and $_ ne $locus and $_ ne $locus+1), keys %{$rule->{precondition}});
-    # Try to simplify assimilations, taking advantage of reenrichments.
+    # Try to simplify assimilations, taking advantage of enrichments.
     for my $i (0..length($effect)-1) {
       substr($effect, $i, 1) = substr($pre, $i, 1)
         if substr($effect, $i, 1) eq '<' and substr($pre, $i, 1) ne '.';
@@ -2486,6 +2486,7 @@ sub describe_rules {
 
     # TODO: (proximately) consolidate multiple frames; 
     # rewrite non-assimilatory all-deviates rules (but mind the cases like [t] > [tK] "coronals become laterals.  no, they become affricates!": i.e. try to overwrite the change?);
+    # there are strange "except for"s in the "become" phrase.
     #   why does saved 4109562841 say "phones" for resonants and glottals?
     # don't list a sound in the main change and as an exception, or as two exceptions;
     # put in the examples.
@@ -2639,7 +2640,7 @@ sub describe_rules {
     if ($effect =~ /</) {
       $_ = $effect;
       y/01<>/..1./;
-      $_ = overwrite(str_part(reenrich($precondition,\@inventory)), $_);
+      $_ = overwrite(str_part(enrich($precondition,\@inventory)), $_);
       $main_VP .= ' and' if $main_VP;
       $main_VP .= ' assimilate in ' .
           name_natural_class($_, undef, scheme => 'nominalised', nobase => 1);
@@ -2665,7 +2666,7 @@ sub describe_rules {
     if ($effect =~ />/) {
       $_ = $effect;
       y/01<>/...1/;
-      $_ = overwrite(str_part(reenrich($precondition,\@inventory)), $_);
+      $_ = overwrite(str_part(enrich($precondition,\@inventory)), $_);
       $main_VP .= ' and' if $main_VP;
       $main_VP .= ' assimilate in ' .
           name_natural_class($_, undef, scheme => 'nominalised', nobase => 1);
