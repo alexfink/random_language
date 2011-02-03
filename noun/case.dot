@@ -82,6 +82,7 @@ digraph case {
 	possession_source [retention = 0.1]; // "I borrowed the book _from Cecil_"
 	possession_source -> source;
 	possession_source -> possesser;
+	possession_source -> thing_lacked;
 	possesser [retention = 0.666667];
 	possesser -> source;
 	possesser -> possession_source;
@@ -90,8 +91,8 @@ digraph case {
 	possesser -> beneficiary;
 	possesser -> maleficiary;
 	possesser -> accompanier;
-	thing_lacked [retention = 0.1]; // I have no better idea for an edge, except for from local cases
-	thing_lacked -> thing_avoided;
+	thing_lacked [retention = 0.1]; // I have no good idea for an edge, except for from local cases
+	thing_lacked -> possession_source;
 	similar_thing [retention = 0.1];
 	similar_thing -> manner;
 	similar_thing -> state;
@@ -126,7 +127,6 @@ digraph case {
 	path -> manner;
 	thing_avoided [retention = 0.05];
 	thing_avoided -> source;
-	thing_avoided -> thing_lacked;
 	goal [retention = 0.4];
 	goal [product_with = "[spatial_relation]"];
 	goal -> recipient;
