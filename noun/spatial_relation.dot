@@ -1,5 +1,5 @@
 digraph spatial_relation {
-	graph [odds = 0.1];
+	graph [odds = 0.1]; // TODO: this should be separable from case but quite infrequently occur without case.  do we support that?
 	under [retention = 0.05];
 	under -> at;
 	under -> in_contact;
