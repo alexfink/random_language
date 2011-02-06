@@ -1188,7 +1188,7 @@ sub gen_phonology {
 
       push @syllable_structure, {
         prob => fuzz($slot->{presence}),
-        features => \%featureses, # parse_feature_string($slot->{features}), # HERE testing
+        features => \%featureses,
         tag => $slot->{tag},
       };
     } while (defined $slot->{prob_more} and rand() < $slot->{prob_more});
@@ -1288,7 +1288,7 @@ sub gen_phonology {
               $slot->{features}{$phone} = $weight;
             }
           } # each %{$slot->{features}}
-        } # @syllable_structure # HERE testing
+        } # @syllable_structure
 
         for my $fam (split / /, $f->{families}) {
           $_ = $precondition;
@@ -1477,7 +1477,6 @@ sub inventory {
   # between phones into account for these numbers, so they're kind of crude.
   my %inventory;
 
-  # HERE testing
   for my $i (0..@$syllable_structure-1) {
     for my $phone (keys %{$syllable_structure->[$i]{features}}) {
       add_in \%inventory, $phone, 
@@ -2484,9 +2483,8 @@ sub describe_rules {
     # Note that this doesn't have any particular handling of 
     # "foos do A, except for bar foos, which do B instead".
 
-    # TODO: (proximately) consolidate multiple frames; 
-    # rewrite non-assimilatory all-deviates rules (but mind the cases like [t] > [tK] "coronals become laterals.  no, they become affricates!": i.e. try to overwrite the change?);
-    # there are strange "except for"s in the "become" phrase.
+    # TODO: (proximately) 
+    # there are strange "except for"s in multiple phrases;
     #   why does saved 4109562841 say "phones" for resonants and glottals?
     # don't list a sound in the main change and as an exception, or as two exceptions;
     # put in the examples.
@@ -2621,107 +2619,137 @@ sub describe_rules {
 
     # Start to prepare the textual description.  First, what the change does.
 
-    # HERE If all frames have all deviates, we have to overwrite before preparing 
-    # the main VP, here.
-    # If there is more than one pattern of deviation, after frame-merging and list-consolidation,
-    # it is best just not to have a main VP or subject, just the environment PP there.
-
     # Some of the features may appear redundant to list in the rule, given the current inventory.
     # But I leave them, just so that there isn't another thing to revise when persistence happens.
     my $simple_effect = $effect;
     $simple_effect =~ y/<>/../;
     my $modified = overwrite $precondition, $simple_effect; 
 
-    my $text;
-    if ($insusceptibles_exist) {
-      $text = describe_set(\@susceptible, \@inventory, within => $precondition, 
-          morpho => 'plural', suppress_ie => 1, etic => 1, sort_phones => 1);
-      # maybe break off "other than" here and handle among the exception texts
-    } else {
-      $text = name_natural_class($precondition, \@inventory, morpho => 'plural');
+    # If all frames have all deviates, we don't want to use the default complement.
+    # If there is just one deviation, use it instead.
+    # If there is more than one, even after frame-merging and list-consolidation,
+    # it is best just not to have a main VP or subject, just the environment PP there.
+    my $no_main_VP = 0;
+    my $all_all_deviates = 1;
+    if (keys %dev_distilled) {
+      for my $frame (keys %dev_distilled) {
+        $all_all_deviates = 0, last if $any_nondeviates{$frame};
+      }
+      if ($all_all_deviates) {
+        if (keys %dev_distilled <= 1) {
+          @_ = keys %dev_distilled;
+          my $frame = @_[0];
+          if (keys %{$dev_distilled{$frame}} <= 1) {
+            @_ = keys %{$dev_distilled{$frame}};
+            my $dev = @_[0];
+            if ($dev ne '') { # deviation can be deletion
+              $modified = overwrite $modified, $dev;
+            } else {
+              $modified = '';
+            }
+          } else {
+            $no_main_VP = 1;
+          }
+        } else {
+          $no_main_VP = 1;
+        }
+      }
     }
-    my $subject_is_list = ($text =~ /^\[.*\]$/); # klugy
-    my @exception_texts;
-    if (defined $rule->{except}{$locus}) {
-      my @exceptions = split / /, $rule->{except}{$locus};
-      @exception_texts = map name_natural_class(overwrite($precondition, $_), 
-          \@inventory, morpho => 'plural', significant => $_, no_nothing => 1), @exceptions;
-      @exception_texts = grep $_, @exception_texts; # this is the first one
-    }
-    $text .= ' except for ' . join ' and ', @exception_texts if @exception_texts;
-    # It is friendliest not to describe rules which survive till before the _next_ rule as persistent.
-    $text .= ' persistently' unless (defined $rule->{inactive} and $rule->{inactive} <= $i + 1);
 
-    my $main_VP = '';
-    if ($effect =~ /[01]/) {
-      #$main_VP .= ' and' if $main_VP; # this is the first one
-      $main_VP .= ' become ';
-      my $object;
-      # if the subject is a list, make the object one too
-      if ($subject_is_list and scalar keys %outcome <= 1) { 
-        my ($frame) = keys %outcome; 
-        $object = '[' . join(' ', map spell_out([split ' ', $outcome{$frame}{$_}], null => 1), @susceptible) . ']';
+    my $text = '';
+    unless ($no_main_VP) {
+      if ($insusceptibles_exist) {
+        $text = describe_set(\@susceptible, \@inventory, within => $precondition, 
+            morpho => 'plural', suppress_ie => 1, etic => 1, sort_phones => 1);
+        # maybe break off "other than" here and handle among the exception texts
       } else {
-        $object = name_natural_class($modified, \@new_inventory, significant => $simple_effect, morpho => 'plural', nobase => 1);
-        if ($object =~ / and /) {
-          $object .= ', respectively,'; 
-        }
-        $object = "GD".feature_string($modified) unless $object;
+        $text .= name_natural_class($precondition, \@inventory, morpho => 'plural');
       }
-      $main_VP .= $object;
-    }
-    if ($effect =~ /</) {
-      $_ = $effect;
-      y/01<>/..1./;
-      $_ = overwrite(str_part(enrich($precondition,\@inventory)), $_);
-      $main_VP .= ' and' if $main_VP;
-      $main_VP .= ' assimilate in ' .
-          name_natural_class($_, undef, scheme => 'nominalised', nobase => 1);
-      if (!defined($old_post) and !$far) {
-        $main_VP .= ' to a preceding ' . 
-            name_natural_class($pre, \@inventory, morpho => 'bare');
-        $pre = undef;
+      my $subject_is_list = ($text =~ /^\[.*\]$/); # klugy
+      my @exception_texts;
+      if (defined $rule->{except}{$locus}) {
+        my @exceptions = split / /, $rule->{except}{$locus};
+        @exception_texts = map name_natural_class(overwrite($precondition, $_), 
+            \@inventory, morpho => 'plural', significant => $_, no_nothing => 1), @exceptions;
+        @exception_texts = grep $_, @exception_texts; # this is the first one
+      }
+      $text .= ' except for ' . join ' and ', @exception_texts if @exception_texts;
+      # It is friendliest not to describe rules which survive till before the _next_ rule as persistent.
+      $text .= ' persistently' unless (defined $rule->{inactive} and $rule->{inactive} <= $i + 1);
+
+      my $main_VP = '';
+      if ($modified eq '') { # this only happens if overwritten by a deviation
+        $main_VP = ' are deleted';
       } else {
-        $main_VP .= ' to the previous phone';
-      }
-      if ($rule->{or_pause}{$locus+1}) { # word-initial
-        my $pausal_effect = $effect;
-        for (0..length($pausal_effect)-1) {
-          substr($pausal_effect, $_, 1) = substr($rule->{pause_phone}, $_, 1)
-              if substr($pausal_effect, $_, 1) eq '<';
+        if ($effect =~ /[01]/) {
+          $main_VP = ' become ';
+          # if the subject is a list, make the complement one too
+          if ($subject_is_list and scalar keys %outcome <= 1) { 
+            my ($frame) = keys %outcome; 
+            $main_VP .= '[' . join(' ', map spell_out([split ' ', $outcome{$frame}{$_}], null => 1), @susceptible) . ']';
+          } else {
+            $main_VP .= name_natural_class($modified, \@new_inventory, significant => $simple_effect, morpho => 'plural', nobase => 1);
+            if ($main_VP =~ / and /) {
+              $main_VP .= ', respectively,'; 
+            }
+            $main_VP = "GD".feature_string($modified) unless $main_VP;
+          }
         }
-        my $modified = overwrite $precondition, $pausal_effect; 
-        $main_VP .= ' and become ' . 
-                    name_natural_class($modified, \@new_inventory, significant => $pausal_effect, morpho => 'plural', nobase => 1) .
-                    ' word-initially';
-      }
-    }
-    if ($effect =~ />/) {
-      $_ = $effect;
-      y/01<>/...1/;
-      $_ = overwrite(str_part(enrich($precondition,\@inventory)), $_);
-      $main_VP .= ' and' if $main_VP;
-      $main_VP .= ' assimilate in ' .
-          name_natural_class($_, undef, scheme => 'nominalised', nobase => 1);
-      if (!defined($old_pre) and !$far) {
-        $main_VP .= ' to a following ' . 
-            name_natural_class($post, \@inventory, morpho => 'bare');
-        $post = undef;
-      } else {
-        $main_VP .= ' to the next phone';
-      }
-      if ($rule->{or_pause}{$locus+1}) { # word-final
-        my $pausal_effect = $effect;
-        for (0..length($pausal_effect)-1) {
-          substr($pausal_effect, $_, 1) = substr($rule->{pause_phone}, $_, 1)
-              if substr($pausal_effect, $_, 1) eq '>';
+        if ($effect =~ /</) {
+          $_ = $effect;
+          y/01<>/..1./;
+          $_ = overwrite(str_part(enrich($precondition,\@inventory)), $_);
+          $main_VP .= ' and' if $main_VP;
+          $main_VP .= ' assimilate in ' .
+              name_natural_class($_, undef, scheme => 'nominalised', nobase => 1);
+          if (!defined($old_post) and !$far) {
+            $main_VP .= ' to a preceding ' . 
+                name_natural_class($pre, \@inventory, morpho => 'bare');
+            $pre = undef;
+          } else {
+            $main_VP .= ' to the previous phone';
+          }
+          if ($rule->{or_pause}{$locus+1}) { # word-initial
+            my $pausal_effect = $effect;
+            for (0..length($pausal_effect)-1) {
+              substr($pausal_effect, $_, 1) = substr($rule->{pause_phone}, $_, 1)
+                  if substr($pausal_effect, $_, 1) eq '<';
+            }
+            my $modified = overwrite $precondition, $pausal_effect; 
+            $main_VP .= ' and become ' . 
+                        name_natural_class($modified, \@new_inventory, significant => $pausal_effect, morpho => 'plural', nobase => 1) .
+                        ' word-initially';
+          }
         }
-        my $modified = overwrite $precondition, $pausal_effect; 
-        $main_VP .= ' and become ' . 
-                    name_natural_class($modified, \@new_inventory, significant => $pausal_effect, morpho => 'plural', nobase => 1) .
-                    ' word-finally';
-      }
-    }
+        if ($effect =~ />/) {
+          $_ = $effect;
+          y/01<>/...1/;
+          $_ = overwrite(str_part(enrich($precondition,\@inventory)), $_);
+          $main_VP .= ' and' if $main_VP;
+          $main_VP .= ' assimilate in ' .
+              name_natural_class($_, undef, scheme => 'nominalised', nobase => 1);
+          if (!defined($old_pre) and !$far) {
+            $main_VP .= ' to a following ' . 
+                name_natural_class($post, \@inventory, morpho => 'bare');
+            $post = undef;
+          } else {
+            $main_VP .= ' to the next phone';
+          }
+          if ($rule->{or_pause}{$locus+1}) { # word-final
+            my $pausal_effect = $effect;
+            for (0..length($pausal_effect)-1) {
+              substr($pausal_effect, $_, 1) = substr($rule->{pause_phone}, $_, 1)
+                  if substr($pausal_effect, $_, 1) eq '>';
+            }
+            my $modified = overwrite $precondition, $pausal_effect; 
+            $main_VP .= ' and become ' . 
+                        name_natural_class($modified, \@new_inventory, significant => $pausal_effect, morpho => 'plural', nobase => 1) .
+                        ' word-finally';
+          }
+        }
+      } # modified is not deletion
+      $text .= $main_VP;
+    } # !no_main_VP
 
     # FIXME: for unknown reasons the [lz] > [ll] type rule is being misdescribed as if not assimilatory.
 
@@ -2736,7 +2764,6 @@ sub describe_rules {
     # - Persistent rules might need their statements recast when the inventory enlarges,
     #   given the above.  But I'll probably ignore this.
 
-    $text .= $main_VP;
     my ($pre_text, $post_text);
     if (defined $pre) {
       $pre_text = name_natural_class($pre, \@inventory, morpho => 'indef');
@@ -2773,48 +2800,57 @@ sub describe_rules {
     }
 
     # Describe the deviations.
-    for my $frame (keys %dev_distilled) {
-      # really this 'before' / 'after' should I guess remention pause, so as not to suggest pause is special-cased
-      my $frame_text = '';
-      if ($effect =~ /[<>]/) {
-        $frame_text = $effect !~ />/ ? 'After ' : 
-                        ($effect !~ /</ ? 'Before ' : 'Assimilating to ');
-        $frame_text .= name_natural_class(overwrite(($effect !~ />/ ? $old_pre : 
-                        ($effect !~ /</ ? $old_post : '.' x @{$FS->{features}})), $frame), 
-            \@inventory, morpho => 'indef', bar_nons => 1) . ', '; # disallowing nons isn't right, but it makes the thing readable
-      }
+    unless ($all_all_deviates and !$no_main_VP) { # for this is the case when we overwrote it into the main VP
+      for my $frame (keys %dev_distilled) {
+        # really this 'before' / 'after' should I guess remention pause, so as not to suggest pause is special-cased
+        my $frame_text = '';
+        my $frame_starts_with_PP = 0;
+        if ($effect =~ /[<>]/) {
+          $frame_starts_with_PP = 1;
+          $frame_text = $effect !~ />/ ? 'After ' : 
+                          ($effect !~ /</ ? 'Before ' : 'Assimilating to ');
+          $frame_text .= name_natural_class(overwrite(($effect !~ />/ ? $old_pre : 
+                          ($effect !~ /</ ? $old_post : '.' x @{$FS->{features}})), $frame), 
+              \@inventory, morpho => 'indef', bar_nons => 1) . ', '; # (try removing?) disallowing nons isn't right, but it makes the thing readable
+        }
 
-      my $keep_frame = 0;
-      while (my ($deviation, $all_deviants) = each %{$dev_distilled{$frame}}) {
-        next unless my @deviants = grep $outcome{$frame}{$_} ne $_, @$all_deviants;
-#        $frame_text .= '[' . join(' ', map(($_ . ':' . $outcome{$frame}{$_} . '<>' . add_entailments overwrite($_, $frame)), @deviants)) . ']'; # debug
-        my $subject = describe_set(\@deviants, \@inventory, within => $precondition, 
-            morpho => 'plural', suppress_ie => 1, etic => 1, sort_phones => 1);
-        $frame_text .= $subject;
-        $keep_frame = 1;
-        if (length($deviation) > 0) {
-          $frame_text .= ' become ';
-          # if the subject is a list, make the object one too
-          if ($subject =~ /^\[.*\]$/) { # klugy
-            $frame_text .= '[' . join(' ', map name_phone($outcome{$frame}{$_}), @deviants) . ']';
+        my $keep_frame = 0;
+        while (my ($deviation, $all_deviants) = each %{$dev_distilled{$frame}}) {
+          next unless my @deviants = grep $outcome{$frame}{$_} ne $_, @$all_deviants;
+          my $subject = describe_set(\@deviants, \@inventory, within => $precondition, 
+              morpho => 'plural', suppress_ie => 1, etic => 1, sort_phones => 1);
+          $frame_text .= $subject;
+          $keep_frame = 1;
+          if (length($deviation) > 0) {
+            $frame_text .= ' become ';
+            # if the subject is a list, make the object one too
+            if ($subject =~ /^\[.*\]$/) { # klugy
+              $frame_text .= '[' . join(' ', map name_phone($outcome{$frame}{$_}), @deviants) . ']';
+            } else {
+              $_ = name_natural_class(overwrite(overwrite($precondition, $frame), $deviation), 
+                  \@new_inventory,
+                  significant => $deviation, morpho => 'plural', nobase => 1); 
+              $frame_text .= ($_ ? $_ : "GD".feature_string(overwrite(overwrite($precondition, $frame), $deviation)));
+            }
+          }
+          else {
+            $frame_text .= ' are deleted';
+          }
+          $frame_text .= '; ';
+        }
+        $frame_text = substr($frame_text, 0, -2) if $frame_text =~ /; $/; # eh
+        
+        if ($keep_frame) {
+          if ($no_main_VP) {
+            $text = $frame_starts_with_PP ?
+                $frame_text :
+                ucfirst substr($text, 1) . ', ' . $frame_text;
+            $no_main_VP = 0; # kluuuge but we do only want to modify the first one
           } else {
-            $_ = name_natural_class(overwrite(overwrite($precondition, $frame), $deviation), 
-                \@new_inventory,
-                significant => $deviation, morpho => 'plural', nobase => 1); 
-            $frame_text .= ($_ ? $_ : "GD".feature_string(overwrite(overwrite($precondition, $frame), $deviation)));
+            $text .= '. ' . ucfirst $frame_text;
           }
         }
-        else {
-          $frame_text .= ' are deleted';
-        }
-        $frame_text .= '; ';
-      }
-      $frame_text = substr($frame_text, 0, -2) if $frame_text =~ /; $/; # eh
-      
-      if ($keep_frame) {
-        $text .= ". " . ucfirst $frame_text;
-        $text .= ' (all deviants!)' unless $any_nondeviates{$frame}; # temporary!!
-      }
+      } # frame
     }
     
 # TEMPORARY!!! 
