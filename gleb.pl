@@ -2492,7 +2492,7 @@ sub describe_rules {
     # put in the examples.
     my @susceptible;
     my $insusceptibles_exist = 0;
-    my %dev_distilled; # %dev_distilled maps frames to lists of (condition, phones) pairs
+    my %dev_distilled; # %dev_distilled maps frames to maps from conditions to phones
     my %any_nondeviates; # is there any phone which behaves normally?
     for my $frame (keys %outcome) {
       # %deviations maps deviations to the list of sounds that give them
@@ -2578,20 +2578,53 @@ sub describe_rules {
             }
           }
 
-          push @{$dev_distilled{$frame}}, [$dev, \@covered] unless $only_undefineds;
+          push @{$dev_distilled{$frame}{$dev}}, @covered unless $only_undefineds;
         } # dev
       } while ($any_deviations);
 
     } # frame
 
-    # I suspect that this is the right place to merge frames.
+    # Merge deviations with identical effects.  
+    my @frames_to_merge = keys %dev_distilled;
+    for (my $i = 1; $i < @frames_to_merge; $i++) {
+      my $f0 = $frames_to_merge[$i];
+      MERGE_DEV_J: for (my $j = 0; $j < $i; $j++) {
+        my $f1 = $frames_to_merge[$j];
+        my $union = $f0;
+        for (0..length($f1)-1) {
+          substr($union, $_, 1) = '.' if substr($union, $_, 1) ne substr($f1, $_, 1);
+        }
+        # Don't merge if it would falsely subsume other frames.
+        for my $f (grep /^$union$/, keys %dev_distilled) { 
+          next MERGE_DEV_J unless $f0 =~ /^$f$/ or $f1 =~ /^$f$/;
+        }
+        
+        for my $dev (keys %{$dev_distilled{$f0}}) {
+          next unless defined $dev_distilled{$f1}{$dev};
+          for my $i (0..$#{$dev_distilled{$f0}{$dev}}) {
+            my $phone = $dev_distilled{$f0}{$dev}[$i];
+            if (grep $_ eq $phone, @{$dev_distilled{$f1}{$dev}}) {
+              push @frames_to_merge, $union if !defined $dev_distilled{$union};
+              push @{$dev_distilled{$union}{$dev}}, $phone;
+              splice @{$dev_distilled{$f0}{$dev}}, $i, 1;
+              @{$dev_distilled{$f1}{$dev}} = grep $_ ne $phone, @{$dev_distilled{$f1}{$dev}};
+            }
+          }
+          delete $dev_distilled{$f0}{$dev} unless @{$dev_distilled{$f0}{$dev}};
+          delete $dev_distilled{$f1}{$dev} unless @{$dev_distilled{$f1}{$dev}};
+        }
+      } # j
+    } # i
+    for (keys %dev_distilled) {
+      delete $dev_distilled{$_} unless keys %{$dev_distilled{$_}};
+    }
 
     # Start to prepare the textual description.  First, what the change does.
 
     # HERE If all frames have all deviates, we have to overwrite before preparing 
     # the main VP, here.
-    # If more than one does, even after frame-merging, we can only import one
-    # to the place of the main VP, and have to leave the others trailing.  
+    # If there is more than one pattern of deviation, after frame-merging and list-consolidation,
+    # it is best just not to have a main VP or subject, just the environment PP there.
 
     # Some of the features may appear redundant to list in the rule, given the current inventory.
     # But I leave them, just so that there isn't another thing to revise when persistence happens.
@@ -2752,8 +2785,7 @@ sub describe_rules {
       }
 
       my $keep_frame = 0;
-      for (@{$dev_distilled{$frame}}) {
-        my ($deviation, $all_deviants) = @$_;
+      while (my ($deviation, $all_deviants) = each %{$dev_distilled{$frame}}) {
         next unless my @deviants = grep $outcome{$frame}{$_} ne $_, @$all_deviants;
 #        $frame_text .= '[' . join(' ', map(($_ . ':' . $outcome{$frame}{$_} . '<>' . add_entailments overwrite($_, $frame)), @deviants)) . ']'; # debug
         my $subject = describe_set(\@deviants, \@inventory, within => $precondition, 
