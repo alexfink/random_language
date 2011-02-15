@@ -7,13 +7,10 @@
 # (A greater proportion of the numbers are wholly fabricated, though!)
 
 # These are candidates for relatively proximal things.
+# - Finish aspects of the rule describer.  (But not the bigram tracker yet.)
+# - Allow consonant inventory tables to merge coronal posterior and palatal columns, and /kp)/ and /w/.
 # - Split resolutions for marked situations.  (This is definitely better than yoking marked situations.
 #   I wonder whether excepts need to be separate.)
-# - Finish aspects of the rule describer.  Inserting passed-over rules when they become applicable
-#   (actually, no, save that for the bigram tracker which sound change will also need),
-#   and changing the verb when in fact outcoming sounds always have a different outcome (like deletion), 
-#   seem good ideas.
-# - Allow consonant inventory tables to merge coronal posterior and palatal columns, and /kp)/ and /w/.
 # - Better extra conditions.
 # - Make phone proportions saner?  Perhaps each unlikely distinction should propagate favour up into
 #   its prerequisites, or something, in a way that fixes overrare but doesn't exacerbate overcommon.
@@ -22,6 +19,7 @@ use strict;
 use YAML::Any;
 use CGI;
 use constant INF => 9**9**9; # is there really nothing sensible better?
+use constant TWOPI => 6.28318530717958647688;
 
 my $version = '0.3';
 my $credits = 'Gleb, a phonology generator, by Alex Fink' . 
@@ -63,6 +61,11 @@ sub fuzz {
   return 1 if $p >= 1;
   my $q = rand($p / (1 - $p)) + rand($p / (1 - $p));
   return $q / ($q + rand(1) + rand(1));
+}
+
+# Box-Muller.  I wonder whether this is faster than sum of 12 uniforms.
+sub std_normal {
+  return sqrt(-2*log rand(1)) * cos(rand(TWOPI));
 }
 
 # When passed a second argument, uses dots for unspecified values instead (esp. for use in regexes).
@@ -931,7 +934,7 @@ sub gen_one_rule {
       deletions => [0],
     };
     push @resolutions, $rule;
-    push @weights, defined $FS->{marked}[$k]{deletion} ? $FS->{marked}[$k]{deletion} : 0.0001;
+    push @weights, defined $FS->{marked}[$k]{deletion} ? $FS->{marked}[$k]{deletion} : 1e-6; # last resort!
 
     my $i = 0;
     my $resolution_type = 0;
@@ -1194,7 +1197,7 @@ sub gen_phonology {
     } while (defined $slot->{prob_more} and rand() < $slot->{prob_more});
   }
   
-  my @generable;
+  my @generable; # is this feature generated as contrastive in any situation?
   my @generable_val; # defined($generable_val[$v][$f]) iff the $f-th feature can take value $v \in 0,1.
                      # If it's an empty list, that's ok; that just means the feature can only come up in phone generation.
   my %family_inventories;
@@ -1240,7 +1243,7 @@ sub gen_phonology {
         $precondition = overwrite $precondition, $requires if defined $f->{requires};
         my %rule = (
           precondition => {0 => $precondition},
-          effects => {0 => parse_feature_string($f->{name}, 1)}, 
+          effects => {0 => parse_feature_string($f->{name}, 1)}, # er, rework this
           antieffects => {0 => parse_feature_string('-' . $f->{name}, 1)}, 
           prob => [map fuzz($sit->{prob}), @syllable_structure],
         );
@@ -1321,25 +1324,38 @@ sub gen_phonology {
     }
   } # features in the phone generator
 
-  # Choose the order the rules are going to appear in; write down a list of rule tag strings.
-  # Default provision rules come in random order; subject to that, repair rules come 
-  # as soon as they can (and we lazily haven't randomised them yet).
+  # Choose the order the rules are going to appear in, and write down a list of rule tag strings.
 
-  my @default_rule_positions = (1..@{$FS->{features}}); # 0 is for earliest repair rules
+  # Default provision rules come in a random order; contrastive features are more likely to 
+  # come early; among uncontrastive features the unlikely to have been contrastive are biased to come late.
+
+  # Subject to that, repair rules come as soon as they can; we have taken occasional 
+  # advantage of the fact that they are not further randomized.
+
+  my @feature_at_position; # do first feature in this list first, etc.
+  my @position_of_feature; # the inverse of this, plus 1 (so do the $i such that $p_o_f[$i] is 1 first)
+  my @sortkey;
   for my $i (0..@{$FS->{features}}-1) {
-    my $j = $i + int rand(@{$FS->{features}} - $i);
-    $_ = $default_rule_positions[$i]; 
-    $default_rule_positions[$i] = $default_rule_positions[$j];
-    $default_rule_positions[$j] = $_;
+    $sortkey[$i] = std_normal();
+    unless ($generable[$i]) {
+      my $max_generation = 1e-6; # zero is scary
+      for (@{$FS->{features}[$i]{generated}}) {
+        $max_generation = $_->{contrast} if $max_generation < $_->{contrast};
+      }
+      $sortkey[$i] += log($max_generation); # there is a hidden multiplicative magic constant of 1 here
+    }
   }
+  @feature_at_position = sort {$sortkey[$b] <=> $sortkey[$a]} (0..@{$FS->{features}}-1);
+  $position_of_feature[$feature_at_position[$_]] = 1 + $_ for (0..@{$FS->{features}}-1);
+
   my @repair_rule_tags;
   for my $k (0..@{$FS->{marked}}-1) {
     next if defined $FS->{marked}[$k]{prevented_by} and $prevent_marked{$FS->{marked}[$k]{prevented_by}};
     my $f = parse_feature_string $FS->{marked}[$k]{condition};
     my $when = 0;
     for (0..length($f)-1) {
-      $when = $default_rule_positions[$_]
-          if substr($f, $_, 1) ne 'u' and !defined $generable[$_] and $default_rule_positions[$_] > $when;
+      $when = $position_of_feature[$_]
+          if substr($f, $_, 1) ne 'u' and !defined $generable[$_] and $position_of_feature[$_] > $when;
     }
     push @{$repair_rule_tags[$when]}, "repair $k" unless defined $FS->{marked}[$k]{phonemic_only};
   }
@@ -1356,8 +1372,7 @@ sub gen_phonology {
   push @rule_tags, "stripping $_" for (0..@{$FS->{strippings}}-1);
   push @rule_tags, "default $_" for keys %special_filling;
   for my $i (0..@{$FS->{features}}) {
-    push @rule_tags, map "default $_", grep(($default_rule_positions[$_] == $i and !defined $special_filling{$_}), 
-                                             0..$#default_rule_positions);
+    push @rule_tags, "default $feature_at_position[$i-1]" unless $i <= 0 or defined $special_filling{$feature_at_position[$i-1]};
     push @rule_tags, @{$repair_rule_tags[$i]} if defined $repair_rule_tags[$i];
   }
   for my $k (0..@{$FS->{marked}}-1) {
@@ -2504,14 +2519,16 @@ sub describe_rules {
         }
         my $changed = add_entailments overwrite($phone, $frame); # duplicative :-/
         if (length($outcome)) { # one phone
+          # Just filling in undefineds isn't good enough here, since it's not good enough below.
           for (0..length($outcome)-1) {
-            substr($outcome, $_, 1) = '.' if substr($outcome, $_, 1) eq substr($changed, $_, 1);
+            substr($outcome, $_, 1) = '.' if substr($outcome, $_, 1) eq substr($changed, $_, 1)
+                                          or substr($changed, $_, 1) eq 'u';
           }
           push @{$deviations{$outcome}}, $phone;
 
           # Only announce the main clause of this rule if there's a nondeviate that actually changes.
-          $any_nondeviates{$frame} = 1 if $outcome eq '.' x length($frame) 
-                                      and $outcome{$frame}{$phone} ne $phone;
+          $any_nondeviates{$frame} = 1 if $outcome eq '.' x length($frame)
+                                      and $outcome{$frame}{$phone} ne $phone; 
         } else { # no phones: deletion is a deviation
           push @{$deviations{''}}, $phone;              
         }
@@ -2632,10 +2649,11 @@ sub describe_rules {
     my $all_all_deviates = 1;
     my %kept_deviations; # maps frame to a list
     for my $frame (keys %dev_distilled) {
+      $all_all_deviates = 0 if $any_nondeviates{$frame};
+      keys %{$dev_distilled{$frame}}; # reset each()
       while (my ($deviation, $all_deviants) = each %{$dev_distilled{$frame}}) {
-        next unless my @deviants = grep $outcome{$frame}{$_} ne $_, @$all_deviants;
+        next unless grep $outcome{$frame}{$_} ne $_, @$all_deviants;
         push @{$kept_deviations{$frame}}, $deviation;
-        $all_all_deviates = 0 if $any_nondeviates{$frame};
       }
     }
 
@@ -2689,7 +2707,7 @@ sub describe_rules {
             $_ = name_natural_class(overwrite(overwrite($precondition, $frame), $deviation), 
                 \@new_inventory,
                 significant => $no_main_VP ? undef : $deviation, 
-                morpho => 'plural', nobase => 1); # HERE this is a bit involute
+                morpho => 'plural', nobase => 1); # this is a bit involute
             $frame_text .= ($_ ? $_ : "GD".feature_string(overwrite(overwrite($precondition, $frame), $deviation)));
           }
         }
@@ -2808,7 +2826,7 @@ sub describe_rules {
       $pre_text .= ' or word-initially' if $rule->{or_pause}{$locus-1};
       my @exceptions = split / /, $rule->{except}{$locus-1};
       my @exception_texts = map name_natural_class(overwrite($precondition, $_), 
-          \@inventory, morpho => 'plural', significant => $_, no_nothing => 1), @exceptions;
+          \@inventory, significant => $_, no_nothing => 1, morpho => 'indef'), @exceptions;
       @exception_texts = grep $_, @exception_texts;
       $pre_text .= ' except for ' . join ' and ', @exception_texts if @exception_texts;
     }
@@ -2817,7 +2835,7 @@ sub describe_rules {
       $post_text .= ' or word-finally' if $rule->{or_pause}{$locus+1};
       my @exceptions = split / /, $rule->{except}{$locus+1};
       my @exception_texts = map name_natural_class(overwrite($precondition, $_), 
-          \@inventory, morpho => 'plural', significant => $_, no_nothing => 1), @exceptions;
+          \@inventory, significant => $_, no_nothing => 1, morpho => 'indef'), @exceptions;
       @exception_texts = grep $_, @exception_texts;
       $post_text .= ' except for ' . join ' and ', @exception_texts if @exception_texts;
     }
