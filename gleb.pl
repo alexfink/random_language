@@ -7,8 +7,10 @@
 # (A greater proportion of the numbers are wholly fabricated, though!)
 
 # These are candidates for relatively proximal things.
+# - Actually eradicate stupid /n_a/ : /n_m/.
 # - Finish aspects of the rule describer.  (But not the bigram tracker yet.)
 # - Allow consonant inventory tables to merge coronal posterior and palatal columns, and /kp)/ and /w/.
+# - Constant features in assimilatory rules.
 # - Split resolutions for marked situations.  (This is definitely better than yoking marked situations.
 #   I wonder whether excepts need to be separate.)
 # - Better extra conditions.
@@ -292,9 +294,8 @@ sub feedings {
 
 # Return annotations regarding which rules have which preconditions or excepts.
 # Used to optimise which rules we consider rerunning in running the phonology.
-# The resulting array is indexed as [$value][$feature], where $value is 0 or 1 or 2, 
-# 2 meaning undefined.
-# We also use [3] for those rules whose preconditions include a sequence;
+# The resulting array is indexed as {$value}[$feature], where $value is '0' or '1' or 'u', 
+# We also use {seq} for those rules whose preconditions include a sequence;
 # these are those which can be newly triggered after a deletion.
 
 sub which_preconditions {
@@ -320,9 +321,10 @@ sub which_preconditions {
         push @{$which{substr($rule->{precondition}{$displ}, $j, 1)}[$j]}, $i
             if substr($rule->{precondition}{$displ}, $j, 1) =~ /[01]/;
         # Doing undefined features is unnecessary, given the restricted circumstances
-        # in which we set features undefined.
-        #push @{$which{u}[$j]}, $i
-        #   if substr($rule->{precondition}{$displ}, $j, 1) eq 'u'; 
+        # in which we set features undefined.  
+        # Not so!  We now use this for forcibly_unmark.
+        push @{$which{u}[$j]}, $i
+           if substr($rule->{precondition}{$displ}, $j, 1) eq 'u'; 
       }
     }
 
@@ -475,8 +477,6 @@ sub run_one_rule {
 # becomes inactive (it won't run as a resolution when the current rule is >= N).
 # A rule can also inactivate itself (they commonly do);
 # these still run once.
-# If passed generator => 1, the whole thing will run without persistence,
-# and it'll do an add_entailments at the end. 
 
 # If passed a list in sources, it will overwrite it with a list of
 # positions of source phones of the phones in the result.
@@ -573,7 +573,6 @@ sub run_phonology {
         }
       }
       %agenda = %new_agenda;
-      last if defined $args{generator};
       # fwiw I saw this tripped wrongly once when the bound was 8.
       (print STDERR "*** unceded loop!\n"), last if (++$iterations >= STEPS_TO_DIE); 
     } # while (keys %agenda)
@@ -1056,6 +1055,23 @@ sub gen_one_rule {
     }
   }
 
+  # Heed forcibly_unmark: take out changes setting a certain feature, except on default rules.
+  # Moreover, if a rule changes a feature on which the defaults of that feature continge,
+  # explicitly force it back to undefined.
+  # (This is for before start_sequences, and is meant to be a mechanism by which e.g.
+  # we can avoid the stupid /n_a/ : /n_m/ contrasts.)
+  if (defined $args{forcibly_unmark} and $kind ne 'default' and $kind ne 'stripping') {
+    for my $i (keys %{$args{forcibly_unmark}}) {
+      for my $displ (keys %{$selected_rule->{effects}}) {
+        substr($selected_rule->{effects}{$displ}, $i, 1) = '.';
+        for (@{$args{forcibly_unmark}{$i}}) {
+          substr($selected_rule->{effects}{$displ}, $i, 1) = 'u', last 
+              if substr($selected_rule->{effects}{$displ}, $_, 1) ne '.';
+        }
+      }
+    }
+  }
+
   # Adding {except} conditions if this might newly set a feature which a stripping takes out
   # would be nice if it worked, but there are problems if the feature being set is a side effect;
   # we don't want to block the whole rule on its account, then.  So in place of this,
@@ -1324,6 +1340,21 @@ sub gen_phonology {
     }
   } # features in the phone generator
 
+  my %forcibly_unmark;
+  for my $i (0..@{$FS->{features}}-1) {
+    if (!$generable[$i] and defined $FS->{features}[$i]{forcibly_unmark}
+                        and rand() < $FS->{features}[$i]{forcibly_unmark}) {
+      my @l = ();
+      for my $default (@{$FS->{features}[$i]{default}}) {
+        my $phone = parse_feature_string($default->{condition}, 1);
+        for (0..@{$FS->{features}}-1) {
+          push @l, $_ if substr($phone, $_, 1) ne '.';
+        }
+      }
+      $forcibly_unmark{$i} = \@l;
+    }
+  }  
+
   # Choose the order the rules are going to appear in, and write down a list of rule tag strings.
 
   # Default provision rules come in a random order; contrastive features are more likely to 
@@ -1400,7 +1431,11 @@ sub gen_phonology {
     } 
     # We pass the generator as a way of specifying what contrasts are available.
     # For sound change purposes we'll need an alternate way to pass this information.
-    gen_one_rule \@phonology, $tag, generator => \@phone_generator, generable_val => \@generable_val, initial => 1; 
+    gen_one_rule \@phonology, $tag, 
+        generator => \@phone_generator, 
+        generable_val => \@generable_val, 
+        initial => 1,
+        forcibly_unmark => defined $start_sequences ? undef : \%forcibly_unmark; 
   }
     
   ($start_sequences, \@syllable_structure, \@phone_generator, \@phonology);
@@ -2940,7 +2975,7 @@ sub generate_form {
   #
   #   my @syl;
   #   @syl = (@syl, generate_syllable $syllable_structure) for (1..$num_syllables);
-  #   run_phonology \@syl, $phone_generator,generator => 1;
+  #   run_phonology \@syl, $phone_generator,generator => 1; # This is obsolete and has been removed.
   #   run_phonology \@syl, $phonology, which_preconditions => (whatever);
   #
   # But the below is more direct.
@@ -3278,7 +3313,7 @@ else {
   } else {
     print STDERR "pruning of inactive rules skipped\n";
   }
-  $phonology_data->{which_preconditions} = which_preconditions($phonology) # since the numbers are changed
+  $phonology_data->{which_preconditions} = which_preconditions($phonology); # since the numbers are changed
 }
 
 $phon_descr = YAML::Any::LoadFile('phon_descr.yml');
