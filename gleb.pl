@@ -954,6 +954,7 @@ sub gen_one_rule {
       if ($resolution_type == 0) {
         $i = 0, $resolution_type++, next if $i >= length($precondition);
         $i++, redo if substr($precondition, $i, 1) !~ /[01]/; # only flip actual things in the situation
+        $i++, redo if defined $FS->{features}[$i]{structural};
         $effects = '.' x length($precondition);
         substr($effects, $i, 1) = (substr($reqd, $i, 1) eq '1' ? '0' : '1');
         # don't turn univalents on (unless specially allowed)
@@ -962,7 +963,6 @@ sub gen_one_rule {
           $effects = overwrite($effects, parse_feature_string($FS->{marked}[$k]{univalent_addition}, 1));
           $no_persist = 1;
         }
-        $i++, redo if defined $FS->{features}[$i]{no_flip};
         # Weights for flipping individual features: given in {flip}.
         $base_weight = (defined $FS->{marked}[$k]{flip}{$FS->{features}[$i]{name}} ? 
             $FS->{marked}[$k]{flip}{$FS->{features}[$i]{name}} : 1);

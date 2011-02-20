@@ -91,7 +91,6 @@ features:
 
 - name: syllabic
   structural: true
-  no_flip: true
   generated: []
   default: []
 
@@ -966,6 +965,7 @@ strippings:
 
 
 
+# best to avoid putting structural features in a relation...
 relations:
 
 # Counterstripping spread for [?].
@@ -1225,8 +1225,8 @@ relations:
     prob: 0.0125
     extras: {"+syllabic 1": 0.75, "dorsal 1": 0.666667}
 
-- from: "+syllabic +spread_glottis" # rhinoglottophilia, single-segment type
-  to: "+syllabic +nasal"
+- from: "dorsal +resonant -lateral -tap_or_trill +spread_glottis" # rhinoglottophilia, single-segment type
+  to: "dorsal +resonant -lateral -tap_or_trill +nasal"
   twoway: true
   weight: 0.166667
 
