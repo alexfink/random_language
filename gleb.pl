@@ -1,21 +1,27 @@
 #!/usr/bin/perl
-# Generate random phonologies, featurally and via ordered rules,
+# Generate random phonologies, featurally and via ordered rules with persistence,
 # with allophony and the potential for good morphophonology and the works.  (Getting there!)
 # Alex Fink, January 2010 -- present.
 # Thanks to Marcus Smith <http://smithma.bol.ucla.edu/> for unwitting inspiration,
 # and Marcus and UPSID for being proximal sources for various numbers.
 # (A greater proportion of the numbers are wholly fabricated, though!)
 
-# These are candidates for relatively proximal things.
-# - Actually eradicate stupid /n_a/ : /n_m/.
-# - Finish aspects of the rule describer.  (But not the bigram tracker yet.)
+# Short-term plan.
+# - Finish aspects of the rule describer: examples, and exception unredounding.  (Not the bigram tracker yet.)
 # - Allow consonant inventory tables to merge coronal posterior and palatal columns, and /kp)/ and /w/.
+# > 0.3.0.
+# - Rules that apply only at word boundary.
 # - Constant features in assimilatory rules.
 # - Split resolutions for marked situations.  (This is definitely better than yoking marked situations.
 #   I wonder whether excepts need to be separate.)
-# - Better extra conditions.
-# - Make phone proportions saner?  Perhaps each unlikely distinction should propagate favour up into
-#   its prerequisites, or something, in a way that fixes overrare but doesn't exacerbate overcommon.
+# - Better extra conditions.  (In particular, extra conditions that conspire to avoid something
+#   _which there's already a rule against_ should be favoured.)
+# - Maybe make phone proportions saner?  Perhaps each unlikely distinction should propagate favour 
+#   up into its prerequisites, or something, in a way that fixes overrare but doesn't exacerbate overcommon.
+# > 0.3.1.  
+#   After that, should we privilege 
+# (a) advanced inventory tracking, with the bigram transition matrix stuff; or
+# (b) new phonology?  (long-distance rules; syllable tracking > moraic stuff)
 
 use strict;
 use YAML::Any;
@@ -31,7 +37,9 @@ my $credits = 'Gleb, a phonology generator, by Alex Fink' .
 # Phones are specified as strings, with one character for each feature in the order
 # in which they occur in the feature definition file.  The principal values of characters:
 # '.' is unspecified, 'u' undefined, '0' off, '1' on.
-#
+# Only [u01] appear in actual phones; '.' appears in classes (where it matches everything)
+# and sound change outcomes and the like.
+
 # There are various other characters used.  
 # In one place the syllable structure uses 'U', which gets converted to 'u' only after the generator runs.
 # Effects of sound changes can have '<' and '>', which do progressive and regressive assimilation.
@@ -1504,6 +1512,16 @@ sub spell_out {
   join "", map name_phone($_, %args), @$word;
 }
 
+# duplicated for efficiency :/
+sub spell_out_spaces {
+  my ($word, %args) = (shift, @_);
+  if ($args{null} and ($word eq '')) {
+    my $pa = defined $args{alphabet} ? $args{alphabet} : 
+             $use_html ? $phonetic_alphabets{IPA} : $phonetic_alphabets{CXS};
+    return $pa->{null};
+  }
+  join "", map name_phone($_, %args), (split / /, $word);
+}
 
 sub add_in {
   my ($inventory, $x, $v) = @_;
@@ -1702,8 +1720,14 @@ sub tabulate_label {
       }
       $label .= $args{repeat_base} if $label and $args{repeat_base};
       $label .= $l->[$i];
-      for (0..length($p->[$i])) {
-        $taken_care_of[$_] = 1 if substr($p->[$i], $_, 1) ne '.';
+      if (defined $args{entailed_p}) { # geh structure
+        for (0..length($args{entailed_p}[$i])) {
+          $taken_care_of[$_] = 1 if substr($args{entailed_p}[$i], $_, 1) ne '.';
+        }
+      } else {
+        for (0..length($p->[$i])) {
+          $taken_care_of[$_] = 1 if substr($p->[$i], $_, 1) ne '.';
+        }
       }
       last unless $args{repeat_base};
     }
@@ -1727,9 +1751,20 @@ sub tabulate_label {
       $label =~ s/ \[/$args{repeat_mod}{$thing}\[/ if $args{repeat_mod}{$thing} and $repeated{$thing};
       $repeated{$thing} = 1 if $thing;
       $label =~ s/\[.*\]/$inner_label/;
-      for (0..length($pmod->[$i])) {
-        $taken_care_of[$_] = 1 if substr($pmod->[$i], $_, 1) ne '.';
-        $taken_care_of[$_] = 1 if defined $args{eliminate}{$pmod->[$i]} and substr($args{eliminate}{$pmod->[$i]}, $_, 1) ne '.';
+
+      if (defined $args{entailed_pmod}) {
+        for (0..length($args{entailed_pmod}[$i])) {
+          $taken_care_of[$_] = 1 if substr($args{entailed_pmod}[$i], $_, 1) ne '.';
+        }
+      } else {
+        for (0..length($pmod->[$i])) {
+          $taken_care_of[$_] = 1 if substr($pmod->[$i], $_, 1) ne '.';
+        }
+      }
+      if (defined $args{eliminate}{$pmod->[$i]}) {
+        for (0..length($pmod->[$i])) {
+          $taken_care_of[$_] = 1 if substr($args{eliminate}{$pmod->[$i]}, $_, 1) ne '.';
+        }
       }
     }
   }
@@ -1759,8 +1794,16 @@ sub tabulate_label {
                                      nons => undef, significant => $non, nobase => 1);
       chop $non_label while $non_label =~ / $/; # for nobase
       $non_label = substr($non_label, 1) while $non_label =~ /^ /;
-      $label = "non-$non_label $label" if $non_label;
-    }
+      if ($non_label) {
+        $label = "non-$non_label $label";
+        my $ae = '.' x length($enriched);
+        substr($ae, $i, 1) = substr($enriched, $i, 1);
+        $ae = add_entailments $ae; # deh, could use the table directly for speed but this is more contained
+        for (0..length($enriched)-1) {
+          $taken_care_of[$_] = 1 if substr($ae, $_, 1) ne '.';
+        }
+      }
+    } # $i
   }
 
   if ($args{header}) {
@@ -2017,7 +2060,7 @@ sub name_natural_class {
 
   my $scheme = defined $args{scheme} ? $args{scheme} : 'labels';
   if (!defined $str->{$scheme}{name_classes}) {
-    my (@p, @pmod, @l, @lmod);
+    my (@p, @pmod, @entailed_p, @entailed_pmod, @l, @lmod);
     my %modificate = map(($_ => 1), split / /, $str->{$scheme}{modificate});
     for my $thing (qw/pre_other pre_other_mod columns rows other columns_mod rows_mod other_mod/) {
       next unless defined $str->{$scheme}{$thing};
@@ -2028,17 +2071,23 @@ sub name_natural_class {
         $label .= " [$thing]" if $modificate{$thing};
         if ($label =~ /\[.*\]/) {
           push @pmod, $phone;
+          push @entailed_pmod, add_entailments $phone;
           push @lmod, $label;
         } else {
           push @p, $phone;
+          push @entailed_p, add_entailments $phone;
           push @l, $label;
         }
       }
     }
-    push @p, parse_feature_string('', 1);
+    $_ = parse_feature_string('', 1);
+    push @p, $_;
+    push @entailed_p, $_;
     push @l, $str->{name}; 
     $str->{$scheme}{name_classes}{p} = \@p;
     $str->{$scheme}{name_classes}{pmod} = \@pmod;
+    $str->{$scheme}{name_classes}{entailed_p} = \@entailed_p;
+    $str->{$scheme}{name_classes}{entailed_pmod} = \@entailed_pmod;
     $str->{$scheme}{name_classes}{l} = \@l;
     $str->{$scheme}{name_classes}{lmod} = \@lmod;
     while (my ($k, $v) = each %{$str->{$scheme}{eliminate}}) {
@@ -2052,6 +2101,8 @@ sub name_natural_class {
                             $str->{$scheme}{name_classes}{p}, $str->{$scheme}{name_classes}{pmod},
                             $str->{$scheme}{name_classes}{l}, $str->{$scheme}{name_classes}{lmod},
                             %args,
+                            entailed_p => $str->{$scheme}{name_classes}{entailed_p},
+                            entailed_pmod => $str->{$scheme}{name_classes}{entailed_pmod},
                             significant => $significant,
                             nons => ($args{bar_nons} ? undef : $inventory),
                             nobase => $args{nobase},
@@ -2088,7 +2139,7 @@ sub name_natural_class {
 # subset of $args{extend}.
 # It's far from perfect at this: it will ignore exceptions.
 
-# FIXME: [?\] is written as [h\_?\] by name_phone from within here.  I think it's add_false_features' fault.
+# FIXME: [?\] is written as [h\_?\] by name_phone from within here; it's add_false_features' fault.
 sub describe_set {
   my ($orig_phones, $inventory, %args) = (shift, shift, @_);
   my $phones = $orig_phones;
@@ -2096,6 +2147,8 @@ sub describe_set {
   my $extend = defined $args{extend};
   my $lb = $args{etic} ? '[' : '/';
   my $rb = $args{etic} ? ']' : '/';
+#print STDERR join(' ', map(name_phone($_,alphabet=>$phonetic_alphabets{CXS}), @$orig_phones)) . '  within  ' . 
+#             join(' ', map(name_phone($_,alphabet=>$phonetic_alphabets{CXS}), @$inventory)) . "\n"; 
 
   my $size = @$phones;
   unless ($extend) {
@@ -2113,6 +2166,7 @@ sub describe_set {
     substr($pattern, $feature_indices{$str->{subtables}}, 1) = $subtable;
     $str = $str->{$subtable};
   }
+  $args{get_str_pattern}->[0] = $pattern if defined $args{get_str_pattern}; # extra return hack
 
   $phones = [map add_false_features($_, $str), @$phones];
   $inventory = [map add_false_features($_, $str), @$inventory];
@@ -2229,10 +2283,6 @@ sub describe_set {
         } @{$args{extend}};
     return @l;
   }
-
-  # I don't know why this is wanted.  It used to be in the main loop but that screwed up extend.
-  # For now it's voodoo.
-  $pattern = add_requirements $pattern; 
 
   my @detritus = grep !defined $phones{$_}, @comparanda;
   $complexity += @detritus;
@@ -2386,7 +2436,6 @@ sub describe_rules {
   my %sortkey = map(($_ => table_sortkey($_, $phon_descr->{table_structure})), @inventory);
 
   RULE: for my $i ($args{start}..$args{end}-1) {
-#print STDERR "rule $i\n"; # debug
     my $rule = $pd->{phonology}[$i];
 
     # For now, assume there's only one change.  
@@ -2412,8 +2461,11 @@ sub describe_rules {
 
     # TODO: put pointless persistent rules into some kind of holding tank,
     # to check on creation of new phones.
-    # (Actually, quite a lot of things potentially need rewriting when new phones are around.  Ick.
-    # But this case is enough for the noo.)
+    #
+    # Actually, quite a lot of stuff for persistent rules potentially needs rewriting 
+    # when new phones are around.  Ick.  I'm happy to just ignore this for now.
+    #
+    # Some rules are being missed; is it this thing's fault?
     my %matcheds;
     for my $displ (keys %{$rule->{precondition}}) {
       @{$matcheds{$displ}} = grep $_ =~ /^$rule->{precondition}{$displ}$/, @inventory;
@@ -2717,33 +2769,39 @@ sub describe_rules {
     }
 
     for my $frame (keys %kept_deviations) {
-      # really this 'before' / 'after' should I guess remention pause, so as not to suggest pause is special-cased
       my $frame_text = '';
       if ($effect =~ /[<>]/) {
         $frame_text = $effect !~ />/ ? 'After ' : 
                         ($effect !~ /</ ? 'Before ' : 'Assimilating to ');
         $frame_text .= name_natural_class(overwrite(($effect !~ />/ ? $old_pre : 
                         ($effect !~ /</ ? $old_post : '.' x @{$FS->{features}})), $frame), 
-            \@inventory, morpho => 'indef', bar_nons => 1) . ', '; # (try removing?) disallowing nons isn't right, but it makes the thing readable
+            \@inventory, morpho => 'indef', bar_nons => 1); # (try removing?) disallowing nons isn't right, but it makes the thing readable
+        # okay, so just defined($rule->{pause_phone}) isn't what I look for elsewhere, but it should hackwork
+        $frame_text .= ' or pause' if defined $rule->{pause_phone} and $rule->{pause_phone} =~ /^$frame$/;
+        $frame_text .= ', ';
       }
 
       for my $deviation (@{$kept_deviations{$frame}}) {
         my $all_deviants = $dev_distilled{$frame}{$deviation};
         my @deviants = grep $outcome{$frame}{$_} ne $_, @$all_deviants;
-        my $subject = describe_set(\@deviants, \@inventory, within => $precondition, 
-            morpho => 'plural', suppress_ie => 1, etic => 1, sort_phones => 1);
+        my @get_str_pattern;
+        my $subject = describe_set(\@deviants, $no_main_VP ? \@inventory : \@susceptible,
+            morpho => 'plural', suppress_ie => 1, etic => 1, sort_phones => 1, get_str_pattern => \@get_str_pattern);
         $frame_text .= $subject;
         if (length($deviation) > 0) {
-          $frame_text .= ' become ';
-          # if the subject is a list, make the object one too
+          # if the subject is a list, make the object one too, unless it's entirely deletions
           if ($subject =~ /^\[.*\]$/) { # klugy
-            $frame_text .= '[' . join(' ', map name_phone($outcome{$frame}{$_}), @deviants) . ']';
+            if (grep $outcome{$frame}{$_}, @deviants) {
+              $frame_text .= ' become [' . join(' ', map spell_out_spaces($outcome{$frame}{$_}, null => 1), @deviants) . ']';
+            } else {
+              $frame_text .= ' are deleted'
+            }
           } else {
-            $_ = name_natural_class(overwrite(overwrite($precondition, $frame), $deviation), 
-                \@new_inventory,
+            my $phone = overwrite(overwrite(overwrite($precondition, $frame), $get_str_pattern[0]), $deviation);
+            $_ = name_natural_class($phone, \@new_inventory,
                 significant => $no_main_VP ? undef : $deviation, 
-                morpho => 'plural', nobase => 1); # this is a bit involute
-            $frame_text .= ($_ ? $_ : "GD".feature_string(overwrite(overwrite($precondition, $frame), $deviation)));
+                morpho => 'plural', nobase => 1);
+            $frame_text .= " become $_"; # ($_ ? $_ : "GD".feature_string($phone));
           }
         }
         else {
@@ -2848,14 +2906,9 @@ sub describe_rules {
       $main_clause .= $main_VP;
     } # modified is not deletion
 
-    # Things TODO: 
-    # - Understand syllable position.
-    # - Split off inventory tracking; SCs will need it too.
-    # - Persistent rules might need their statements recast when the inventory enlarges,
-    #   given the above.  But I've ignored this for now.
-
     my $environment_text = '';
     my ($pre_text, $post_text);
+    # the 'or word-finally' aren't quite right, since the main rule might be a between.
     if (defined $pre) {
       $pre_text = name_natural_class($pre, \@inventory, morpho => 'indef');
       $pre_text .= ' or word-initially' if $rule->{or_pause}{$locus-1};
