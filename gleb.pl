@@ -11,6 +11,8 @@
 # - Allow consonant inventory tables to merge coronal posterior and palatal columns, and /kp)/ and /w/.
 # - The name "sonorant".
 # . Did I get all the add_false_features displays?  I assume so.
+# - Pull actual phonology and describing into separate source files.
+# . Can I make David an easy-to-run version?
 # > 0.3.0.
 # - Rules that apply only at word boundary.
 # - Constant features in assimilatory rules.
@@ -2857,6 +2859,7 @@ sub describe_rules {
       $main_clause .= name_natural_class($precondition, \@inventory, morpho => 'plural');
     }
     my $subject_is_list = ($main_clause =~ /^\[.*\]$/); # klugy
+    my $both_are_lists = 0; # don't need deviations if both subj and obj are lists
     my @example_sounds;
     my $example_ellipsis = '';
     unless ($subject_is_list) {
@@ -2889,6 +2892,7 @@ sub describe_rules {
         $main_VP .= ' become ';
         # if the subject is a list, make the complement one too
         if ($subject_is_list and scalar keys %outcome <= 1) { 
+          $both_are_lists = 1;
           my ($frame) = keys %outcome; 
           $main_VP .= '[' . join(' ', map spell_out([split ' ', $outcome{$frame}{$_}], null => 1), @susceptible) . ']';
         } else {
@@ -3010,7 +3014,7 @@ sub describe_rules {
       if ($no_main_VP) {
         $deviation_texts = ($text ? ', ' : '') . lcfirst substr($deviation_texts, 2);
       }
-      $text .= $deviation_texts unless $all_all_deviates and !$no_main_VP;
+      $text .= $deviation_texts unless ($all_all_deviates and !$no_main_VP) or $both_are_lists;
     }
 
 # TESTING without the table.
