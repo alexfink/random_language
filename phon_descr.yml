@@ -19,6 +19,7 @@ table_structure:
   0:
     name: consonant
     caption: Consonants
+    # rfaNPiTTl LCDlARLsHflpbrpAl vcS
     order: "resonant fricative affricate !nasal !prenasalised implosive !tap_or_trill !trill long; !labial !coronal !dorsal labiodental !anterior !retroflex !laminal sibilant !high front lateral pharyngealised back round palatalised_velar !ATR low; voice constricted_glottis !spread_glottis"
     flips:
       "dorsal": front
@@ -29,8 +30,18 @@ table_structure:
       "-dorsal -coronal -labial +spread_glottis": "+fricative"
       "-dorsal -coronal -labial": "-resonant -prenasalised -implosive -lateral -tap_or_trill -trill -retroflex"
       "dorsal +resonant +front": "-palatalised_velar"
-    collapse: "low ATR long palatalised_velar affricate labiodental sibilant laminal trill lateral tap_or_trill implosive spread_glottis constricted_glottis back round pharyngealised front retroflex high anterior prenasalised voice" 
-    # TODO: we should not collapse anterior unless there we have collapsed retroflex and laminal
+    collapse: "low ATR long palatalised_velar affricate labiodental c_with_tSj sibilant laminal trill lateral tap_or_trill implosive spread_glottis constricted_glottis back kp_with_w round pharyngealised front retroflex high anterior prenasalised voice" 
+    named_collapses:
+      c_with_tSj: 
+        from: "dorsal +front"
+        to: "-dorsal coronal -anterior -retroflex +sibilant +front" # +front for flips
+        avoid_unless: "-dorsal coronal -anterior -retroflex"
+        type: columns
+      kp_with_w:
+        from: "dorsal labial"
+        to: "+round -labial"
+        avoid_unless: "dorsal +round -labial"
+        type: columns
     labels:
       rows:
       - "-resonant +nasal -fricative -affricate: nasal"

@@ -7,20 +7,23 @@
 # (A greater proportion of the numbers are wholly fabricated, though!)
 
 # Short-term plan.
+# - Let semivowels be described as vowels.
+# . Adjust preferability of lists over stupid featural descriptions more?
+# . Similarly: re examples, the right policy might be that, if there are enough deviations, list everything.
 # - Fix instances of "phones" and "no phones" as we can.
-# - Allow consonant inventory tables to merge coronal posterior and palatal columns, and /kp)/ and /w/.
 # - The name "sonorant".
-# . Did I get all the add_false_features displays?  I assume so.
 # - Pull actual phonology and describing into separate source files.
 # . Can I make David an easy-to-run version?
 # > 0.3.0.
-# - Rules that apply only at word boundary.
-# - Constant features in assimilatory rules.
 # - Surface enforcement of what can be in a given syllable position.
+# - Something to mitigate these stupid /p t k J\ g/ systems.
+# - Rules that apply only at word boundary.  (Though how are we going to do phrase boundary?)
+# - Constant features in assimilatory rules.
 # - Split resolutions for marked situations.  (This is definitely better than yoking marked situations.
 #   I wonder whether excepts need to be separate.)
 # - Better extra conditions.  (In particular, extra conditions that conspire to avoid something
 #   _which there's already a rule against_ should be favoured.)
+# - Never resolve an extra-condition situation by changing the extra condition!!!
 # - Presence of certain contrasts as a precondition for certain assimilations???
 #   (I'm thinking of the resonant voice assimilation case.)
 # - Maybe make phone proportions saner?  Perhaps each unlikely distinction should propagate favour 
@@ -184,6 +187,7 @@ sub generate_syllable {
 
 # Memoise a rule for the computations performed in feeds(!).
 # These things can be totally stripped out once the phonology is finalised. 
+# TODO: strip them out.
 
 sub feed_annotate {
   my $rule = shift;
@@ -948,13 +952,13 @@ sub gen_one_rule {
       deletions => [0],
     };
     push @resolutions, $rule;
-    push @weights, defined $FS->{marked}[$k]{deletion} ? $FS->{marked}[$k]{deletion} : 1e-6; # last resort!
+    push @weights, defined $FS->{marked}[$k]{deletion} ? $FS->{marked}[$k]{deletion} : 1e-12; # last resort!
 
     my $i = 0;
     my $resolution_type = 0;
     RESOLUTION_TYPE: while ($resolution_type <= 1) {
       my $effects;
-      my $base_weight;
+      my $base_weight = 0;
       my $no_persist = 0;
       $no_persist = 1 if defined $FS->{marked}[$k]{phonemic_only};
  
@@ -1648,7 +1652,7 @@ sub add_false_features {
     my $subtable = substr($phone, $feature_indices{$str->{subtables}}, 1);
     $str = $str->{$subtable};
   }
-  while (my ($k, $v) = each %{$str->{undef_parsed}}) {
+  while (my ($k, $v) = each %{$str->{undef_p}}) {
     $phone = overwrite $phone, $v if $phone =~ /^$k$/;
   }
   $phone;
@@ -1665,7 +1669,7 @@ sub table_sortkey {
     return $subtable . table_sortkey($phone, $str->{$subtable});
   }
   
-  while (my ($k, $v) = each %{$str->{undef_parsed}}) {
+  while (my ($k, $v) = each %{$str->{undef_p}}) {
     $phone = overwrite $phone, $v if $phone =~ /^$k$/;
   }
   $phone =~ s/u/0/g;
@@ -1673,7 +1677,7 @@ sub table_sortkey {
                               (substr($phone, $str->{order_i}[$_], 1) + $str->{order_r}[$_])%2 : 
                               substr($phone, $str->{order_i}[$_], 1),
                               0..@{$str->{order_i}}-1);
-  while (my ($k, $v) = each %{$str->{flips_parsed}}) { # does this need keep_undefs?
+  while (my ($k, $v) = each %{$str->{flips_p}}) { # does this need keep_undefs?
     substr($position, $v, 1) = 1 - substr($position, $v, 1) 
         if $phone =~ /^$k$/ and substr($position, $v, 1) =~ /[01]/;
   }
@@ -1818,7 +1822,11 @@ sub tabulate_label {
 
   if ($args{header}) {
     # Make abbreviations for table headers.
-    $label =~ s/ or /\//g;
+    if ($use_html) {
+      $label =~ s/ or /&nbsp;\/ /g; 
+    } else {
+      $label =~ s/ or / \/ /g; 
+    }
     $label =~ s/\{[^{}]*\}/./g;
   } else {
     $label =~ s/[{}]//g;
@@ -1866,18 +1874,30 @@ sub tabulate {
     }
 
     while (my ($k, $v) = each %{$str->{undefineds}}) {
-      $str->{undef_parsed}{parse_feature_string($k, 1)} = parse_feature_string($v, 1);
+      $str->{undef_p}{parse_feature_string($k, 1)} = parse_feature_string($v, 1); # p for 'parsed'
     }
     
     while (my ($k, $v) = each %{$str->{flips}}) {
       my @which = grep $str->{order_i}[$_] == $feature_indices{$v}, 0..@{$str->{order_i}}-1;
-      $str->{flips_parsed}{parse_feature_string($k, 1)} = $which[0];
+      $str->{flips_p}{parse_feature_string($k, 1)} = $which[0];
     }
     
     @fs = split / /, $str->{collapse};
     for my $f (@fs) {
-      my @which = grep $str->{order_i}[$_] == $feature_indices{$f}, 0..@{$str->{order_i}}-1;
-      push @{$str->{collapse_i}}, $which[0];
+      if (defined $str->{named_collapses}{$f}) {
+        push @{$str->{collapse_i}}, $f;
+        my $ae = add_entailments parse_feature_string($str->{named_collapses}{$f}{to}, 1);
+        my %undefinenda = map(($_ => 1), grep substr($ae, $_, 1) eq 'u', 0..length($ae)-1);
+        %{$str->{named_collapses_p}{$f}} = (
+            from => table_sortkey(parse_feature_string($str->{named_collapses}{$f}{from}, 1), $str),
+            to => table_sortkey(parse_feature_string($str->{named_collapses}{$f}{to}, 1), $str),
+            undefine => [grep $undefinenda{$str->{order_i}[$_]}, 0..@{$str->{order_i}}-1],
+            avoid_unless => table_sortkey(parse_feature_string($str->{named_collapses}{$f}{avoid_unless}, 1), $str),
+        );
+      } else {
+        my @which = grep $str->{order_i}[$_] == $feature_indices{$f}, 0..@{$str->{order_i}}-1;
+        push @{$str->{collapse_i}}, $which[0];
+      }
     }
   }
 
@@ -1910,18 +1930,54 @@ sub tabulate {
   }
 
   my %old_table = %table;
+  my @modified_phones = keys %old_table;
+  my (%row_moves, %column_moves);
   COLLAPSE: for my $collapse (@{$str->{collapse_i}}) {
-    for my $position (keys %table) {
-      substr($position, $collapse, 1) = 1 - substr($position, $collapse, 1);
-      next COLLAPSE if defined $table{$position};
-    }
     my %new_table;
-    while (my ($position, $v) = each %table) {
-      substr($position, $collapse, 1) = '.';
-      $new_table{$position} = $v;
+    if ($collapse =~ /^[0-9]*$/) { # simple collapse
+      for my $position (keys %table) {
+        substr($position, $collapse, 1) = 1 - substr($position, $collapse, 1);
+        next COLLAPSE if defined $table{$position};
+      }
+      while (my ($position, $v) = each %table) {
+        substr($position, $collapse, 1) = '.';
+        $new_table{$position} = $v;
+      }
+    } else { # named collapse
+      # don't do it if the resulting column doesn't combine anything
+      @_ = grep /^$str->{named_collapses_p}{$collapse}{avoid_unless}$/, keys %table;
+      next COLLAPSE unless @_;
+      my $target = $_[0]; # use this to fill in things which shd be undefined
+      @_ = ();
+      while (my ($position, $v) = each %table) {
+        if ($position =~ /^$str->{named_collapses_p}{$collapse}{from}$/) {
+          $position = overwrite $position, $str->{named_collapses_p}{$collapse}{to};
+          substr($position, $_, 1) = substr($target, $_, 1) for @{$str->{named_collapses_p}{$collapse}{undefine}};
+          next COLLAPSE if defined $table{$position};
+          push @_, $position;
+        }
+        $new_table{$position} = $v;
+      }
+      
+      @modified_phones = map {
+        if (/^$str->{named_collapses_p}{$collapse}{from}$/) {          
+          my $a = overwrite $_, $str->{named_collapses_p}{$collapse}{to};
+          my $b = $_;
+          for my $i (0..length($b)-1) {
+            substr($b, $i, 1) = '.' if substr($str->{named_collapses_p}{$collapse}{to}, $i, 1) eq '.';
+          }
+          $row_moves{substr($a, 0, $str->{lengths}[0])} = substr($b, 0, $str->{lengths}[0])
+            unless substr($_, 0, $str->{lengths}[0]) eq substr($a, 0, $str->{lengths}[0]);
+          $column_moves{substr($a, $str->{lengths}[0], $str->{lengths}[1])} = substr($b, $str->{lengths}[0], $str->{lengths}[1])
+            unless substr($_, $str->{lengths}[0], $str->{lengths}[1]) eq substr($a, $str->{lengths}[0], $str->{lengths}[1]);
+          $a;
+        } else {
+          $_;
+        }
+      } @modified_phones;
     }
     %table = %new_table;
-  }
+  } # COLLAPSE
 
   for my $position (keys %table) {
     $rows{substr($position, 0, $str->{lengths}[0])} = 1;
@@ -1930,23 +1986,31 @@ sub tabulate {
   }
 
   # Now reinsert digits where we can, so we can use the most appropriate label.
-  # The behaviour of this should be regarded as undefined if a feature
-  # is undefined everywhere in the column.
-  my @extant_rows = map substr($_, 0, $str->{lengths}[0]), keys %old_table;
-  my @extant_columns = map substr($_, $str->{lengths}[0], $str->{lengths}[1]), keys %old_table;
-  my (%enriched_rows, %enriched_columns);
-  $enriched_rows{$_} = enrich $_, \@extant_rows for keys %rows;
-  $enriched_columns{$_} = enrich $_, \@extant_columns for keys %columns;
+  # (The behaviour of this should be regarded as undefined if a feature
+  # is undefined everywhere in the column.  But is it?)
+  my @extant_rows = map substr($_, 0, $str->{lengths}[0]), @modified_phones;
+  my @extant_columns = map substr($_, $str->{lengths}[0], $str->{lengths}[1]), @modified_phones;
+  my $base_enrichment;
 
   my $table = "<table style=\"text-align: center;\">\n<caption>$str->{caption}</caption>\n";
   $table .= '<tr style="vertical-align: bottom;"><th></th>';
   for my $column (sort keys %columns) {
     $table .= '<td></td>'; # empty cells for separation, yeah
-    my $label = tabulate_label $enriched_columns{$column}, 
+    $base_enrichment = enrich($column, \@extant_columns);
+    my $label = tabulate_label($base_enrichment, 
                                $label_phones{columns}, $label_phones{columns_mod},
                                $labels{columns}, $labels{columns_mod},
                                header => 1,
-                               repeat_base => $str->{labels}{repeat_columns};
+                               repeat_base => $str->{labels}{repeat_columns});
+    while (my ($k, $v) = each %column_moves) {
+      if ($k =~ /^$column$/) {
+        $label .= '&nbsp;/ ' . tabulate_label(overwrite($base_enrichment, $v),
+                                   $label_phones{columns}, $label_phones{columns_mod},
+                                   $labels{columns}, $labels{columns_mod},
+                                   header => 1,
+                                   repeat_base => $str->{labels}{repeat_columns});        
+      }
+    }
     $label =~ s/ /<br \/>/g;
     $table .= "<th colspan=\"" . keys(%spots) . "\">" .
               ($label ? "\u$label" : '?') . 
@@ -1956,10 +2020,19 @@ sub tabulate {
   $table .= "</tr>\n";
   for my $row (sort keys %rows) {
     $table .= '<tr>';
-    my $label = tabulate_label $enriched_rows{$row}, 
+    $base_enrichment = enrich($row, \@extant_rows);
+    my $label = tabulate_label($base_enrichment, 
                                $label_phones{rows}, $label_phones{rows_mod},
                                $labels{rows}, $labels{rows_mod},
-                               repeat_base => $str->{labels}{repeat_rows};
+                               repeat_base => $str->{labels}{repeat_rows});
+    while (my ($k, $v) = each %row_moves) {
+      if ($k =~ /^$row$/) {
+        $label .= '&nbsp;/ ' . tabulate_label(overwrite($base_enrichment, $v),
+                               $label_phones{rows}, $label_phones{rows_mod},
+                               $labels{rows}, $labels{rows_mod},
+                               repeat_base => $str->{labels}{repeat_rows});
+      }
+    }
     $table .= "<th style=\"text-align: right;\">" .
               ($label ? "\u$label" : '?') . 
               '</th>'; 
@@ -1968,7 +2041,7 @@ sub tabulate {
       $table .= '<td></td>';
       for my $spot (sort keys %spots) {
         $table .= '<td>' .
-                  (defined $table{$row . $column . $spot} ? $table{$row . $column . $spot} : '') . 
+                  (defined $table{$row . $column . $spot} ? $table{$row . $column . $spot} : '') .
                   '</td>';
       }
     }
@@ -2801,17 +2874,21 @@ sub describe_rules {
       }
 
       my %appeared_in_a_list = ();
-      for my $deviation (sort {@{$dev_distilled{$frame}{$b}} <=> @{$dev_distilled{$frame}{$a}}} 
+      DEVIATION: for my $deviation (sort {@{$dev_distilled{$frame}{$b}} <=> @{$dev_distilled{$frame}{$a}}} 
                              @{$kept_deviations{$frame}}) {
         my $all_deviants = $dev_distilled{$frame}{$deviation};
         my @deviants = grep $outcome{$frame}{$_} ne $_, @$all_deviants;
         my @get_str_pattern;
 
+        my @undescribed_deviants = grep !defined $appeared_in_a_list{$_}, @deviants;
+        next DEVIATION unless @undescribed_deviants;
+
         my $subject = describe_set(\@deviants, $no_main_VP ? \@inventory : \@susceptible,
             morpho => 'plural', etic => 1, sort_phones => 1, get_str_pattern => \@get_str_pattern);
         # if the subject is a list, redo, dropping things that have already appeared in some list
-        if ($subject =~ /^\[.*\]$/) { # klugy
-          @deviants = grep !defined  $appeared_in_a_list{$_}, @deviants;
+        my $subject_is_list = ($subject =~ /^\[.*\]$/); # klugy
+        if ($subject_is_list) { 
+          @deviants = @undescribed_deviants;
           $subject = describe_set(\@deviants, $no_main_VP ? \@inventory : \@susceptible,
               morpho => 'plural', etic => 1, sort_phones => 1, get_str_pattern => \@get_str_pattern);
               # duplicated code, ick
@@ -2820,8 +2897,8 @@ sub describe_rules {
         $frame_text .= $subject;
         if (length($deviation) > 0) {
           # if the subject is a list, make the object one too, unless it's entirely deletions
-          if ($subject =~ /^\[.*\]$/) { # klugy
-            %appeared_in_a_list = %appeared_in_a_list, map(($_ => 1), @deviants);
+          if ($subject_is_list) { 
+            %appeared_in_a_list = (%appeared_in_a_list, map(($_ => 1), @deviants));
 
             if (grep $outcome{$frame}{$_}, @deviants) {
               $frame_text .= ' become [' . join(' ', map spell_out_spaces($outcome{$frame}{$_}, null => 1), @deviants) . ']';
@@ -2979,7 +3056,9 @@ sub describe_rules {
       $pre_text .= ' or word-initially' if $rule->{or_pause}{$locus-1};
       my @exceptions = split / /, $rule->{except}{$locus-1};
       my @exception_texts = map name_natural_class(overwrite($precondition, $_), 
-          \@inventory, significant => $_, no_nothing => 1, morpho => 'indef'), @exceptions;
+              \@inventory, significant => $_, no_nothing => 1, morpho => 'indef'), 
+          # don't state exceptions that don't actually exclude anything
+          grep { my $a = $_; grep /^$a$/ && /^$pre$/, @inventory; } @exceptions;
       @exception_texts = grep $_, @exception_texts;
       $pre_text .= ' except for ' . join ' and ', @exception_texts if @exception_texts;
     }
@@ -2988,7 +3067,9 @@ sub describe_rules {
       $post_text .= ' or word-finally' if $rule->{or_pause}{$locus+1};
       my @exceptions = split / /, $rule->{except}{$locus+1};
       my @exception_texts = map name_natural_class(overwrite($precondition, $_), 
-          \@inventory, significant => $_, no_nothing => 1, morpho => 'indef'), @exceptions;
+              \@inventory, significant => $_, no_nothing => 1, morpho => 'indef'), 
+          # don't state exceptions that don't actually exclude anything
+          grep { my $a = $_; grep /^$a$/ && /^$post$/, @inventory; } @exceptions;
       @exception_texts = grep $_, @exception_texts;
       $post_text .= ' except for ' . join ' and ', @exception_texts if @exception_texts;
     }
@@ -3005,7 +3086,7 @@ sub describe_rules {
     # Again, rules which survive one rule shouldn't be described as persistent.
     if (defined $rule->{inactive} and $rule->{inactive} > $i + 1) {
       $to_be_numbered{$i} = 1;
-      push @{$descriptions{$rule->{inactive}}{pre}}, "rule ($i) becomes inactive";
+      push @{$descriptions{$rule->{inactive}}{pre}}, "Rule ($i) becomes inactive.";
     }
 
     $text .= $main_clause unless $no_main_VP;
