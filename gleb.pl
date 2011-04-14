@@ -7,11 +7,13 @@
 # (A greater proportion of the numbers are wholly fabricated, though!)
 
 # Short-term plan.
-# - Let semivowels be described as vowels.
-# . Adjust preferability of lists over stupid featural descriptions more?
-# . Similarly: re examples, the right policy might be that, if there are enough deviations, list everything.
+# - Make strippings actually use a specified order!
 # - Fix instances of "phones" and "no phones" as we can.
+#   One instance is on account of not applying strictly larger deviations when trying to describe a deviation.
+#   I don't know if others remain.
+# - Fix 1951866716.
 # - The name "sonorant".
+# . Name classes in such a way that we don't get the stupid huge lists of exceptions.
 # - Pull actual phonology and describing into separate source files.
 # . Can I make David an easy-to-run version?
 # > 0.3.0.
@@ -67,7 +69,7 @@ my $FS; # what features there are, what they do
 my $phon_descr; # how to describe the features.  the thing that would need to be localised
 my %phonetic_alphabets;
 my %feature_indices;
-my @features_requiring;
+my @features_requiring; # at [v][f] is the list of features which are only defined if feature f takes value v
 
 my $verbose;
 my $debug = 0;
@@ -803,10 +805,11 @@ sub gen_one_rule {
   } 
   
   elsif ($kind eq 'stripping') {
-    for my $s (keys %{$FS->{strippings}[$k]{substitute}}) {
+    for my $s (@{$FS->{strippings}[$k]{substitute}}) {
+      $s =~ /^(.*) *: *(.*)$/;
       my $rule = {
-        precondition => {0 => overwrite($precondition, parse_feature_string($s, 1))},
-        effects => {0 => parse_feature_string($FS->{strippings}[$k]{substitute}{$s}, 1)},
+        precondition => {0 => overwrite($precondition, parse_feature_string($1, 1))},
+        effects => {0 => parse_feature_string($2, 1)},
         recastability => 0,
       };
       push @$phonology, $rule;
@@ -2079,14 +2082,12 @@ sub English_plural {
 
 sub name_natural_class {
   my ($phone, $inventory, %args) = (shift, shift, @_);
-  #my $debug_bit = '[' . feature_string($phone) . '] '; # debug
-  #$debug_bit = '<span style="font-size: small;">' . $debug_bit . '</span>' if $use_html; # debug
-  #$debug_bit = '' if defined $args{nodebug}; # debug
-
-  my $enriched = defined $inventory ? enrich($phone, $inventory) : $phone;
 
   return $args{no_nothing} ? '' : ($args{morpho} eq 'plural' ? 'no phones' : 'no phone') 
-      if defined $inventory and !grep /^$enriched$/, @$inventory;
+      if defined $inventory and !grep /^$phone$/, @$inventory;
+
+  $inventory = undef if $args{no_enrich}; # hackish
+  my $enriched = defined($inventory) ? enrich($phone, $inventory) : $phone;
 
   my $str = $args{str};
   my $subtable_index;
@@ -2102,12 +2103,15 @@ sub name_natural_class {
   $enriched = add_false_features $enriched, $str;
 
   if (defined $str->{subtables}) {
-    my $phone0 = $phone;
+    # We prevent enriching again since it makes the names produces for e.g. classes of 
+    # vowels and semivowels be the same, when otherwise all the semivowels might be high 
+    # yielding a more specific and thus different name.
+    my $phone0 = $enriched;
     substr($phone0, $subtable_index, 1) = '0';
-    my $name0 = name_natural_class($phone0, $inventory, %args, str => $str->{0}, no_nothing => 1, nodebug => 1);
-    my $phone1 = $phone;
+    my $name0 = name_natural_class($phone0, $inventory, %args, str => $str->{0}, no_nothing => 1, no_enrich => 1);
+    my $phone1 = $enriched;
     substr($phone1, $subtable_index, 1) = '1';
-    my $name1 = name_natural_class($phone1, $inventory, %args, str => $str->{1}, no_nothing => 1, nodebug => 1);
+    my $name1 = name_natural_class($phone1, $inventory, %args, str => $str->{1}, no_nothing => 1, no_enrich => 1);
 
     return $name0 unless $name1;
     return $name1 unless $name0;
@@ -2138,7 +2142,7 @@ sub name_natural_class {
 
     return $str->{name_first} ?
         $name1 . $conjunction . $name0 :
-        $name0 . $conjunction . $name1; # $debug_bit here
+        $name0 . $conjunction . $name1; 
   }
 
   my $scheme = defined $args{scheme} ? $args{scheme} : 'labels';
@@ -2203,7 +2207,7 @@ sub name_natural_class {
   }
   chop $name while $name =~ / $/; # nobase 
   $name = substr($name, 1) while $name =~ /^ /; # nobase 
-  return $name; # debug_bit here
+  return $name; 
 }
 
 # Given a list of phones, figure out a good feature-systematic name for it,
@@ -2384,8 +2388,9 @@ sub describe_set {
   # If not suppressed,
   # list either the examples or the nonexamples, depending on which there are more of.
   my $list_examples = ($size <= $cosize);
-  my @excluded_names = map name_natural_class($_, $inventory, str => $str, morpho => $morpho), @antipatterns;
   my $main_name = name_natural_class($pattern, $inventory, str => $str, morpho => $morpho);
+  @_ = grep $pattern, @$inventory; # name antipatterns within matches to the pattern
+  my @excluded_names = map name_natural_class($_, \@_, str => $str, morpho => $morpho), @antipatterns;
 
   my (@base_caught, @antipatterns_caught);
   if (!$list_examples and $args{ie}) {
@@ -2672,8 +2677,8 @@ sub describe_rules {
 
     my @susceptible;
     my $insusceptibles_exist = 0;
-    my %dev_distilled; # %dev_distilled maps frames to maps from conditions to phones
     my %any_nondeviates; # is there any phone which behaves normally?
+    my %dev_distilled; # %dev_distilled maps frames to maps from conditions to lists of phones.
     for my $frame (keys %outcome) {
       # %deviations maps deviations to the list of sounds that give them
       my %deviations;
@@ -2734,13 +2739,16 @@ sub describe_rules {
               describe_set $deviations{$dev}, \@downset, extend => $matcheds{$locus});
           
           my @covered;
-          for my $dev2 (keys %deviations) { # a member of the up-set
+          for my $dev2 (keys %deviations) { # a member of the up-set of D
             if ($dev2 =~ /^$dev$/ or length($dev2) == 0) {
               push @covered, grep defined($extension{$_}), @{$deviations{$dev2}};
-              if (length($dev2) > 0) { # this aspect of the deviation is handled; don't remark on it again
+              if (length($dev2) > 0) { 
+                # This aspect of the deviation is handled.  Don't remark on it again.
                 my $stripped_dev2 = $dev2;
-                for (0..length($dev2)-1) {
-                  substr($stripped_dev2, $_, 1) = '.' if substr($dev2, $_, 1) eq substr($dev, $_, 1);
+                for my $f (0..length($dev2)-1) {
+                  if (substr($dev2, $f, 1) eq substr($dev, $f, 1)) {
+                    substr($stripped_dev2, $f, 1) = '.';
+                  }
                 }
                 push @{$deviations{$stripped_dev2}}, grep defined($extension{$_}), @{$deviations{$dev2}};
                 @{$deviations{$dev2}} = grep !defined($extension{$_}), @{$deviations{$dev2}};
@@ -2766,7 +2774,7 @@ sub describe_rules {
 
     } # frame
 
-    # Merge deviations with identical effects.  
+    # Merge deviations with identical effects across frames.  
     my @frames_to_merge = keys %dev_distilled;
     for (my $i = 1; $i < @frames_to_merge; $i++) {
       my $f0 = $frames_to_merge[$i];
@@ -2909,8 +2917,9 @@ sub describe_rules {
             my $phone = overwrite(overwrite(overwrite($precondition, $frame), $get_str_pattern[0]), $deviation);
             $_ = name_natural_class($phone, \@new_inventory,
                 significant => $no_main_VP ? undef : $deviation, 
-                morpho => 'plural', nobase => 1);
-            $frame_text .= " become $_"; # ($_ ? $_ : "GD".feature_string($phone));
+                morpho => 'plural', nobase => 1); # HEREHERE
+            $frame_text .= " become $_";
+            $frame_text .= " $phone " if $_ eq 'no phones'; # debugdebugdebugedbuge
           }
         }
         else {
@@ -2942,13 +2951,15 @@ sub describe_rules {
     unless ($subject_is_list) {
       # Prepare the examples.
       # Give all the examples if there are at most 4, and 3 representative ones otherwise.
+      # TO CONSIDER: if there are enough deviates, just give everything as an example
+      # and skip the deviate descriptions?
       %_ = ();
       @susceptible = map $_{$_} ? () : ($_{$_} = 1 && $_), @susceptible; # uniq, keeping first instances
       if (@susceptible <= 4) {
         @example_sounds = @susceptible;
       } else {
         # I had thought that we should avoid naming deviates here, but now it's not clear.
-        # Anyway, can we be more representative here?        
+        # Anyway, can we be more representative here?
         @example_sounds = @susceptible[0, @susceptible/3, 2*@susceptible/3]; 
         $example_ellipsis = ' ...';
       }

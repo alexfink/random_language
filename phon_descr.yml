@@ -4,7 +4,7 @@ syllable_slots:
   - "-syllabic +resonant: R"
   - "-syllabic +nasal: N"
   - "-syllabic: C"
-  - ": *" # shouldn't come up at present
+  - ": *" # isn't underlyingly generated at present, but still can show up
 
 
 extra_natural_classes:
@@ -94,6 +94,7 @@ table_structure:
       - "+laminal coronal +anterior: laminal []"
       - "+laminal coronal +retroflex: laminal []"
       - "-laminal coronal -anterior -retroflex: apical []"
+      - "+retroflex: retroflex []" # needed for semivowels and the like
       - "-back -front dorsal: fronted []"
       - "+back -front -dorsal: velarised []"
       - "+pharyngealised: pharyng{ealised} []"
@@ -105,7 +106,7 @@ table_structure:
       repeat_columns: "-"
       pre_other:
       - "+resonant dorsal -tap_or_trill -lateral: semivowel" 
-      # strippings screw the thing up.  TODO: this is a big kluge; fix it
+      # the below is a kluge of some sort against strippings
       - "-dorsal -coronal -labial -pharyngealised +constricted_glottis: glottal stop"
       - "-dorsal -coronal -labial -pharyngealised +spread_glottis: glottal fricative"
       - "-dorsal -coronal -labial -pharyngealised: glottal"
