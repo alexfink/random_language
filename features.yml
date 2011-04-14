@@ -967,12 +967,11 @@ strippings:
 # It seems that voiceless zero ought to be [h].  
 # That means the ordering here is very crucial, which in turn means
 # we need to be careful when using this for pushing.
-# FIXME: of course, right now this is an unordered structure...
 - condition: "-dorsal -coronal -labial"
   priority: 1
-  substitute:
-    "-fricative -nasal": "+constricted_glottis"
-    "-voice -constricted_glottis": "+spread_glottis"
+  substitute:       # hack for an ordered hash
+  - "-fricative -nasal: +constricted_glottis"
+  - "-voice -constricted_glottis: +spread_glottis"
   strip: "resonant prenasalised implosive fricative affricate lateral tap_or_trill trill retroflex"
 
 
