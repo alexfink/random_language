@@ -28,7 +28,7 @@ table_structure:
       "-dorsal -coronal -labial +pharyngealised -constricted_glottis": "+fricative +spread_glottis" # mostly to keep them from nestling alongside /h/ 
       "-dorsal -coronal -labial +constricted_glottis": "-fricative -affricate"
       "-dorsal -coronal -labial +spread_glottis": "+fricative"
-      "-dorsal -coronal -labial": "-resonant -prenasalised -implosive -lateral -tap_or_trill -trill -retroflex"
+      "-dorsal -coronal -labial": "-resonant -prenasalised -implosive -lateral -retroflex" # TODO: if e.g. trill ever becomes valid on an obstruent, put it here
       "dorsal +resonant +front": "-palatalised_velar"
     collapse: "low ATR long palatalised_velar affricate labiodental c_with_tSj sibilant laminal trill lateral tap_or_trill implosive spread_glottis constricted_glottis back kp_with_w round pharyngealised front retroflex high anterior prenasalised voice" 
     named_collapses:
@@ -94,7 +94,7 @@ table_structure:
       - "+laminal coronal +anterior: laminal []"
       - "+laminal coronal +retroflex: laminal []"
       - "-laminal coronal -anterior -retroflex: apical []"
-      - "+retroflex: retroflex []" # needed for semivowels and the like
+      - "+retroflex: retroflexed []" # needed for semivowels and the like
       - "-back -front dorsal: fronted []"
       - "+back -front -dorsal: velarised []"
       - "+pharyngealised: pharyng{ealised} []"
@@ -131,12 +131,13 @@ table_structure:
       - "+back: back []" # ditto
       - "+laminal: laminal []"
       - "-laminal: apical []"
-#      - "+sibilant: sibilant []" # not "or postalveolar" I think # testing, and next line
-      - "-sibilant: non-sibilant []"
       - "-ATR: lax []"
       - "+ATR: tense []"
-      - "-long: short []"
-      - "-spread_glottis: unaspirated []"
+      negate:
+        "rounded": "unrounded"
+        "aspirated": "unaspirated"
+        "long": "short"
+        "sibilant": "non-sibilant coronal" # kluge, but for now for clarity
     nominalised: 
       eliminate:
         "dorsal coronal labial": "retroflex front back round labiodental anterior laminal high palatalised_velar" 
@@ -214,9 +215,10 @@ table_structure:
       - "+voice: voiced []"
       - "+spread_glottis: aspirated []"
       - "+constricted_glottis: glottalised []"
-      - "-long: short []"
-      #- "-round: unrounded []"
-      - "-spread_glottis: unaspirated []"
+      negate:
+        "rounded": "unrounded"
+        "aspirated": "unaspirated"
+        "long": "short"
     nominalised:
       other:
       - "high low: height"
