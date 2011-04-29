@@ -7,7 +7,6 @@
 # (A greater proportion of the numbers are wholly fabricated, though!)
 
 # Short-term plan.
-# - High priority: 1938094747 breaks an unbreakable prescription against voiced [?].
 # - Are there other instances of "phones" or "no phones" or empty strings?  Yes, 2124165697.
 # - Stop horrid "other than" lists.  415044181 has examples.  (Also, why aren't resonants recognised?)
 #   Presumably in these cases, the subject should be turned into a list, 
@@ -1084,18 +1083,26 @@ sub gen_one_rule {
   # explicitly force it back to undefined.
   # (This is for before start_sequences, and is meant to be a mechanism by which e.g.
   # we can avoid the stupid /n_a/ : /n_m/ contrasts.)
-  if (defined $args{forcibly_unmark} and $kind ne 'default' and $kind ne 'stripping') {
+  #
+  # Get rid of effectses if we can.
+  if (defined $args{forcibly_unmark}) {
     for my $i (keys %{$args{forcibly_unmark}}) {
       for my $displ (keys %{$selected_rule->{effects}}) {
-        substr($selected_rule->{effects}{$displ}, $i, 1) = '.'
-            if substr($selected_rule->{effects}{$displ}, $i, 1) =~ /[01]/;
-        for (@{$args{forcibly_unmark}{$i}}) {
+        if ($kind ne 'default' and $kind ne 'stripping') {
+          substr($selected_rule->{effects}{$displ}, $i, 1) = '.'
+              if substr($selected_rule->{effects}{$displ}, $i, 1) =~ /[01]/;
+          delete $selected_rule->{effects}{$displ}, next unless $selected_rule->{effects}{$displ} =~ /[^.]/;
+        }
+        for (@{$args{forcibly_unmark}{$i}}) { 
           substr($selected_rule->{effects}{$displ}, $i, 1) = 'u', last 
               if substr($selected_rule->{effects}{$displ}, $_, 1) ne '.';
         }
       }
     }
   }
+
+  # Abandon this ruls if it does nothing now.
+  return unless keys %{$selected_rule->{effects}} or defined $selected_rule->{deletions}; # TODO: update as needed
 
   # Adding {except} conditions if this might newly set a feature which a stripping takes out
   # would be nice if it worked, but there are problems if the feature being set is a side effect;
@@ -1365,6 +1372,7 @@ sub gen_phonology {
     }
   } # features in the phone generator
 
+  # Map features to the things on which their defaults depend, including stripping situations.
   my %forcibly_unmark;
   for my $i (0..@{$FS->{features}}-1) {
     if (!$generable[$i] and defined $FS->{features}[$i]{forcibly_unmark}
@@ -1374,6 +1382,18 @@ sub gen_phonology {
         my $phone = parse_feature_string($default->{condition}, 1);
         for (0..@{$FS->{features}}-1) {
           push @l, $_ if substr($phone, $_, 1) ne '.';
+        }
+      }
+      FUSTRIP: for my $stripping (@{$FS->{strippings}}) {
+        my $trigger = parse_feature_string($stripping->{strip}, 1);
+        for my $i (@l) {
+          if (substr($trigger, $i, 1) ne '.') {
+              my $phone = parse_feature_string($stripping->{condition}, 1);
+              for (0..@{$FS->{features}}-1) {
+                push @l, $_ if substr($phone, $_, 1) ne '.';
+              }            
+            next FUSTRIP;
+          }
         }
       }
       $forcibly_unmark{$i} = \@l;
