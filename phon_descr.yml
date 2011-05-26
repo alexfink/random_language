@@ -1,7 +1,7 @@
 syllable_slots:
   - "+syllabic: V"
   - "-syllabic dorsal +resonant -lateral -tap_or_trill: G"
-  - "-syllabic +resonant: R"
+  - "-syllabic +resonant|-syllabic +nasal: R"
   - "-syllabic +nasal: N"
   - "-syllabic: C"
   - ": *" # isn't underlyingly generated at present, but still can show up
@@ -16,6 +16,7 @@ table_structure:
   subtables: syllabic
   name: phone
   name_first: 1
+  dominant: 1 # set thus for groups of vowels and semivowels
   0:
     name: consonant
     caption: Consonants
@@ -50,7 +51,7 @@ table_structure:
       - "-resonant -nasal -fricative: stop"
       - "-resonant +fricative: fricative"
       - "-resonant -fricative: stop or nasal"
-      - "-resonant -nasal: obstruent"  # can we get "sonorant" in as the non- form or some such?
+      - "-resonant -nasal: obstruent"
       - "-resonant: obstruent or nasal"
       - "+resonant +tap_or_trill +trill: trill"
       - "+resonant +tap_or_trill -trill: tap"
@@ -138,6 +139,8 @@ table_structure:
         "aspirated": "unaspirated"
         "long": "short"
         "sibilant": "non-sibilant coronal" # kluge, but for now for clarity
+      special_negate:
+        "-resonant -nasal": "sonorant"
     nominalised: 
       eliminate:
         "dorsal coronal labial": "retroflex front back round labiodental anterior laminal high palatalised_velar" 

@@ -7,23 +7,25 @@
 # (A greater proportion of the numbers are wholly fabricated, though!)
 
 # Short-term plan.
-# - Are there other instances of "phones" or "no phones" or empty strings?  Yes, 2124165697.
-# - Stop horrid "other than" lists.  415044181 has examples.  (Also, why aren't resonants recognised?)
-#   Presumably in these cases, the subject should be turned into a list, 
-#   or the examples shd be made exhaustive.  Can we use extant behaviour?
-# - The name "sonorant".
-# - Overridingly name semivowels like vowels?
-# - Pull actual phonology and describing into separate source files.
 # . Can I make David an easy-to-run version?
 # > 0.3.0.
-# - Surface enforcement of what can be in a given syllable position.
-# - Rules that apply only at word boundary.  (Though how are we going to do phrase boundary?)
+# These next are important but big:
+# - Unstated rules!
+# - There is a misstatement in 11598455.  It is a fundamental one: the rule as stated is
+#   _always_ wrong, given that an assimilation to the _same_ environment interferes with
+#   what would otherwise be the resolution of the resulting segment.  
+# - Huh, in 634146154, nasality spreads across high V but doesn't latch on.  Is there a hope 
+#   of describing that?
+# Next:
 # - Constant features in assimilatory rules.
-# - Split resolutions for marked situations.  (This is definitely better than yoking marked situations.
-#   I wonder whether excepts need to be separate.)
 # - Better extra conditions.  (In particular, extra conditions that conspire to avoid something
 #   _which there's already a rule against_ should be favoured.)
 # - Never resolve an extra-condition situation by changing the extra condition!!!
+# - Revision of forced non-contrastivity (with stress etc. in mind).
+# - Surface enforcement of what can be in a given syllable position.
+# - Rules that apply only at word boundary.  (Though how are we going to do phrase boundary?)
+# - Split resolutions for marked situations.  (This is definitely better than yoking marked situations.)
+#   I think we still need excepts, though.
 # - Presence of certain contrasts as a precondition for certain assimilations???
 #   (I'm thinking of the resonant voice assimilation case.)
 # - Maybe make phone proportions saner?  The most egregious cases are overcommon things;
@@ -62,6 +64,7 @@ my $credits = 'Gleb, a phonology generator, by Alex Fink' .
 # As essentially a hack to achieve reasonable behaviour of certain 3-place continua,
 # a feature can be marked as antithetical to another.  Then, whenever the former is
 # set +, the latter is automatically set -.
+# TODO: this likely needs generalisation for e.g. tone.
 
 my $FS; # what features there are, what they do
 my $phon_descr; # how to describe the features.  the thing that would need to be localised
@@ -74,6 +77,7 @@ my $debug = 0;
 my $debug2 = 0; # for the use of tracking things down with temporary diagnostic prints.  will leave for now
 my $use_html;
 my $CGI;
+my $seed =  time ^ $$ ^ $$<<15; 
 
 # Go from a prototypical prob to an actual one.  Now twice as gentle!
 sub fuzz {
@@ -1727,6 +1731,20 @@ sub enrich {
   $k;
 }
 
+# The table that a given phone is in (which I call $str throughout).
+# This code is duplicated in several places, with various side-effects :/
+# REFACTOR: have a structure to hold this
+sub get_str {
+  my $enriched = shift;
+  my $str = $phon_descr->{table_structure};
+  while (defined $str->{subtables}) {
+    my $subtable = substr($enriched, $feature_indices{$str->{subtables}}, 1);
+    last if $subtable eq '.';
+    $str = $str->{$subtable};
+  }
+  return $str;
+}
+
 # The features of a phone determining what table it's in.
 sub str_part {
   my $phone = shift;
@@ -1748,6 +1766,9 @@ sub str_part {
 # If $args{repeat_base} is true, multiple bases will be used if they match irredundantly, 
 # strings joined by its value.  $args{repeat_mod} is a hash doing similarly for modificated things.
 
+# If $args{taken_care_of} exists, it should be a reference to an array; it is filled with
+# the features that were really taken care of (not just blotted out by $args{significant}).
+
 sub tabulate_label {
   my ($enriched, $p, $pmod, $l, $lmod, %args) = @_;
   my $label = '';
@@ -1757,7 +1778,7 @@ sub tabulate_label {
   my @taken_care_of;
   if (defined $args{significant}) {
     for (0..length($args{significant})-1) {
-      $taken_care_of[$_] = 1 if substr($args{significant}, $_, 1) eq '.';
+      $taken_care_of[$_] = 2 if substr($args{significant}, $_, 1) eq '.';
     }
   }
   for my $i (0..@$l-1) {
@@ -1872,6 +1893,10 @@ sub tabulate_label {
     $label =~ s/\{[^{}]*\}/./g;
   } else {
     $label =~ s/[{}]//g;
+  }
+
+  if ($args{taken_care_of}) {
+    @{$args{taken_care_of}} = map $_ != 2, @taken_care_of;    
   }
 
   $label;
@@ -2044,13 +2069,15 @@ sub tabulate {
                                $labels{columns}, $labels{columns_mod},
                                header => 1,
                                repeat_base => $str->{labels}{repeat_columns});
+    my %moves_stated;
     while (my ($k, $v) = each %column_moves) {
-      if ($k =~ /^$column$/) {
+      if ($k =~ /^$column$/ and !$moves_stated{$v}) {
         $label .= '&nbsp;/ ' . tabulate_label(overwrite($base_enrichment, $v),
                                    $label_phones{columns}, $label_phones{columns_mod},
                                    $labels{columns}, $labels{columns_mod},
                                    header => 1,
                                    repeat_base => $str->{labels}{repeat_columns});        
+        $moves_stated{$v} = 1;
       }
     }
     $label =~ s/ /<br \/>/g;
@@ -2122,7 +2149,10 @@ sub name_natural_class {
     while (defined $str->{subtables}) {
       $subtable_index = $feature_indices{$str->{subtables}}; 
       my $subtable = substr($enriched, $subtable_index, 1);
-      last if $subtable eq '.';
+      if ($subtable eq '.') {
+        last unless $args{use_dominant_str};
+        $subtable = $str->{dominant};
+      }
       $str = $str->{$subtable};
     }
   }
@@ -2210,11 +2240,16 @@ sub name_natural_class {
     }
   }
 
+  # Our handling of "sonorant", for now, is just by swapping it in as a different base name.
+  my @l = @{$str->{$scheme}{name_classes}{l}};
+  @l[-1] = $args{base} if $args{base};
+
   my $significant = defined $args{significant} ? $args{significant} : $phone;
+  $significant =~ s/u/./g; # undefineds are not significant
   # REFACTOR: there should probably be a single data structure to hold this all.
   my $name = tabulate_label $enriched,
                             $str->{$scheme}{name_classes}{p}, $str->{$scheme}{name_classes}{pmod},
-                            $str->{$scheme}{name_classes}{l}, $str->{$scheme}{name_classes}{lmod},
+                                                        \@l , $str->{$scheme}{name_classes}{lmod},
                             %args,
                             entailed_p => $str->{$scheme}{name_classes}{entailed_p},
                             entailed_pmod => $str->{$scheme}{name_classes}{entailed_pmod},
@@ -2222,7 +2257,6 @@ sub name_natural_class {
                             nons => !$args{bar_nons},
                             non_inventory => ($args{bar_nons} ? undef : $inventory),
                             negate => $str->{$scheme}{negate},
-                            nobase => $args{nobase},
                             repeat_mod => $str->{$scheme}{name_classes}{repeat_mod},
                             eliminate => $str->{$scheme}{name_classes}{eliminate}; 
   $name = English_indefinite $name if ($args{morpho} eq 'indef');
@@ -2265,12 +2299,7 @@ sub describe_set {
   my $rb = $args{etic} ? ']' : '/';
 #print STDERR join(' ', map(name_phone($_,alphabet=>$phonetic_alphabets{CXS}), sort @$orig_phones)) . '  within  ' . 
 #             join(' ', map(name_phone($_,alphabet=>$phonetic_alphabets{CXS}), sort @$inventory)) . "\n";
-
-  my $size = @$phones;
-  unless ($extend) {
-    return $morpho eq 'plural' ? 'no phones' : 'no phone' if ($size == 0);
-    return $lb . name_phone($phones->[0]) . $rb if ($size == 1);
-  }
+  $args{get_str_pattern}->[0] = '.' x @{$FS->{features}} if defined $args{get_str_pattern}; # extra return hack
 
   my $pattern = defined $args{within} ? $args{within} : '.' x @{$FS->{features}};
   my $str = $phon_descr->{table_structure}; 
@@ -2282,7 +2311,13 @@ sub describe_set {
     substr($pattern, $feature_indices{$str->{subtables}}, 1) = $subtable;
     $str = $str->{$subtable};
   }
-  $args{get_str_pattern}->[0] = $pattern if defined $args{get_str_pattern}; # extra return hack
+  $args{get_str_pattern}->[0] = $pattern if defined $args{get_str_pattern};
+
+  my $size = @$phones;
+  unless ($extend) {
+    return $morpho eq 'plural' ? 'no phones' : 'no phone' if ($size == 0);
+    return $lb . name_phone($phones->[0]) . $rb if ($size == 1);
+  }
 
   # add_false_features causes a few things, like [?\], to be named wrongly.  
   my %remove_false_features = map((add_false_features($_, $str) => $_), @$inventory);
@@ -2385,9 +2420,7 @@ sub describe_set {
       $complexity++;
       last if ($size <= $complexity) or ($cosize <= $complexity);
     }
-    # I think antipatterns should only be kept if they account for a non-silly proportion of things.
-    # This isn't in yet.
-  } 
+  } # main describing loop
 
   if ($extend) {
     my @l = grep {
@@ -2401,25 +2434,52 @@ sub describe_set {
     return @l;
   }
 
-  my @detritus = grep !defined $phones{$_}, @comparanda;
-  $complexity += @detritus;
+  if ($size <= $complexity) {
+    return ($morpho eq 'plural' ? '' : 'one of ') . 
+        $lb . join(' ', map name_phone($remove_false_features{$_}), @$phones) . $rb;
+  }
+  if ($cosize <= $complexity) {
+    return name_natural_class($str_pattern, $inventory, str => $str, morpho => $morpho) . 
+        (@complement ? (" other than $lb" .
+          join(' ', map name_phone($remove_false_features{$_}), @complement) . $rb) : ''); 
+  }
 
-  # Trying to name the complement still might be helpful at this point.
-  # But if I'm going to change that, I should also think about recognising groups
-  # defined by ors of natural classes.  Etc.
-  return ($morpho eq 'plural' ? '' : 'one of ') . 
-      $lb . join(' ', map name_phone($remove_false_features{$_}), @$phones) . $rb if ($size <= $complexity);
-  return name_natural_class($str_pattern, $inventory, str => $str, morpho => $morpho) . 
-      (@complement ? (" other than $lb" .
-      join(' ', map name_phone($remove_false_features{$_}), @complement) . $rb) : '') if ($cosize <= $complexity);
+  # Special negation.  Currently just for sonorant.
+  my $base = '';
+  my $base_antipattern;
+  while (my ($phone, $neg) = each %{$str->{labels}{special_negate}}) {
+    for (@antipatterns) {
+      ($base, $base_antipattern) = ($neg, $_) if $_ eq parse_feature_string($phone, 1);
+    }
+  }
+
+
+  my @detritus = grep !defined $phones{$_}, @comparanda;
+  # For now, just to avoid egregiosities with negative lists, admit defeat and fall back to
+  # a big list if there's too much detritus.  
+  if (@detritus > @$phones / 4) { # magic linear function
+    return ($morpho eq 'plural' ? '' : 'one of ') . 
+        $lb . join(' ', map name_phone($remove_false_features{$_}), @$phones) . $rb;
+  }
+
+  my $significant = $pattern;
+  if ($args{insignificant}) {
+    for (0..length($pattern)-1) {
+      substr($significant, $_, 1) = '.' if substr($args{insignificant}, $_, 1) ne '.';
+    }
+  }
+
+  my $main_name = name_natural_class($pattern, $inventory, str => $str, morpho => $morpho, 
+      base => $base, significant => $significant);
+  # Get rid of the antipattern in question if it made it in as the base.
+  @antipatterns = grep $_ != $base_antipattern, @antipatterns if $base and $main_name =~ /\b$base/; # kluge!
+
+  @_ = grep $pattern, @$inventory; # name antipatterns within matches to the pattern
+  my @excluded_names = map name_natural_class($_, \@_, str => $str, morpho => $morpho), @antipatterns;
 
   # If not suppressed,
   # list either the examples or the nonexamples, depending on which there are more of.
   my $list_examples = ($size <= $cosize);
-  my $main_name = name_natural_class($pattern, $inventory, str => $str, morpho => $morpho);
-  @_ = grep $pattern, @$inventory; # name antipatterns within matches to the pattern
-  my @excluded_names = map name_natural_class($_, \@_, str => $str, morpho => $morpho), @antipatterns;
-
   my (@base_caught, @antipatterns_caught);
   if (!$list_examples and $args{ie}) {
     my @pool = @complement;
@@ -2438,7 +2498,7 @@ sub describe_set {
       $main_name .= join(' ', map name_phone($remove_false_features{$_}), @base_caught) . $rb;
       $main_name .= ')' if (@detritus or @antipatterns_caught);
     }
-    die 'inconsistency in detritus in describe_set' if @pool != @detritus; 
+    warn 'inconsistency in detritus in describe_set' if @pool != @detritus; 
   }
 
   my $result = $main_name;
@@ -2447,7 +2507,28 @@ sub describe_set {
     $result .= (join ' or ', @excluded_names);
     $result .= ' or ' if @detritus;
   }
-  $result .= $lb . join(' ', map name_phone($remove_false_features{$_}), @detritus) . $rb if @detritus;
+
+  # Trying to name the detritus, or indeed the complement, still might be helpful at this point.
+  # But if I'm going to change that, I should also think about recognising groups
+  # defined by ors of natural classes, etc.  It's all a bit of a mess.
+  # E.g. try the stored examples "horrid(er)-lists".
+  #
+  # For now, we just tack on the name of all the detritus, if it's simple.
+  if (@detritus) {
+    my $detritus_name = '';
+    if (@detritus > 2 and !$args{bottom_out}) {
+      $detritus_name = describe_set([map $remove_false_features{$_}, @detritus], $inventory, %args, 
+          get_str_pattern => undef, insignificant => $pattern, bottom_out => 1,
+          morpho => ($args{morpho} eq 'bare' ? 'indef' : $args{morpho}));
+      $detritus_name = '' if $detritus_name =~ /^[[\/]/ or $detritus_name =~ /other than/; # big kluge
+    }
+    if ($detritus_name) {
+      $result .= $detritus_name;
+    } else {
+      $result .= $lb . join(' ', map name_phone($remove_false_features{$_}), @detritus) . $rb;
+    }
+  }
+
   if ($list_examples and $args{ie}) {
     $result .= '; i.e. ' . ($morpho eq 'plural' ? '' : 'one of ') . 
         $lb . join(' ', map name_phone($remove_false_features{$_}), @$phones) . $rb;
@@ -2472,7 +2553,7 @@ sub describe_syllable_structure {
     for my $slot (@{$phon_descr->{syllable_slots}}) {
       my $phone; 
       ($phone, $label) = split /: */, $slot;
-      $phone = parse_feature_string($phone, 1);
+      $phone = '(' . join(')|(', map(parse_feature_string($_, 1), split(/\|/, $phone))) . ')';
       my $mismatch = 0;
       for (@phones) {
         $mismatch = 1 unless /^$phone$/;
@@ -2547,7 +2628,7 @@ sub describe_rules {
     @inventory = keys %{$pd->{gen_inventory}};
   } else {
     # FIXME: else we have to run to update the inventory to the starting point
-    print STDERR "unimplemented start time in describe_rules!\n"
+    warn "unimplemented start time in describe_rules!";
   }
   @inventory = grep $_, @inventory;
   %phone_resolutions = (map(($_ => $_), @inventory));
@@ -2637,6 +2718,8 @@ sub describe_rules {
     }
 
     # The big one: get the new inventory.
+    
+    # FIXME: there is a fundamental flaw in this way about it: HERE
     my @new_inventory = @inventory;
     my $entailed_effect = add_entailments($effect);
     my %outcome;
@@ -2717,7 +2800,7 @@ sub describe_rules {
         my $susceptible = 0;
         my $outcome = $outcome{$frame}{$phone};
         if ($outcome =~ / /) { 
-          print STDERR "multiple sound outcome in finding deviations!\n"; # FIXME: multiple sound outcomes
+          warn "multiple sound outcome in finding deviations!"; # FIXME: multiple sound outcomes
         }
         my $changed = add_entailments overwrite($phone, $frame); # duplicative :-/
         if (length($outcome)) { # one phone
@@ -2822,9 +2905,9 @@ sub describe_rules {
           next MERGE_DEV_J unless $f =~ /^$f0$/ or $f =~ /^$f1$/;
         }
 
+        my $added_this_merge = 0;
         for my $dev (keys %{$dev_distilled{$f0}}) {
           next unless defined $dev_distilled{$f1}{$dev};
-          my $added_this_merge = 0;
           for (my $k = $#{$dev_distilled{$f0}{$dev}}; $k >= 0; --$k) {
             my $phone = $dev_distilled{$f0}{$dev}[$k];
             if (grep $_ eq $phone, @{$dev_distilled{$f1}{$dev}}) {
@@ -2838,7 +2921,7 @@ sub describe_rules {
             }
           }
           delete $dev_distilled{$f0}{$dev} unless @{$dev_distilled{$f0}{$dev}};
-          delete $dev_distilled{$f1}{$dev} unless @{$dev_distilled{$f1}{$dev}};
+          delete $dev_distilled{$f1}{$dev} unless @{$dev_distilled{$f1}{$dev}}; 
         }
       } # j
     } # i
@@ -2852,7 +2935,9 @@ sub describe_rules {
     # But I leave them, just so that there isn't another thing to revise when persistence happens.
     my $simple_effect = $effect;
     $simple_effect =~ y/<>/../;
-    my $modified = overwrite $precondition, $simple_effect; 
+    my $modified = add_entailments (overwrite $precondition, $simple_effect); 
+    # add_entailments there seems necessary to wipe out things that are forced undefined 
+    # when deviations allow them to be defined again.  I hope it doesn't break anything else.
 
     my $text = '';
 
@@ -2926,7 +3011,7 @@ sub describe_rules {
             @_ = grep $_ !~ /^$phone$/, @_;
         }
         $frame_text .= describe_set(\@_, \@inventory, morpho => 'indef', bar_nons => 1, etic => 1); 
-            # (try removing?) disallowing nons isn't right, but it makes the thing readable
+            # disallowing nons isn't right, but it makes the thing readable
         # okay, so just defined($rule->{pause_phone}) isn't what I look for elsewhere, but it should hackwork
         $frame_text .= ' or pause' if defined $rule->{pause_phone} and $rule->{pause_phone} =~ /^$frame$/;
         $frame_text .= ', ';
@@ -2955,8 +3040,13 @@ sub describe_rules {
         $frame_text .= $subject;
 
         if (length($deviation) > 0) {
-          # if the subject is a list, make the object one too, unless it's entirely deletions
-          if ($subject_is_list) { 
+          # Check whether some assimilation is left, because frames have been merged.
+          my $framed_effect = overwrite $effect, $frame;
+          my $assimilation_left = ($framed_effect =~ /[<>]/);
+
+          # If the subject is a list, make the object one too, unless it's entirely deletions.
+          # For deviations, it's less offputting to make the lists long.
+          if ($subject_is_list and !$assimilation_left) { 
             %appeared_in_a_list = (%appeared_in_a_list, map(($_ => 1), @deviants));
 
             if (grep $outcome{$frame_representative}{$_}, @deviants) {
@@ -2965,6 +3055,25 @@ sub describe_rules {
               $frame_text .= ' are deleted';
             }
           } else {
+            # Here again we aren't handling bidirectional assimilation right.
+            my $assimilation_text = '';
+            if ($assimilation_left) {
+              my @taken_care_of;
+              $_ = $effect;
+              y/01u<>/...11/;
+              my $significant = $framed_effect;
+              $significant =~ y/01u<>/...11/;              
+              $assimilation_text = ' and assimilate in ' .
+                  name_natural_class($_, undef, scheme => 'nominalised', nobase => 1, 
+                      str => get_str($get_str_pattern[0]),
+                      significant => $significant, taken_care_of => \@taken_care_of); 
+
+              # This in particular rids $framed_effect of all <>s.
+              for (0..length($frame)-1) {
+                substr($framed_effect, $_, 1) = '.' if $taken_care_of[$_];
+              }
+            }
+
             # Reintroduce parts of the deviation that necessarily occurred for everything in this set,
             # but have been distilled out.  It seems a waste to do this here,
             # but I didn't manage to figure out how to do this correctly during distillation
@@ -2981,14 +3090,28 @@ sub describe_rules {
             
             # We need accept_nothing => 1 so that weird things in the frame don't make the
             # namer think impossible things are going on.  
-            my $phone = overwrite(overwrite(overwrite($precondition, $frame), $get_str_pattern[0]), $necessary_deviations);
+            my $phone = overwrite(overwrite(overwrite($precondition, $framed_effect), 
+                $get_str_pattern[0]), $necessary_deviations);
+
+            # Constant features of the frame which came from assimilations in the effect are still insignificant.
+            my $significant;
+            if ($no_main_VP) {
+              $significant = overwrite($precondition, $framed_effect);
+              for (0..length($significant)-1) {
+                substr($significant, $_, 1) = '.' if substr($effect, $_, 1) =~ /[<>]/;
+              }
+              $significant = overwrite(overwrite($significant, $get_str_pattern[0]), $necessary_deviations);
+            } else {
+              $significant = $deviation;
+            }
+
             $_ = name_natural_class($phone, \@new_inventory,
-                significant => $no_main_VP ? undef : $deviation, 
-                morpho => 'plural', nobase => 1, accept_nothing => 1);
+                significant => $significant,
+                morpho => 'plural', nobase => 1, accept_nothing => 1, use_dominant_str => 1); 
             $frame_text .= " become $_";
+            $frame_text .= $assimilation_text if $assimilation_text;
           }
-        }
-        else {
+        } else { # deviation is length 0
           $frame_text .= ' are deleted';
         }
         $frame_text .= '; ';
@@ -3002,15 +3125,18 @@ sub describe_rules {
     # It is friendliest not to describe rules which survive till before the _next_ rule as persistent.
     # (Is my interpretation subject to an  off-by-one error?)
     my $persistent = !(defined $rule->{inactive} and $rule->{inactive} <= $i + 1);
+    my @get_str_pattern;
 
     # For impersistent rules, no point favouring a featural description to a list.
     if ($insusceptibles_exist or !$persistent) {
       # Note that sounds excluded by {except}{$locus} are already outside of \@susceptible.
       $main_clause .= describe_set(\@susceptible, \@inventory, within => $precondition, 
-          morpho => 'plural', etic => 1, sort_phones => 1);
+          morpho => 'plural', etic => 1, sort_phones => 1, get_str_pattern => \@get_str_pattern);
     } else {
       $main_clause .= name_natural_class($precondition, \@inventory, morpho => 'plural');
+      $get_str_pattern[0] = str_part $precondition;
     }
+    $modified = overwrite $get_str_pattern[0], $modified;
     my $subject_is_list = ($main_clause =~ /^\[.*\]$/); # klugy
     my $both_are_lists = 0; # don't need deviations if both subj and obj are lists
     my @example_sounds;
@@ -3045,8 +3171,8 @@ sub describe_rules {
       if ($effect =~ /[01]/) {
         my ($frame) = keys %outcome;        
         $main_VP .= ' become ';
-        # if the subject is a list, make the complement one too
-        if ($subject_is_list and scalar keys %outcome <= 1) { 
+        # if the subject is a _short_ list, make the complement one too
+        if ($subject_is_list and @susceptible <= 2 and scalar keys %outcome <= 1) { 
           $both_are_lists = 1;
           $main_VP .= '[' . join(' ', map spell_out([split ' ', $outcome{$frame}{$_}], null => 1), @susceptible) . ']';
         } else {
@@ -3058,7 +3184,8 @@ sub describe_rules {
           for (0..length($modified)-1) {
             substr($modified, $_, 1) = '.' if substr($frame, $_, 1) eq '.' and substr($effect, $_, 1) =~ /[<>]/;
           }
-          $main_VP .= name_natural_class($modified, \@new_inventory, significant => $simple_effect, morpho => 'plural', nobase => 1);
+          $main_VP .= name_natural_class($modified, \@new_inventory, significant => $simple_effect, 
+              morpho => 'plural', nobase => 1, accept_nothing => 1, use_dominant_str => 1);
         }
         # examples
         if (keys %outcome <= 1 and !$subject_is_list) {
@@ -3068,7 +3195,7 @@ sub describe_rules {
       }
       if ($effect =~ /</) {
         $_ = $effect;
-        y/01<>/..1./;
+        y/01u<>/...1./;
         $_ = overwrite(str_part(enrich($precondition,\@inventory)), $_);
         $main_VP .= ' and' if $main_VP;
         $main_VP .= ' assimilate in ' .
@@ -3098,7 +3225,7 @@ sub describe_rules {
       }
       if ($effect =~ />/) {
         $_ = $effect;
-        y/01<>/...1/;
+        y/01u<>/....1/;
         $_ = overwrite(str_part(enrich($precondition,\@inventory)), $_);
         $main_VP .= ' and' if $main_VP;
         $main_VP .= ' assimilate in ' .
@@ -3176,7 +3303,7 @@ sub describe_rules {
       if ($no_main_VP) {
         $deviation_texts = ($text ? ', ' : '') . lcfirst substr($deviation_texts, 2);
       }
-      $text .= $deviation_texts unless ($all_all_deviates and !$no_main_VP) or $both_are_lists;
+      $text .= $deviation_texts unless !$no_main_VP and ($all_all_deviates or $both_are_lists);
     }
 
     $text =~ s/^ *//;
@@ -3346,7 +3473,6 @@ sub canonicalise_phonemic_form {
 
 
 
-my $seed =  time ^ $$ ^ $$<<15; 
 my $outfile;
 my $humane_output;
 my $infile;
