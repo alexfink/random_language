@@ -41,8 +41,8 @@ characters:
   "-syllabic +resonant dorsal -lateral -tap_or_trill +high -front +round +ATR": 'w'
   "+resonant dorsal +lateral -tap_or_trill +high +front": '&#x28e;'
   "+resonant dorsal +lateral -tap_or_trill +high -front": '&#x29f;'
-  # taps can be notated as extra-short stops I guess
-  "+resonant dorsal -lateral +tap_or_trill -trill -high": '&#x262;&#x306;'
+  # taps can be notated as extra-short trills I guess
+  "+resonant dorsal -lateral +tap_or_trill -trill -high": '&#x280;&#x306;'
   "+resonant dorsal -lateral +tap_or_trill +trill -high": '&#x280;'
   "+resonant coronal +lateral -tap_or_trill -back -retroflex": 'l'
   "+resonant coronal +lateral -tap_or_trill +retroflex": '&#x26d;'
@@ -55,7 +55,7 @@ characters:
   "+resonant coronal -lateral +tap_or_trill +trill": 'r'
   "+resonant labial -labiodental -lateral -tap_or_trill": '&#x3b2;&#x31e;'
   "+resonant labial +labiodental -lateral -tap_or_trill": '&#x28b;'
-  "+resonant labial -lateral +tap_or_trill -trill": 'b&#x306;'
+  "+resonant labial -lateral +tap_or_trill -trill": '&#x299;&#x306;'
   "+resonant labial -lateral +tap_or_trill +trill": '&#x299;'
   "-resonant +nasal -fricative -affricate dorsal -high": '&#x274;'
   "-resonant +nasal -fricative -affricate dorsal +high -front": '&#x14b;' 
