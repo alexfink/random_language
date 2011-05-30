@@ -1,8 +1,8 @@
 syllable_slots:
   - "+syllabic: V"
   - "-syllabic dorsal +resonant -lateral -tap_or_trill: G"
-  - "-syllabic +resonant|-syllabic +nasal: R"
   - "-syllabic +nasal: N"
+  - "-syllabic +resonant|-syllabic +nasal: R"
   - "-syllabic: C"
   - ": *" # isn't underlyingly generated at present, but still can show up
 

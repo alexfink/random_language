@@ -9,8 +9,7 @@
 # Short-term plan.
 # . Can I make David an easy-to-run version?
 # > 0.3.0.
-# These next are important but big:
-# - Unstated rules!
+# These next are important but require rethinkings:
 # - There is a misstatement in 11598455.  It is a fundamental one: the rule as stated is
 #   _always_ wrong, given that an assimilation to the _same_ environment interferes with
 #   what would otherwise be the resolution of the resulting segment.  
@@ -556,7 +555,6 @@ sub run_phonology {
           if (keys %{$phonology->[$i]{precondition}} > 1) { # an optimization.  helpful?
             1 while run_one_rule $word, $phonology->[$i], %args;
           }
-#          print "($i) @changes "; # debug
           print STDERR "@$word (after $i)\n" if $debug >= 1;
 
           @changes = @{$args{change_record}} if ($first_time and defined $args{change_record});
@@ -1927,8 +1925,6 @@ sub tabulate {
         $t0 . "<br />\n" . $t1;
   }
 
-  return "" unless $str->{order}; # may as well keep this
-
   # annotate with parsed forms
   unless (defined $str->{order_i}) { # i for "indices"
     my @chunks = split /; /, $str->{order};
@@ -1996,8 +1992,7 @@ sub tabulate {
     $table{table_sortkey $phone, $str} = $name;
   }
 
-  my %old_table = %table;
-  my @modified_phones = keys %old_table;
+  my @modified_phones = sort keys %table;
   my (%row_moves, %column_moves);
   COLLAPSE: for my $collapse (@{$str->{collapse_i}}) {
     my %new_table;
@@ -2011,21 +2006,34 @@ sub tabulate {
         $new_table{$position} = $v;
       }
     } else { # named collapse
-      # don't do it if the resulting column doesn't combine anything
+      # don't collapse if:
+      # (a) the resulting column doesn't combine anything;
+      # (b) there is an obvious contrast;
+      # (c) there is a contrast among the features which are set undefined by this
       @_ = grep /^$str->{named_collapses_p}{$collapse}{avoid_unless}$/, keys %table;
-      next COLLAPSE unless @_;
-      my $target = $_[0]; # use this to fill in things which shd be undefined
-      @_ = ();
-      while (my ($position, $v) = each %table) {
+      next COLLAPSE unless @_; # (a)
+      for my $position (keys %table) { # can't use each, there's a keys inside
+        my $v = $table{$position};
         if ($position =~ /^$str->{named_collapses_p}{$collapse}{from}$/) {
           $position = overwrite $position, $str->{named_collapses_p}{$collapse}{to};
-          substr($position, $_, 1) = substr($target, $_, 1) for @{$str->{named_collapses_p}{$collapse}{undefine}};
-          next COLLAPSE if defined $table{$position};
-          push @_, $position;
+          my $template = $position;
+          next COLLAPSE if defined $table{$position}; # (b)
+
+          for my $i (0..length($str->{named_collapses_p}{$collapse}{from})-1) {
+            next unless substr($str->{named_collapses_p}{$collapse}{from}, $i, 1) ne '.'
+                    and substr($str->{named_collapses_p}{$collapse}{to}, $i, 1) eq 1 - substr($str->{named_collapses_p}{$collapse}{from}, $i, 1);
+            for my $jf (@{$features_requiring[substr($str->{named_collapses_p}{$collapse}{from}, $i, 1) ^ $str->{order_r}[$i]]
+                                             [$str->{order_i}[$i]]}) {
+              for my $j (0..$#{$str->{order_i}}) {
+                substr($template, $j, 1) = '.', last if $str->{order_i}[$j] == $jf;
+              }
+            }
+            next COLLAPSE if grep(/^$template$/, keys %table) >= 2; # (c)
+          }
         }
         $new_table{$position} = $v;
       }
-      
+
       @modified_phones = map {
         if (/^$str->{named_collapses_p}{$collapse}{from}$/) {          
           my $a = overwrite $_, $str->{named_collapses_p}{$collapse}{to};
@@ -2042,7 +2050,7 @@ sub tabulate {
           $_;
         }
       } @modified_phones;
-    }
+    } # named collapse
     %table = %new_table;
   } # COLLAPSE
 
@@ -2050,6 +2058,16 @@ sub tabulate {
     $rows{substr($position, 0, $str->{lengths}[0])} = 1;
     $columns{substr($position, $str->{lengths}[0], $str->{lengths}[1])} = 1;
     $spots{substr($position, $str->{lengths}[0]+$str->{lengths}[1])} = 1;
+  }
+
+  my (%genuine_rows, %genuine_columns);
+  for my $row (keys %rows) {
+    $genuine_rows{$row} = scalar grep $_ =~ /^$condition$/ && 
+        substr(table_sortkey($_, $str), 0, $str->{lengths}[0]) =~ /^$row$/, keys %{$pd->{gen_inventory}};
+  }
+  for my $column (keys %columns) {
+    $genuine_columns{$column} = scalar grep $_ =~ /^$condition$/ &&
+        substr(table_sortkey($_, $str), $str->{lengths}[0], $str->{lengths}[1]) =~ /^$column$/, keys %{$pd->{gen_inventory}};
   }
 
   # Now reinsert digits where we can, so we can use the most appropriate label.
@@ -2064,19 +2082,22 @@ sub tabulate {
   for my $column (sort keys %columns) {
     $table .= '<td></td>'; # empty cells for separation, yeah
     $base_enrichment = enrich($column, \@extant_columns);
-    my $label = tabulate_label($base_enrichment, 
-                               $label_phones{columns}, $label_phones{columns_mod},
-                               $labels{columns}, $labels{columns_mod},
-                               header => 1,
-                               repeat_base => $str->{labels}{repeat_columns});
-    my %moves_stated;
+    my $label = '';
+    $label = tabulate_label($base_enrichment, 
+                            $label_phones{columns}, $label_phones{columns_mod},
+                            $labels{columns}, $labels{columns_mod},
+                            header => 1,
+                            repeat_base => $str->{labels}{repeat_columns})
+        if $genuine_columns{$column};
+    my %moves_stated; # have we already named this thing being moved in?
     while (my ($k, $v) = each %column_moves) {
       if ($k =~ /^$column$/ and !$moves_stated{$v}) {
-        $label .= '&nbsp;/ ' . tabulate_label(overwrite($base_enrichment, $v),
-                                   $label_phones{columns}, $label_phones{columns_mod},
-                                   $labels{columns}, $labels{columns_mod},
-                                   header => 1,
-                                   repeat_base => $str->{labels}{repeat_columns});        
+        $label .= '&nbsp;/ ' if $label; 
+        $label .= tabulate_label(overwrite($base_enrichment, $v),
+                                 $label_phones{columns}, $label_phones{columns_mod},
+                                 $labels{columns}, $labels{columns_mod},
+                                 header => 1,
+                                 repeat_base => $str->{labels}{repeat_columns});        
         $moves_stated{$v} = 1;
       }
     }
@@ -2086,20 +2107,26 @@ sub tabulate {
               '</th>'; 
   }
 
+  # code duplication, ick
   $table .= "</tr>\n";
   for my $row (sort keys %rows) {
     $table .= '<tr>';
     $base_enrichment = enrich($row, \@extant_rows);
-    my $label = tabulate_label($base_enrichment, 
-                               $label_phones{rows}, $label_phones{rows_mod},
-                               $labels{rows}, $labels{rows_mod},
-                               repeat_base => $str->{labels}{repeat_rows});
+    my $label = '';
+    $label = tabulate_label($base_enrichment, 
+                            $label_phones{rows}, $label_phones{rows_mod},
+                            $labels{rows}, $labels{rows_mod},
+                            repeat_base => $str->{labels}{repeat_rows})
+        if $genuine_rows{$row};
+    my %moves_stated;
     while (my ($k, $v) = each %row_moves) {
-      if ($k =~ /^$row$/) {
-        $label .= '&nbsp;/ ' . tabulate_label(overwrite($base_enrichment, $v),
-                               $label_phones{rows}, $label_phones{rows_mod},
-                               $labels{rows}, $labels{rows_mod},
-                               repeat_base => $str->{labels}{repeat_rows});
+      if ($k =~ /^$row$/ and !$moves_stated{$v}) {
+        $label .= '&nbsp;/ ' if $label;
+        $label .= tabulate_label(overwrite($base_enrichment, $v),
+                                 $label_phones{rows}, $label_phones{rows_mod},
+                                 $labels{rows}, $labels{rows_mod},
+                                 repeat_base => $str->{labels}{repeat_rows});
+        $moves_stated{$v} = 1;
       }
     }
     $table .= "<th style=\"text-align: right;\">" .
@@ -2692,7 +2719,9 @@ sub describe_rules {
                                 and grep substr($_, $j, 1) eq '1', @{$matcheds{$locus-1}};
       }
       unless ($not_pointless) {
-        $effect =~ s/</./g;
+        for (0..length($effect)-1) {
+          substr($effect, $_, 1) = substr($matcheds{$locus-1}[0], $_, 1) if substr($effect, $_, 1) eq '<';
+        }
       }
     }
     if ($effect =~ />/) {
@@ -2703,7 +2732,9 @@ sub describe_rules {
                                 and grep substr($_, $j, 1) eq '1', @{$matcheds{$locus+1}};
       }
       unless ($not_pointless) {
-        $effect =~ s/>/./g;
+        for (0..length($effect)-1) {
+          substr($effect, $_, 1) = substr($matcheds{$locus+1}[0], $_, 1) if substr($effect, $_, 1) eq '>';
+        }
       }
     }
     # Drop rules that visibly do nothing, now.
@@ -2719,7 +2750,8 @@ sub describe_rules {
 
     # The big one: get the new inventory.
     
-    # FIXME: there is a fundamental flaw in this way about it: HERE
+    # FIXME: this way about it has a great flaw: there may be persistent sequence rules
+    # that *always* run after a given rule, but this won't notice them at all.
     my @new_inventory = @inventory;
     my $entailed_effect = add_entailments($effect);
     my %outcome;
@@ -3144,7 +3176,7 @@ sub describe_rules {
     unless ($subject_is_list) {
       # Prepare the examples.
       # Give all the examples if there are at most 4, and 3 representative ones otherwise.
-      # TO CONSIDER: if there are enough deviates, just give everything as an example
+      # To consider: if there are enough deviates, just give everything as an example
       # and skip the deviate descriptions?
       %_ = ();
       @susceptible = map $_{$_} ? () : ($_{$_} = 1 && $_), @susceptible; # uniq, keeping first instances
@@ -3169,30 +3201,40 @@ sub describe_rules {
     } else {
       my $main_VP;
       if ($effect =~ /[01]/) {
-        my ($frame) = keys %outcome;        
-        $main_VP .= ' become ';
-        # if the subject is a _short_ list, make the complement one too
-        if ($subject_is_list and @susceptible <= 2 and scalar keys %outcome <= 1) { 
-          $both_are_lists = 1;
-          $main_VP .= '[' . join(' ', map spell_out([split ' ', $outcome{$frame}{$_}], null => 1), @susceptible) . ']';
+        my $any_nondeletions = 0;
+        FRAME_ANY_NONDELETIONS: for my $frame (keys %outcome) {
+          for my $phone (@susceptible) {
+            $any_nondeletions = 1, last FRAME_ANY_NONDELETIONS if $outcome{$frame}{$phone} ne '';
+          }
+        }
+        unless ($any_nondeletions) {
+          $main_VP .= ' are deleted';
         } else {
-          if ($main_VP =~ / and /) {
-            $main_VP .= ' respectively'; 
+          my ($frame) = keys %outcome;        
+          $main_VP .= ' become ';
+          # if the subject is a _short_ list, make the complement one too
+          if ($subject_is_list and @susceptible <= 2 and scalar keys %outcome <= 1) { 
+            $both_are_lists = 1;
+            $main_VP .= '[' . join(' ', map spell_out([split ' ', $outcome{$frame}{$_}], null => 1), @susceptible) . ']';
+          } else {
+            if ($main_VP =~ / and /) {
+              $main_VP .= ' respectively'; 
+            }
+            # There might be dots in the frame which have come from assimilations in the effect
+            # after frame mergers.  We want these to stomp on $modified.
+            for (0..length($modified)-1) {
+              substr($modified, $_, 1) = '.' if substr($frame, $_, 1) eq '.' and substr($effect, $_, 1) =~ /[<>]/;
+            }
+            $main_VP .= name_natural_class($modified, \@new_inventory, significant => $simple_effect, 
+                morpho => 'plural', nobase => 1, accept_nothing => 1, use_dominant_str => 1);
           }
-          # There might be dots in the frame which have come from assimilations in the effect
-          # after frame mergers.  We want these to stomp on $modified.
-          for (0..length($modified)-1) {
-            substr($modified, $_, 1) = '.' if substr($frame, $_, 1) eq '.' and substr($effect, $_, 1) =~ /[<>]/;
+          # examples
+          if (keys %outcome <= 1 and !$subject_is_list) {
+            $main_VP .= ' [' . join(' ', map spell_out_spaces($outcome{$frame}{$_}, null => 1), @example_sounds)
+                . "$example_ellipsis]";
           }
-          $main_VP .= name_natural_class($modified, \@new_inventory, significant => $simple_effect, 
-              morpho => 'plural', nobase => 1, accept_nothing => 1, use_dominant_str => 1);
         }
-        # examples
-        if (keys %outcome <= 1 and !$subject_is_list) {
-          $main_VP .= ' [' . join(' ', map spell_out_spaces($outcome{$frame}{$_}, null => 1), @example_sounds)
-              . "$example_ellipsis]";
-        }
-      }
+      } # $effect =~ /[01]/
       if ($effect =~ /</) {
         $_ = $effect;
         y/01u<>/...1./;
@@ -3211,7 +3253,7 @@ sub describe_rules {
         } else {
           $main_VP .= ' to the previous phone';
         }
-        if ($rule->{or_pause}{$locus+1}) { # word-initial
+        if ($rule->{or_pause}{$locus-1}) { # word-initial
           my $pausal_effect = $effect;
           for (0..length($pausal_effect)-1) {
             substr($pausal_effect, $_, 1) = substr($rule->{pause_phone}, $_, 1)
@@ -3261,7 +3303,6 @@ sub describe_rules {
     # the 'or word-finally' aren't quite right, since the main rule might be a between.
     if (defined $pre) {
       $pre_text = name_natural_class($pre, \@inventory, morpho => 'indef');
-      $pre_text .= ' or word-initially' if $rule->{or_pause}{$locus-1};
       my @exceptions = split / /, $rule->{except}{$locus-1};
       my @exception_texts = map name_natural_class(overwrite($precondition, $_), 
               \@inventory, significant => $_, no_nothing => 1, morpho => 'indef'), 
@@ -3269,10 +3310,11 @@ sub describe_rules {
           grep { my $a = $_; grep /^$a$/ && /^$pre$/, @inventory; } @exceptions;
       @exception_texts = grep $_, @exception_texts;
       $pre_text .= ' except for ' . join ' and ', @exception_texts if @exception_texts;
+      $pre_text .= ',' if (scalar @exception_texts) and $rule->{or_pause}{$locus-1};
+      $pre_text .= ' or word-initially' if $rule->{or_pause}{$locus-1};
     }
     if (defined $post) {
       $post_text = name_natural_class($post, \@inventory, morpho => 'indef');
-      $post_text .= ' or word-finally' if $rule->{or_pause}{$locus+1};
       my @exceptions = split / /, $rule->{except}{$locus+1};
       my @exception_texts = map name_natural_class(overwrite($precondition, $_), 
               \@inventory, significant => $_, no_nothing => 1, morpho => 'indef'), 
@@ -3280,6 +3322,8 @@ sub describe_rules {
           grep { my $a = $_; grep /^$a$/ && /^$post$/, @inventory; } @exceptions;
       @exception_texts = grep $_, @exception_texts;
       $post_text .= ' except for ' . join ' and ', @exception_texts if @exception_texts;
+      $post_text .= ',' if (scalar @exception_texts) and $rule->{or_pause}{$locus+1};
+      $post_text .= ' or word-finally' if $rule->{or_pause}{$locus+1};
     }
     if (defined $pre and defined $post) {
       $environment_text .= " between $pre_text and $post_text";
@@ -3506,7 +3550,7 @@ Usage: $0 [options]
 -p <string>     Do some conversions between phone formats.  Do nothing else.
 -r N            Use N as the random seed.
 -v              Verbose.  Show progress and a few other things.
--D              Debug.
+-D              Show some debugging output.
 
 USAGE
   exit 1;
@@ -3738,6 +3782,7 @@ if ($show_all) {
     print "\n\n";
   }
 
+  print STDERR "describing rules...\n" if $verbose;
   my $rules = describe_rules $phonology_data;
   if ($use_html) {
     print CGI::h2('Allophony'),
