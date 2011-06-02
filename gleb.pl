@@ -7,15 +7,13 @@
 # (A greater proportion of the numbers are wholly fabricated, though!)
 
 # Short-term plan.
-# . Can I make David an easy-to-run version?
-# > 0.3.0.
-# These next are important but require rethinkings:
+# These are important but require some more thought:
 # - There is a misstatement in 11598455.  It is a fundamental one: the rule as stated is
 #   _always_ wrong, given that an assimilation to the _same_ environment interferes with
 #   what would otherwise be the resolution of the resulting segment.  
 # - Huh, in 634146154, nasality spreads across high V but doesn't latch on.  Is there a hope 
 #   of describing that?
-# Next:
+# Next as for phonology:
 # - Constant features in assimilatory rules.
 # - Better extra conditions.  (In particular, extra conditions that conspire to avoid something
 #   _which there's already a rule against_ should be favoured.)
@@ -450,29 +448,31 @@ sub run_one_rule {
       if (defined $rule->{prob}) {
         my $r = defined $args{rand_value} ? $args{rand_value} : rand;
         $effects = $rule->{antieffects}{$displ}
-            if $r >= $rule->{prob}[$syllable_position]; # randomised rules do their opposite if the dice say no
+            if $r >= $rule->{prob}[$syllable_position]; # OBSOLETE: randomised rules do their opposite if the dice say no
       }
-      my $newphone = overwrite $word->[$i+$displ], $effects;
       
       # Handle the assimilation characters. 
-      if ($newphone =~ /[<>]/) {
+      if ($effects =~ /[<>]/) {
         my ($next_before, $next_after) = (undef, undef);
         for (keys %{$rule->{precondition}}) { # TODO: use the actual offsets when distance rules exist
           $next_before = $_ if (!defined $next_before or $next_before < $_) and $_ < $displ;
           $next_after = $_ if (!defined $next_after or $next_after > $_) and $_ > $displ;
         }
-        while ($newphone =~ /</) {
-          my $c = index($newphone, '<');
-          substr($newphone, $c, 1) = 
+        while ($effects =~ /</) {
+          my $c = index($effects, '<');
+          substr($effects, $c, 1) = 
               substr($i+$next_before >= 0 ? $word->[$i+$next_before] : $rule->{pause_phone}, $c, 1);
         }
-        while ($newphone =~ />/) {
-          my $c = index($newphone, '>');
-          substr($newphone, $c, 1) =
+        while ($effects =~ />/) {
+          my $c = index($effects, '>');
+          substr($effects, $c, 1) =
               substr($i+$next_after < @$word ? $word->[$i+$next_after] : $rule->{pause_phone}, $c, 1);
         }
-        $newphone = add_entailments $newphone;
+        # We must entail the effects, not just the overwritten phone, since otherwise
+        # jumps over the middle point on an antithetical scale won't always work.
+        $effects = add_entailments $effects;
       }
+      my $newphone = overwrite $word->[$i+$displ], $effects;
       
       if ($word->[$i+$displ] ne $newphone) {
         $changed = 1;
@@ -2546,10 +2546,12 @@ sub describe_set {
     if (@detritus > 2 and !$args{bottom_out}) {
       $detritus_name = describe_set([map $remove_false_features{$_}, @detritus], $inventory, %args, 
           get_str_pattern => undef, insignificant => $pattern, bottom_out => 1,
-          morpho => ($args{morpho} eq 'bare' ? 'indef' : $args{morpho}));
+          morpho => ($args{morpho} eq 'bare' ? 'indef' : $args{morpho}), ie => undef);
       $detritus_name = '' if $detritus_name =~ /^[[\/]/ or $detritus_name =~ /other than/; # big kluge
     }
     if ($detritus_name) {
+      $detritus_name .= " ($lb" . join(' ', map name_phone($remove_false_features{$_}), @detritus) . "$rb)"
+          if (!$list_examples and $args{ie}); # duplicative
       $result .= $detritus_name;
     } else {
       $result .= $lb . join(' ', map name_phone($remove_false_features{$_}), @detritus) . $rb;
