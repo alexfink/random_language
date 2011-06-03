@@ -3609,8 +3609,8 @@ sub parse_args {
 my $yamlimpl = YAML::Any->implementation;
 if ($yamlimpl ne 'YAML::XS' and $yamlimpl ne 'YAML::Syck') {
   print STDERR <<END;
-Warning: your YAML implementation might not like this.
-YAML::Syck works, and I expect YAML::XS too.
+Warning: your YAML implementation might not like the data files.
+YAML::Syck and YAML::XS work.
 END
 }
 
