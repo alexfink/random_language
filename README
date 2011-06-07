@@ -1,0 +1,9 @@
+The (unattainable, in its full scope) aim of this project is to procedurally
+generate an entire naturalistic human language.  So far the following
+two components exist.
+
+- morphology_categories/morphology.pl: systems of morphological contrasts
+  (but not their forms).  Data files have been written for nouns.  
+
+- phonology/gleb.pl: phonology, including allophony and other such processes.  
+
