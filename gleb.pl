@@ -3607,10 +3607,10 @@ sub parse_args {
 }
 
 my $yamlimpl = YAML::Any->implementation;
-if ($yamlimpl ne 'YAML::XS' and $yamlimpl ne 'YAML::Syck') {
+unless (grep $_ eq $yamlimpl, qw(YAML::XS YAML::Syck YAML::Perl)) {
   print STDERR <<END;
 Warning: your YAML implementation might not like the data files.
-YAML::Syck and YAML::XS work.
+YAML::Syck and YAML::XS work.  So does YAML::Perl, though it's mighty slow.
 END
 }
 
