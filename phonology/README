@@ -1,5 +1,9 @@
 gleb.pl is a script for generating and describing phonologies and random forms following them.  The current version, v0.3, generates a limited set of phonological processes, mostly assimilatory processes among adjacent phones; it doesn't yet know about syllables or tone or sundry other things.  
 
+I like to invoke it as
+  gleb.pl -h -d -w 30 ;
+that is, output in *H*TML an inventory and *d*escription of the rules and 30 sample *w*ords.  (The inventory display in particular is much better in HTML than plaintext, on account of getting to use tables.)
+
 Refer to the command-line usage for more.
 
 You can try an out-of-date version online at http://000024.org/cgi-bin/gleb.cgi . 
