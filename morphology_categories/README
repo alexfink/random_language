@@ -1,0 +1,13 @@
+morphology.pl is a script for generateing systems of morphological contrasts: case systems, TAM systems, and all that.  The included DOT data files in the directory noun/ describe a number of common systems of contrasts for nouns (verbs and perhaps other classes are coming, eventually).  Each contrast is a single hypothetical morphological slot; it is output as a list of values grouped into several lines, where each line is a single form and the elements of that line are its functions.  For example, a case contrast starting
+
+  intransitive_subject agent experiencer [...]
+  focus patient [...]
+  [possibly more lines here]
+
+describes a nominative-accusative case system.
+
+Invoking morphology.pl with a directory argument as in
+  perl morphology.pl noun
+generates a series of contrasts choosing among all categories in that directory.  Invoking it with a list of filenames,
+  perl morphology.pl noun/case.dot noun/number.dot
+generates a single contrast fusionally expressing all the named categories.

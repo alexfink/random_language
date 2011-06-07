@@ -1,9 +1,10 @@
-The (unattainable, in its full scope) aim of this project is to procedurally
-generate an entire naturalistic human language.  So far the following
-two components exist.
+The (unattainable, in its full scope) aim of this project is to procedurally generate an entire naturalistic conlang.  So far the following two components exist.
 
-- morphology_categories/morphology.pl: systems of morphological contrasts
-  (but not their forms).  Data files have been written for nouns.  
+- morphology_categories/morphology.pl: systems of morphological contrasts (but not their forms).  Data files have been written for nouns.  
 
 - phonology/gleb.pl: phonology, including allophony and other such processes.  
+  An out-of-date version of gleb is running at http://000024.org/cgi-bin/gleb.cgi .
 
+Raise comments of general interest on the CONLANG list, http://listserv.brown.edu/archives/conlang.html , or write me at 000024@gmail.com.
+
+See also the list of other software conlanging tools at http://www.frathwiki.com/Software_tools_for_conlanging .

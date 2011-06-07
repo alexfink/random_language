@@ -1,0 +1,5 @@
+gleb.pl is a script for generating and describing phonologies and random forms following them.  The current version, v0.3, generates a limited set of phonological processes, mostly assimilatory processes among adjacent phones; it doesn't yet know about syllables or tone or sundry other things.  
+
+Refer to the command-line usage for more.
+
+You can try an out-of-date version online at http://000024.org/cgi-bin/gleb.cgi . 
