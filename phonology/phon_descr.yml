@@ -36,7 +36,7 @@ table_structure:
     named_collapses:
       c_with_tSj: 
         from: "dorsal +front"
-        to: "-dorsal coronal -anterior -retroflex +sibilant +front" # +front for flips
+        to: "-dorsal coronal -anterior -retroflex +sibilant +front -high" # +front for flips
         avoid_unless: "-dorsal coronal -anterior -retroflex"
         type: columns
       kp_with_w:
