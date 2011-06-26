@@ -14,21 +14,16 @@
 # - Huh, in 634146154, nasality spreads across high V but doesn't latch on.  Is there a hope 
 #   of describing that?
 # Next as for phonology:
-# - Constant features in assimilatory rules.
 # - Better extra conditions.  (In particular, extra conditions that conspire to avoid something
 #   _which there's already a rule against_ should be favoured.)
 # - Never resolve an extra-condition situation by changing the extra condition!!!
 # - Revision of forced non-contrastivity (with providing for noncontrastive stress etc. in mind).
-# - Surface enforcement of what can be in a given syllable position.
 # - Rules that apply only at word boundary.  (Though how are we going to do phrase boundary?)
 # - Split resolutions for marked situations.  (This is definitely better than yoking marked situations.)
 #   I think we still need excepts, though.
-# - Presence of certain contrasts as a precondition for certain assimilations???
-#   (I'm thinking of the resonant voice assimilation case.)
-# - Maybe make phone proportions saner?  The most egregious cases are overcommon things;
-#   my current thought is just to sharply bend their frequencies down.  Perhaps just put this in onset.
-#   What's the trigger?
-#   (0.1649 and 0.1497 for related Cs among 32 nonzero Cs is too high.)
+# - Presence of certain contrasts influencing chances of certain assimilations.
+#   (I'm thinking of resonant voice assimilation, and V frontness assim.)
+#   (also markednesses?  e.g. /b_< b_<_k/ shd be collapsed)
 # > 0.3.1.  
 #   After that, should we privilege 
 # (a) advanced inventory tracking, with the bigram transition matrix stuff; or
@@ -40,7 +35,7 @@ use CGI;
 use constant INF => 9**9**9; # is there really nothing sensible better?
 use constant TWOPI => 6.28318530717958647688;
 
-my $version = '0.3';
+my $version = '0.3.0.1';
 my $credits = 'Gleb, a phonology generator, by Alex Fink' . 
               (' ' x (29 - length($version))) . # for a total length of 78
               "version $version";
@@ -872,6 +867,14 @@ sub gen_one_rule {
         tag => $tag,
         cede => 1,
       };
+      if (defined $d->{constant}) {
+        for (%{$d->{constant}}) {
+          next unless rand() < $d->{constant}{$_}; # may want this to be randomised at some point
+          /^(.*) ([^ ]*)$/;
+          my ($e0, $e1) = ($1, $2);
+          $rule->{effects}{$e1} = overwrite $rule->{effects}{$e1}, parse_feature_string($e0,1);
+        }
+      }
       # Both the things being spread from and to need to support this feature.  
       if ($kind eq 'assimilate') {
         $rule->{precondition}{$target} = overwrite $rule->{precondition}{$target}, 
@@ -1241,11 +1244,14 @@ sub gen_phonology {
       }
       $featureses{$_} /= $fuzzed_weight for (keys %featureses);
 
-      push @syllable_structure, {
+      my $rslot = {
         prob => fuzz($slot->{presence}),
         features => \%featureses,
         tag => $slot->{tag},
       };
+      $rslot->{bend} = $slot->{bend} if defined $slot->{bend};
+      $rslot->{reprune} = 1 if defined $slot->{reprune} and rand() < $slot->{reprune};
+      push @syllable_structure, $rslot;
     } while (defined $slot->{prob_more} and rand() < $slot->{prob_more});
   }
   
@@ -1669,7 +1675,205 @@ sub inventory {
   \%prinv;
 }
 
+# Do some artificial thing meant to stop a lot of the frequency mass from being concentrated
+# in a few phones.  Fairly harsh.
+sub bend_frequencies {
+  my ($gi, $i, $threshold) = (shift, shift, shift);
+  my $n = scalar keys %$gi;
+  my $sum = 0;
+  for my $phone (keys %$gi) {
+    if ($gi->{$phone}[$i] > $threshold / $n) {
+      $gi->{$phone}[$i] = (log($gi->{$phone}[$i] * $n / $threshold) + 1) * $threshold / $n;
+    }
+    $sum += $gi->{$phone}[$i];
+  }
+  for my $phone (keys %$gi) {
+    $gi->{$phone}[$i] /= $sum;
+  }
+}
 
+# Make some tweaks to the inventory of the sort that're problematic to do in initial generation.
+sub postprocess_inventory {
+  my $pd = shift;
+
+  for (my $i = $#{$pd->{syllable_structure}}; $i >= 0; --$i) {
+    if (defined $pd->{syllable_structure}[$i]{bend}) {
+      bend_frequencies $pd->{gen_inventory}, $i, $pd->{syllable_structure}[$i]{bend};
+      delete $pd->{syllable_structure}[$i]{bend};
+    }
+
+    if (defined $pd->{syllable_structure}[$i]{reprune}) {
+      my $sum = 0;
+      for my $phone (keys %{$pd->{gen_inventory}}) {
+        $pd->{gen_inventory}{$phone}[$i] = 0 if $phone and !grep {s/u/./; $phone =~ /^$_$/;} keys %{$pd->{syllable_structure}[$i]{features}};
+        $sum += $pd->{gen_inventory}{$phone}[$i];
+        unless (grep $_ > 0, @{$pd->{gen_inventory}{$phone}}) {
+          delete $pd->{gen_inventory}{$phone};
+        }
+      }
+      for my $phone (keys %{$pd->{gen_inventory}}) {
+        $pd->{gen_inventory}{$phone}[$i] /= $sum;
+      }
+
+      delete $pd->{syllable_structure}[$i]{reprune};
+    }
+
+    # eliminate positions with nothing in them
+    if ($pd->{gen_inventory}{''}[$i] >= 1) {
+      for my $phone (keys %{$pd->{gen_inventory}}) {
+        splice @{$pd->{gen_inventory}{$phone}}, $i, 1;
+      }
+      splice @{$pd->{syllable_structure}}, $i, 1;
+    }
+  }
+}
+
+
+sub generate_form {
+  my ($target_entropy, $pd) = (shift, shift);
+
+  my $normal = 0;
+  $normal += rand(1/4.0) for 1..8; # std dev sqrt(2/3) eh
+  my $entropy = $normal * $target_entropy; 
+
+  # This was the old way, which would now have problems with the 'U' value
+  # and the multiple probabilities on generator rules, and presumably other things.
+  #
+  #   my @syl;
+  #   @syl = (@syl, generate_syllable $syllable_structure) for (1..$num_syllables);
+  #   run_phonology \@syl, $phone_generator,generator => 1; # This is obsolete and has been removed.
+  #   run_phonology \@syl, $phonology, which_preconditions => (whatever);
+  #
+  # But the below is more direct, and the above is to be treated as unsupported.
+  
+  my @form;
+  # The form of this loop will very much be changing when we start asking for
+  # forms that aren't made of whole syllables.
+  my $total_entropy = 0;
+  while ($total_entropy < $entropy) {
+    for my $i (0..@{$pd->{syllable_structure}}-1) {
+      # next if $pd->{syllable_structure}[$i]{nonzero_prob} == 0; # these cases are eliminated.
+
+      $total_entropy += $pd->{syllable_structure}[$i]{entropy};
+      next if rand() >= $pd->{syllable_structure}[$i]{prob};
+
+      my $rand = rand (1 - $pd->{gen_inventory}{''}[$i]);
+      my $selected_phone;
+      # only generate structural zeroes in a form, not resolvent zeroes 
+      # (though we've corrected the probabilities anyhow)
+      for (keys %{$pd->{gen_inventory}}) {
+        $selected_phone = $_, last if $_ ne '' and ($rand -= $pd->{gen_inventory}{$_}[$i]) < 0;
+      }
+      push @form, split / /, $selected_phone;
+    }
+  }
+
+  \@form;
+}
+
+# Simplify the phonemic presentation of a form.
+# E.g. if we generate /agsa/ but there's compulsory regressive voice assimilation in that situation,
+# and /aksa/ consists of extant phonemes and has the same outcome, we may as well present it as /aksa/.
+# Returns (outcome, canonicalised); we may as well, since we end up with both.
+
+# TODO: when morphology gets here, respect it.  Also new types of change?
+
+sub canonicalise_phonemic_form {
+  my ($word, $pd) = (shift, shift);
+  my @canonical_word = @$word; 
+  my @current_word = @$word;
+  my @sources = 0..@$word-1;
+  
+  for my $k ($pd->{start_sequences}..@{$pd->{phonology}}-1) {
+#    print "before $k /" . spell_out(\@canonical_word) . "/ [" . spell_out(\@current_word) . "]\n"; # debug
+    my @old_sources = @sources;
+    my @old_word = @current_word;
+    my (@prov_canonical_word, @prov_current_word);
+    my $changed;
+    run_phonology \@current_word, $pd->{phonology}, 
+        which_preconditions => $pd->{which_preconditions},
+        start => $k,
+        end => $k+1,
+        sources => \@sources;
+#    print "target [" . spell_out(\@current_word) . "]\n"; # debug
+    
+    { # block for redo
+      $changed = 0;
+
+      # check for new deletions
+      for my $source (@old_sources) {
+        unless (grep $_ == $source, @sources) {
+          @prov_canonical_word = @canonical_word;
+          splice @prov_canonical_word, $source, 1;
+          @prov_current_word = @prov_canonical_word;
+          run_phonology \@prov_current_word, $pd->{phonology}, 
+              which_preconditions => $pd->{which_preconditions},
+              start => $pd->{start_sequences},
+              end => $k+1;
+          if (scalar @prov_current_word == scalar @current_word and
+              !grep $prov_current_word[$_] != $current_word[$_], 0..$#current_word) {
+            $changed = 1;
+            @canonical_word = @prov_canonical_word;
+            @sources = map $_ > $source ? $_-1 : $_, @sources;
+          }
+        }
+      } # deletions
+      
+      # check for featural changes.
+      # Try out every underlying phoneme that is Hamming-between this phone in the old and the new words.
+      # (Maybe special-case place, i.e.\ features that are bound, for e.g. /mk/ vs. /nk/ when there's no /N/.)
+      # What about syllable position restrictions?  I think it's more conventional to ignore them.
+      CHANGE_SOURCE: for my $i (0..$#sources) {
+        next if $sources[$i] == -1; # insertions
+        my $old_i;
+        for (0..$#old_sources) {
+          $old_i = $_, last if $old_sources[$_] == $sources[$i];
+        }
+        # no need to continue unless there was a change in this sound
+        next if $old_word[$old_i] eq $current_word[$i]; 
+        
+        my @varying_features = grep substr($canonical_word[$sources[$i]], $_, 1) ne substr($current_word[$i], $_, 1), 
+                                    0..length($current_word[$i])-1;
+#        print "@varying_features vary\n" if @varying_features; # debug
+        my @prov_varied_features = @varying_features;
+        while (@prov_varied_features) {
+          @prov_canonical_word = @canonical_word;
+          substr($prov_canonical_word[$sources[$i]], $_, 1) = substr($current_word[$i], $_, 1) 
+              for @prov_varied_features;
+          if (defined $pd->{gen_inventory}{$prov_canonical_word[$sources[$i]]}) {
+#          print "trying out " . name_phone($prov_canonical_word[$sources[$i]]) . " at $i\n"; # debug
+            @prov_current_word = @prov_canonical_word;
+            run_phonology \@prov_current_word, $pd->{phonology}, 
+                which_preconditions => $pd->{which_preconditions},
+                start => $pd->{start_sequences},
+                end => $k+1;
+            if (scalar @prov_current_word == scalar @current_word and
+                !grep $prov_current_word[$_] != $current_word[$_], 0..$#current_word) {
+              $changed = 1;
+              @canonical_word = @prov_canonical_word;
+              next CHANGE_SOURCE;
+            }
+          }
+          
+          # loop increment
+          my $was_last = pop @prov_varied_features;
+          my $t;
+          for ($t = -1; $varying_features[$t] != $was_last; $t--) { }
+          push @prov_varied_features, @varying_features[$t+1..-1] if $t < -1; # stupid negatives convention
+        } # prov_varied_features
+      }
+      
+      # In order not to miss cases of form /0a 0b 1a 1b/ [1b 1b 1a 1b], we need to iterate
+      # the description simplification, *not* the sound changes.
+      redo if $changed;
+    } 
+  }
+  (\@current_word, \@canonical_word);
+}
+
+
+
+####### Here genuine phonology code ends, and description-writing code begins.
 
 # Put in the false features which our model doesn't contain but which our descriptions do.
 # Assumes annotation.
@@ -3376,147 +3580,6 @@ sub describe_rules {
 
 
 
-sub generate_form {
-  my ($target_entropy, $pd) = (shift, shift);
-
-  my $normal = 0;
-  $normal += rand(1/4.0) for 1..8; # std dev sqrt(2/3) eh
-  my $entropy = $normal * $target_entropy; 
-
-  # This was the old way, which would now have problems with the 'U' value
-  # and the multiple probabilities on generator rules, and presumably other things.
-  #
-  #   my @syl;
-  #   @syl = (@syl, generate_syllable $syllable_structure) for (1..$num_syllables);
-  #   run_phonology \@syl, $phone_generator,generator => 1; # This is obsolete and has been removed.
-  #   run_phonology \@syl, $phonology, which_preconditions => (whatever);
-  #
-  # But the below is more direct, and the above is to be treated as unsupported.
-  
-  my @form;
-  # The form of this loop will very much be changing when we start asking for
-  # forms that aren't made of whole syllables.
-  my $total_entropy = 0;
-  while ($total_entropy < $entropy) {
-    for my $i (0..@{$pd->{syllable_structure}}-1) {
-      # next if $pd->{syllable_structure}[$i]{nonzero_prob} == 0; # these cases are eliminated.
-
-      $total_entropy += $pd->{syllable_structure}[$i]{entropy};
-      next if rand() >= $pd->{syllable_structure}[$i]{prob};
-
-      my $rand = rand (1 - $pd->{gen_inventory}{''}[$i]);
-      my $selected_phone;
-      # only generate structural zeroes in a form, not resolvent zeroes 
-      # (though we've corrected the probabilities anyhow)
-      for (keys %{$pd->{gen_inventory}}) {
-        $selected_phone = $_, last if $_ ne '' and ($rand -= $pd->{gen_inventory}{$_}[$i]) < 0;
-      }
-      push @form, split / /, $selected_phone;
-    }
-  }
-
-  \@form;
-}
-
-# Simplify the phonemic presentation of a form.
-# E.g. if we generate /agsa/ but there's compulsory regressive voice assimilation in that situation,
-# and /aksa/ consists of extant phonemes and has the same outcome, we may as well present it as /aksa/.
-# Returns (outcome, canonicalised); we may as well, since we end up with both.
-
-# TODO: when morphology gets here, respect it.  Also new types of change?
-
-sub canonicalise_phonemic_form {
-  my ($word, $pd) = (shift, shift);
-  my @canonical_word = @$word; 
-  my @current_word = @$word;
-  my @sources = 0..@$word-1;
-  
-  for my $k ($pd->{start_sequences}..@{$pd->{phonology}}-1) {
-#    print "before $k /" . spell_out(\@canonical_word) . "/ [" . spell_out(\@current_word) . "]\n"; # debug
-    my @old_sources = @sources;
-    my @old_word = @current_word;
-    my (@prov_canonical_word, @prov_current_word);
-    my $changed;
-    run_phonology \@current_word, $pd->{phonology}, 
-        which_preconditions => $pd->{which_preconditions},
-        start => $k,
-        end => $k+1,
-        sources => \@sources;
-#    print "target [" . spell_out(\@current_word) . "]\n"; # debug
-    
-    { # block for redo
-      $changed = 0;
-
-      # check for new deletions
-      for my $source (@old_sources) {
-        unless (grep $_ == $source, @sources) {
-          @prov_canonical_word = @canonical_word;
-          splice @prov_canonical_word, $source, 1;
-          @prov_current_word = @prov_canonical_word;
-          run_phonology \@prov_current_word, $pd->{phonology}, 
-              which_preconditions => $pd->{which_preconditions},
-              start => $pd->{start_sequences},
-              end => $k+1;
-          if (scalar @prov_current_word == scalar @current_word and
-              !grep $prov_current_word[$_] != $current_word[$_], 0..$#current_word) {
-            $changed = 1;
-            @canonical_word = @prov_canonical_word;
-            @sources = map $_ > $source ? $_-1 : $_, @sources;
-          }
-        }
-      } # deletions
-      
-      # check for featural changes.
-      # Try out every underlying phoneme that is Hamming-between this phone in the old and the new words.
-      # (Maybe special-case place, i.e.\ features that are bound, for e.g. /mk/ vs. /nk/ when there's no /N/.)
-      # What about syllable position restrictions?  I think it's more conventional to ignore them.
-      CHANGE_SOURCE: for my $i (0..$#sources) {
-        next if $sources[$i] == -1; # insertions
-        my $old_i;
-        for (0..$#old_sources) {
-          $old_i = $_, last if $old_sources[$_] == $sources[$i];
-        }
-        # no need to continue unless there was a change in this sound
-        next if $old_word[$old_i] eq $current_word[$i]; 
-        
-        my @varying_features = grep substr($canonical_word[$sources[$i]], $_, 1) ne substr($current_word[$i], $_, 1), 
-                                    0..length($current_word[$i])-1;
-#        print "@varying_features vary\n" if @varying_features; # debug
-        my @prov_varied_features = @varying_features;
-        while (@prov_varied_features) {
-          @prov_canonical_word = @canonical_word;
-          substr($prov_canonical_word[$sources[$i]], $_, 1) = substr($current_word[$i], $_, 1) 
-              for @prov_varied_features;
-          if (defined $pd->{gen_inventory}{$prov_canonical_word[$sources[$i]]}) {
-#          print "trying out " . name_phone($prov_canonical_word[$sources[$i]]) . " at $i\n"; # debug
-            @prov_current_word = @prov_canonical_word;
-            run_phonology \@prov_current_word, $pd->{phonology}, 
-                which_preconditions => $pd->{which_preconditions},
-                start => $pd->{start_sequences},
-                end => $k+1;
-            if (scalar @prov_current_word == scalar @current_word and
-                !grep $prov_current_word[$_] != $current_word[$_], 0..$#current_word) {
-              $changed = 1;
-              @canonical_word = @prov_canonical_word;
-              next CHANGE_SOURCE;
-            }
-          }
-          
-          # loop increment
-          my $was_last = pop @prov_varied_features;
-          my $t;
-          for ($t = -1; $varying_features[$t] != $was_last; $t--) { }
-          push @prov_varied_features, @varying_features[$t+1..-1] if $t < -1; # stupid negatives convention
-        } # prov_varied_features
-      }
-      
-      # In order not to miss cases of form /0a 0b 1a 1b/ [1b 1b 1a 1b], we need to iterate
-      # the description simplification, *not* the sound changes.
-      redo if $changed;
-    } 
-  }
-  (\@current_word, \@canonical_word);
-}
 
 
 
@@ -3719,6 +3782,7 @@ else {
   };
   print STDERR "computing inventory...\n" if $verbose;
   $phonology_data->{gen_inventory} = inventory $phonology_data; # base inventory for generation
+  postprocess_inventory $phonology_data;
   delete $phonology_data->{phone_generator}; # now this is needless
   if ($debug < 1) {
     trim_inactive $phonology_data; 
@@ -3764,9 +3828,6 @@ if (defined $outfile) {
       for my $displ (keys %{$rule->{effects}}) {
         $rule->{effects_humane}{$displ} = feature_string $rule->{effects}{$displ}, 1;
       }
-    }
-    for my $rule (@{$phonology_data->{syllable_structure}}) {
-        $rule->{features_humane} = feature_string $rule->{features};
     }
     $phonology_data->{phonology}[$_]{number} = $_ for 0..@{$phonology_data->{phonology}}-1;
   }
