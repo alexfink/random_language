@@ -1586,9 +1586,8 @@ sub inventory {
   my $phonology_data = shift;
   my ($syllable_structure, $phone_generator, $phonology, $which_preconditions) = 
       @$phonology_data{qw/syllable_structure phone_generator phonology which_preconditions/};
-  # This is a hash from phones to lists of probabilities in the various 
-  # syllable positions.  The values are inessential for generating the phonology,
-  # but we use them to calculate the entropy.  However, we don't take any interactions
+  # This is a hash from phones to lists of probabilities in the various syllable positions.  
+  # We use these to calculate the entropy.  However, we don't take any interactions
   # between phones into account for these numbers, so they're kind of crude.
   my %inventory;
 
@@ -1600,7 +1599,7 @@ sub inventory {
     }
   }
 
-  # Revise this if ever first-pass resolvent rules can cause splits or whatever.
+  # TODO: Revise this if ever pre-sequences resolvent rules can cause breakings or whatever.
   for my $rule (@$phone_generator) {
     my %inventory2;
     for my $phone (keys %inventory) {
@@ -1661,15 +1660,6 @@ sub inventory {
     }
   }
 
-  # Record entropies on the syllable structure.  
-  for my $i (0..@$syllable_structure-1) {
-    my $entropy = 0;
-    while (my ($phone, $v) = each %prinv) {
-      $entropy += $v->[$i] * log($v->[$i]) / log(0.5) if $v->[$i] > 0;
-    }
-    $syllable_structure->[$i]{entropy} = $entropy; 
-  }
-
   # We will need to use the resolver when it comes to generating alternations.  
   # It's not necessary to for ordinary stem generation, though; for that the inventory suffices.
   \%prinv;
@@ -1725,6 +1715,15 @@ sub postprocess_inventory {
       }
       splice @{$pd->{syllable_structure}}, $i, 1;
     }
+  }
+
+  # Now that we're done playing with it, record entropies in bits on the syllable structure.  
+  for my $i (0..@{$pd->{syllable_structure}}-1) {
+    my $entropy = 0;
+    while (my ($phone, $v) = each %{$pd->{gen_inventory}}) {
+      $entropy += $v->[$i] * log($v->[$i]) / log(0.5) if $v->[$i] > 0;
+    }
+    $pd->{syllable_structure}[$i]{entropy} = $entropy; 
   }
 }
 
