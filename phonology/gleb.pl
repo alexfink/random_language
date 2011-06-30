@@ -14,16 +14,19 @@
 # - Huh, in 634146154, nasality spreads across high V but doesn't latch on.  Is there a hope 
 #   of describing that?
 # Next as for phonology:
+# - Rules that apply only at word boundary.  Done, but make sure they display okay...
+#   (Though how are we going to do phrase boundary?  Why not late composition?)
 # - Better extra conditions.  (In particular, extra conditions that conspire to avoid something
 #   _which there's already a rule against_ should be favoured.)
 # - Never resolve an extra-condition situation by changing the extra condition!!!
 # - Revision of forced non-contrastivity (with providing for noncontrastive stress etc. in mind).
-# - Rules that apply only at word boundary.  (Though how are we going to do phrase boundary?)
 # - Split resolutions for marked situations.  (This is definitely better than yoking marked situations.)
 #   I think we still need excepts, though.
 # - Presence of certain contrasts influencing chances of certain assimilations.
-#   (I'm thinking of resonant voice assimilation, and V frontness assim.)
-#   (also markednesses?  e.g. /b_< b_<_k/ shd be collapsed)
+#   (I'm thinking of resonant voice assimilation, and V frontness assim to C.)
+#   (also markednesses?  e.g. /b_< b_<_k/ shd be collapsed, and often /v\ w/.
+#    can kluge that with a change in one direction though)
+# - Might have to bite the bullet and do constraints against sequences (e.g. trapped resonant, /tl/, ...)
 # > 0.3.1.  
 #   After that, should we privilege 
 # (a) advanced inventory tracking, with the bigram transition matrix stuff; or
@@ -35,7 +38,7 @@ use CGI;
 use constant INF => 9**9**9; # is there really nothing sensible better?
 use constant TWOPI => 6.28318530717958647688;
 
-my $version = '0.3.0.1';
+my $version = '0.3.0a';
 my $credits = 'Gleb, a phonology generator, by Alex Fink' . 
               (' ' x (29 - length($version))) . # for a total length of 78
               "version $version";
@@ -72,6 +75,17 @@ my $debug2 = 0; # for the use of tracking things down with temporary diagnostic 
 my $use_html;
 my $CGI;
 my $seed =  time ^ $$ ^ $$<<15; 
+
+# Choose randomly from a hash giving weight distribution.  (Not called everywhere it might be, yet.)
+sub weighted_one_of {
+  my $sum = 0; 
+  $sum += $_[2*$_+1] for 0..@_/2-1;
+  $sum = rand $sum;
+  while (@_) { 
+    my ($a, $b) = (shift, shift);
+    return $a if ($sum -= $b) < 0;
+  }
+}
 
 # Go from a prototypical prob to an actual one.  Now twice as gentle!
 sub fuzz {
@@ -922,13 +936,25 @@ sub gen_one_rule {
         }
       }
 
-      my $pause_phone = parse_feature_string($d->{pause_phone});
+      my $pause_phone;
+      @_ = split / +([0-9.]+) */, $d->{pause_phone};
+      if (scalar @_ == 1) {
+        $pause_phone = parse_feature_string($d->{pause_phone});
+      } elsif (scalar @_ > 1) {
+        $pause_phone = parse_feature_string weighted_one_of @_;
+      }
+
       # As a corollary of the sort here, '-' assignments follow '+' ones.
       for my $e (sort keys %{$d->{extras}}) {
         if (defined $eselections{$e}) {
           $e =~ /^(.*) ([^ ]*)$/;
           my ($e0, $e1) = ($1, $2);
-          if ($e0 eq '#') {
+          if ($e0 eq '##') { # ad hoc notation for _only_ at end of word
+            $rule->{or_pause}{$e1} = 1;
+            $rule->{pause_phone} = $pause_phone;
+            $rule->{precondition}{$e1} = overwrite $rule->{precondition}{$e1}, 'x'; # ad hoc match prevention
+          }
+          elsif ($e0 eq '#') { # end of word _allowed_
             $rule->{or_pause}{$e1} = 1;
             $rule->{pause_phone} = $pause_phone;
           } elsif ($e0 =~ /^!/) {
@@ -1231,7 +1257,7 @@ sub gen_phonology {
     do {
       # Prepare syllable structure for the cases where there are alternates.
       # Fuzz the probabilities.
-      my @featureses = split / *([0-9.]+) */, $slot->{features};
+      my @featureses = split / +([0-9.]+) */, $slot->{features};
       my %featureses;
       my $remaining_weight = 1; # pre-fuzz weight
       my $fuzzed_weight = 0; # post-fuzz weight
@@ -1251,6 +1277,11 @@ sub gen_phonology {
       };
       $rslot->{bend} = $slot->{bend} if defined $slot->{bend};
       $rslot->{reprune} = 1 if defined $slot->{reprune} and rand() < $slot->{reprune};
+      if (defined $slot->{except}) {
+        while (my ($k, $v) = each %{$slot->{except}}) {
+          push @{$rslot->{except}}, parse_feature_string($k,1) if rand() < $v;
+        }
+      }
       push @syllable_structure, $rslot;
     } while (defined $slot->{prob_more} and rand() < $slot->{prob_more});
   }
@@ -1587,7 +1618,7 @@ sub inventory {
   my ($syllable_structure, $phone_generator, $phonology, $which_preconditions) = 
       @$phonology_data{qw/syllable_structure phone_generator phonology which_preconditions/};
   # This is a hash from phones to lists of probabilities in the various syllable positions.  
-  # We use these to calculate the entropy.  However, we don't take any interactions
+  # We use these for generation and to calculate the entropy.  However, we don't take any interactions
   # between phones into account for these numbers, so they're kind of crude.
   my %inventory;
 
@@ -1683,15 +1714,18 @@ sub bend_frequencies {
 }
 
 # Make some tweaks to the inventory of the sort that're problematic to do in initial generation.
+# There is some icky duplication in here.
 sub postprocess_inventory {
   my $pd = shift;
 
   for (my $i = $#{$pd->{syllable_structure}}; $i >= 0; --$i) {
+    # bend frequencies
     if (defined $pd->{syllable_structure}[$i]{bend}) {
       bend_frequencies $pd->{gen_inventory}, $i, $pd->{syllable_structure}[$i]{bend};
       delete $pd->{syllable_structure}[$i]{bend};
     }
 
+    # drop nonmatches if we want to force matches
     if (defined $pd->{syllable_structure}[$i]{reprune}) {
       my $sum = 0;
       for my $phone (keys %{$pd->{gen_inventory}}) {
@@ -1704,8 +1738,23 @@ sub postprocess_inventory {
       for my $phone (keys %{$pd->{gen_inventory}}) {
         $pd->{gen_inventory}{$phone}[$i] /= $sum;
       }
-
       delete $pd->{syllable_structure}[$i]{reprune};
+    }
+
+    # drop excepted things
+    if (defined $pd->{syllable_structure}[$i]{except}) {
+      my $sum = 0;
+      for my $phone (keys %{$pd->{gen_inventory}}) {
+        $pd->{gen_inventory}{$phone}[$i] = 0 if grep $phone =~ /^$_$/, @{$pd->{syllable_structure}[$i]{except}};        
+        $sum += $pd->{gen_inventory}{$phone}[$i];
+        unless (grep $_ > 0, @{$pd->{gen_inventory}{$phone}}) {
+          delete $pd->{gen_inventory}{$phone};
+        }
+      }
+      for my $phone (keys %{$pd->{gen_inventory}}) {
+        $pd->{gen_inventory}{$phone}[$i] /= $sum;
+      }
+      delete $pd->{syllable_structure}[$i]{except};
     }
 
     # eliminate positions with nothing in them
@@ -3467,6 +3516,7 @@ sub describe_rules {
                 if substr($pausal_effect, $_, 1) eq '<';
           }
           my $modified = overwrite $precondition, $pausal_effect; 
+          $modified =~ s/u/./g;
           $main_VP .= ' and become ' . 
                       name_natural_class($modified, \@new_inventory, significant => $pausal_effect, morpho => 'plural', nobase => 1) .
                       ' word-initially';
@@ -3497,6 +3547,7 @@ sub describe_rules {
                 if substr($pausal_effect, $_, 1) eq '>';
           }
           my $modified = overwrite $precondition, $pausal_effect; 
+          $modified =~ s/u/./g;
           $main_VP .= ' and become ' . 
                       name_natural_class($modified, \@new_inventory, significant => $pausal_effect, morpho => 'plural', nobase => 1) .
                       ' word-finally';
