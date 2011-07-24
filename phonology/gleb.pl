@@ -14,11 +14,6 @@
 # - Huh, in 634146154, nasality spreads across high V but doesn't latch on.  Is there a hope 
 #   of describing that?
 # Next as for phonology:
-# - Make sure rules that apply only at word boundary display okay...
-#   (Though how are we going to do phrase boundary?  Why not late composition?)
-# - Better extra conditions.  (In particular, extra conditions that conspire to avoid something
-#   _which there's already a rule against_ should be favoured.)
-# - Never resolve an extra-condition situation by changing the extra condition!!!
 # - Revision of forced non-contrastivity (with providing for noncontrastive stress etc. in mind).
 #   (Update the comment preceding gen_phonology.)
 # - Split resolutions for marked situations.  (This is definitely better than yoking marked situations.)
@@ -3107,7 +3102,8 @@ sub describe_rules {
           @{$matcheds{$displ}} = grep $_ !~ /^$exception$/, @{$matcheds{$displ}};
         }
       }
-      unless (@{$matcheds{$displ}}) {
+      # Rules aren't pointless if they trigger _only_ at word boundary.
+      unless (@{$matcheds{$displ}} or $rule->{or_pause}{$displ}) {
         $rule->{pointless} = 1;
         next RULE;
       }
@@ -3707,9 +3703,11 @@ sub describe_rules {
 
     my $environment_text = '';
     my ($pre_text, $post_text);
+    my ($no_segmental_pre, $no_segmental_post);
     # the 'or word-finally' aren't quite right, since the main rule might be a between.
     if (defined $pre) {
-      $pre_text = name_natural_class($pre, \@inventory, morpho => 'indef');
+      $pre_text = name_natural_class($pre, \@inventory, morpho => 'indef', no_nothing => 1);
+      $no_segmental_pre = 1 unless $pre_text;
       my @exceptions = split / /, $rule->{except}{$locus-1};
       my @exception_texts = map name_natural_class(overwrite($precondition, $_), 
               \@inventory, significant => $_, no_nothing => 1, morpho => 'indef'), 
@@ -3718,10 +3716,11 @@ sub describe_rules {
       @exception_texts = grep $_, @exception_texts;
       $pre_text .= ' except for ' . join ' and ', @exception_texts if @exception_texts;
       $pre_text .= ',' if (scalar @exception_texts) and $rule->{or_pause}{$locus-1};
-      $pre_text .= ' or word-initially' if $rule->{or_pause}{$locus-1};
+      $pre_text .= ($pre_text ? ' or ' : '') . 'word-initially' if $rule->{or_pause}{$locus-1};
     }
     if (defined $post) {
-      $post_text = name_natural_class($post, \@inventory, morpho => 'indef');
+      $post_text = name_natural_class($post, \@inventory, morpho => 'indef', no_nothing => 1);
+      $no_segmental_post = 1 unless $post_text;
       my @exceptions = split / /, $rule->{except}{$locus+1};
       my @exception_texts = map name_natural_class(overwrite($precondition, $_), 
               \@inventory, significant => $_, no_nothing => 1, morpho => 'indef'), 
@@ -3730,7 +3729,15 @@ sub describe_rules {
       @exception_texts = grep $_, @exception_texts;
       $post_text .= ' except for ' . join ' and ', @exception_texts if @exception_texts;
       $post_text .= ',' if (scalar @exception_texts) and $rule->{or_pause}{$locus+1};
-      $post_text .= ' or word-finally' if $rule->{or_pause}{$locus+1};
+      $post_text .= ($post_text ? ' or ' : '') . 'word-finally' if $rule->{or_pause}{$locus+1};
+    }
+    if ($no_segmental_pre) {
+      $environment_text .= " $pre_text";
+      $pre = undef;
+    }
+    if ($no_segmental_post) {
+      $environment_text .= " $post_text";
+      $post = undef;
     }
     if (defined $pre and defined $post) {
       $environment_text .= " between $pre_text and $post_text";
