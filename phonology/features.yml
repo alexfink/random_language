@@ -103,6 +103,7 @@ families:
   vowel_length: "+syllabic"
   length_height: "+syllabic"
 
+generic_pause_phone: "-syllabic -dorsal -coronal -labial -nasal -voice -spread_glottis -front -back -round -retroflex -pharyngealised"
 
 
 
@@ -601,6 +602,7 @@ features:
       peripheral: [0.975]
       onset_resonant: [0.9875]
       glide: [0.9875]
+      glottal: [0.9875]
       coda_resonant: [0.9875]
     # also remember exceptional geminate mergers, e.g. for affricates, and such as [4r].
     # We may need to ignore certain features (principally secondary articulation) when making longs.  OTOH vowel length on fusing may be better handled by the moraic level.  (fusing rather than dropping is probably right?)
@@ -741,11 +743,11 @@ features:
         extras: {"+front 0": 0.9375, "-pharyngealised 1": 0.9, "!-high 1": 0.9, "!+front -palatalised_velar 1": 0.875} # most perceptible pre-release, so shd rarely perseverate
       - condition: "-syllabic, dorsal +resonant -lateral -tap_or_trill"
         target: 0
-        prob: 0.266667 # high, 'cause it comes up  dorsal coronal  sometimes.
+        prob: 0.177778 # high, 'cause it comes up  dorsal coronal  sometimes.
         extras: {"+front 1": 0.9, "-pharyngealised 0": 0.9, "!-high 0": 0.9, "dorsal 0": 0.666667, "coronal 0": 0.375, "-round 0": 0.25, "+high 1": 0.5, "-low 1": 0.5, "!dorsal +resonant -lateral -tap_or_trill 0": 0.9, "!+front -palatalised_velar 0": 0.875}
       - condition: "dorsal +resonant -lateral -tap_or_trill, -syllabic"
         target: 1
-        prob: 0.1 # ditto
+        prob: 0.066667 # ditto
         extras: {"+front 0": 0.9, "-pharyngealised 1": 0.9, "!-high 1": 0.9, "dorsal 1": 0.5, "coronal 1": 0.3, "-round 1": 0.25, "+high 0": 0.5, "-low 0": 0.5, "!dorsal +resonant -lateral -tap_or_trill 1": 0.9, "!+front -palatalised_velar 0": 0.875}
       # front--uvular interaction.  not consolidated with the next 'cause mostly there won't be front uvulars and the rule will get voided
       - condition: "-syllabic -high, dorsal +resonant -lateral -tap_or_trill"
@@ -771,11 +773,11 @@ features:
       - condition: "dorsal +resonant -lateral -tap_or_trill, -syllabic dorsal +resonant -lateral -tap_or_trill"
         target: 0
         prob: 0.2
-        extras: {"+front 1": 0.333333, "-back 0: 0.333333"}
+        extras: {"+front 1": 0.333333, "-back 0": 0.8}
       - condition: "-syllabic dorsal +resonant -lateral -tap_or_trill, dorsal +resonant -lateral -tap_or_trill"
         target: 1
-        prob: 0.02 # but rather larger in weak syllables
-        extras: {"+front 0": 0.333333, "-back 1: 0.333333"}
+        prob: 0.05 # but rather larger in weak syllables
+        extras: {"+front 0": 0.333333, "-back 1": 0.8}
 
   - name: palatalised_velar
     families: place
@@ -896,10 +898,10 @@ features:
         target: 0
         prob: 0.25
         extras: {"-front 0": 0.975}
-      - condition: "-syllabic dorsal -high, dorsal +resonant -lateral -tap_or_trillc"
+      - condition: "-syllabic dorsal -high, dorsal +resonant -lateral -tap_or_trill"
         target: 1
         prob: 0.1
-        extras: {"-front 1": 0.975}#HERE
+        extras: {"-front 1": 0.975}
       # chance of glide formation
       - condition: "dorsal +resonant -lateral -tap_or_trill, -syllabic"
         target: 0
@@ -907,10 +909,12 @@ features:
         extras: {"-dorsal 1": 0.875, "+back 1": 0.975}
       - condition: "dorsal +resonant -lateral -tap_or_trill, -syllabic dorsal +resonant -lateral -tap_or_trill"
         target: 0
-        prob: 0.1
+        prob: 0.15
+        extras: {"-front 0": 0.8}
       - condition: "-syllabic dorsal +resonant -lateral -tap_or_trill, dorsal +resonant -lateral -tap_or_trill"
         target: 1
-        prob: 0.02 # but rather larger in weak syllables
+        prob: 0.05 # but rather larger in weak syllables
+        extras: {"-front 1": 0.8}
 
   - name: ATR
     families: height
@@ -1733,7 +1737,7 @@ relations:
   # TODO: one should include influence of phonation on height and ATRness (and frontness??).  Creaky lowers, breathy raises, for formant reasons.  This is found in Khmer.  See Thurgood.  For ATR, Wikipedia says something.  (What's the southern Spanish [e a] > [E &] before an [s] > [h] then?)
 
   - from: "+front"
-    to: "+resonant"
+    to: "+tap_or_trill"
     weight: 0
     spread_only: true
     assimilation:
@@ -1829,7 +1833,7 @@ relations:
         extras: {"-dorsal 0": 0.975}
       - condition: "+front dorsal +resonant -lateral -tap_or_trill, -syllabic dorsal +resonant -lateral -tap_or_trill"
         target: 0
-        prob: 0.1
+        prob: 0.25
       - condition: "-syllabic dorsal +resonant -lateral -tap_or_trill, +front dorsal +resonant -lateral -tap_or_trill"
         target: 1
         prob: 0.05
@@ -1864,7 +1868,7 @@ relations:
         prob: 0.033333
       - condition: "+back dorsal +resonant -lateral -tap_or_trill, -syllabic dorsal +resonant -lateral -tap_or_trill"
         target: 0
-        prob: 0.1 
+        prob: 0.25
       - condition: "-syllabic dorsal +resonant -lateral -tap_or_trill, +back dorsal +resonant -lateral -tap_or_trill"
         target: 1
         prob: 0.05

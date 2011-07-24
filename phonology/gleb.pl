@@ -186,7 +186,6 @@ sub add_entailments {
 
 # Memoise a rule for the computations performed in feeds(!).
 # These things can be totally stripped out once the phonology is finalised. 
-# TODO: strip these {outcome}s out.
 
 sub feed_annotate {
   my $rule = shift;
@@ -197,6 +196,12 @@ sub feed_annotate {
       $rule->{outcome}{$displ} =~ s/[<>]/./g;
     }
   }
+}
+
+sub strip_feed_annotation {
+  my $rule = shift;
+  delete $rule->{precondition_ar};
+  delete $rule->{outcome};
 }
 
 # Given two rules ri, rj, can the execution of ri cause rj to be applicable
@@ -659,16 +664,26 @@ sub persistence_variants {
 }
 
 # Generate an extra condition for a given rule.
-#
-# We use generable_val to figure out which extra conditions actually will be nontrivial;
-# and the syllable structure, so we know where it's plausible to stick the extra condition
-# (but we don't if $args{bar_sequences}).
-# We use the current phonology, for the avoiding things there is already a rule against.
 
 sub gen_extra_condition {
   my ($rule, %args) = (shift, @_);
   my (%resolution_keys, %resolutions);
   my $global_res_count = 0;
+
+  for my $locus (keys %{$rule->{or_pause}}) {
+    # Restriction to word-extremal, and away from it.
+    my %rule1 = %$rule;
+    $rule1{precondition} = { %{$rule->{precondition}} }; # deep copy this part
+    substr($rule1{precondition}{$locus}, 0, 1) = 'x';
+    $resolution_keys{$global_res_count} = 0.5; # magic weight
+    $resolutions{$global_res_count++} = \%rule1;
+    
+    my %rule2 = %$rule;
+    $rule2{or_pause} = { %{$rule->{or_pause}} }; # deep copy this part
+    delete $rule2{or_pause}{$locus};
+    $resolution_keys{$global_res_count} = 0.5; # magic weight
+    $resolutions{$global_res_count++} = \%rule2;
+  }
 
   for my $locus (keys %{$rule->{effects}}) {
     my $effect = $rule->{effects}{$locus};
@@ -684,7 +699,7 @@ sub gen_extra_condition {
     } grep((defined $args{generable_val}[0][$_] && @{$args{generable_val}[0][$_]} && 
             defined $args{generable_val}[1][$_] && @{$args{generable_val}[1][$_]}), 
         0..length($effect)-1);
-    # TODO: handle this when there's no generable_val.  also, a more uniform way of dropping ungenerables
+    # TODO: handle this when there's no generable_val.  also, a more uniform way of dropping ungenerables for the later types
     for my $f (@family_features) {
       next if substr($rule->{precondition}{$locus}, $f, 1) ne '.';
       for my $v (0..1) {
@@ -718,7 +733,7 @@ sub gen_extra_condition {
 
     # Conditions to which the outcome is a (possibly related) assimilation.
     # TODO: once preconditions can have equality w/out fixed values, allow it here in special cases (like homorganicity).
-    # TODO: once assimilations can be long distance, allow that in those cases here.
+    # Also once assimilations can be long distance, allow that in those cases here -- but that should be automatic.
     unless ($args{bar_sequences}) {
       for my $f (0..$#{$FS->{features}}) {
         next if substr($effect, $f, 1) eq '.';
@@ -731,9 +746,13 @@ sub gen_extra_condition {
           $rule1{precondition} = { %{$rule->{precondition}} }; # deep copy this part
           for my $displ (0..$#condition) {
             my $l = $locus + $displ - $d->{target};
-            $rule1{precondition}{$l} = '.' x length($effect) if !defined $rule1{precondition}{$l};
-            next EF_ASSIM unless compatible($rule1{precondition}{$l}. $condition[$displ]);
-            $rule1{precondition}{$l} = overwrite $rule1{precondition}{$l},  $condition[$displ];
+            if (!defined $rule1{precondition}{$l}) {
+              $_ = parse_feature_string($FS->{generic_pause_phone}, 1);
+              $rule1{or_pause}{$l} = 1 if $condition[$displ] =~ /^$_$/;
+              $rule1{precondition}{$l} = '.' x length($effect);
+            }
+            next EF_ASSIM unless compatible($rule1{precondition}{$l}, $condition[$displ]);
+            $rule1{precondition}{$l} = overwrite $rule1{precondition}{$l}, $condition[$displ];
           }
           next unless compatible(substr($rule1{precondition}{$locus + 1 - 2*$d->{target}}, $f, 1), 
                                           substr($rule1{precondition}{$locus}, $f, 1));
@@ -758,9 +777,13 @@ sub gen_extra_condition {
           $rule1{precondition} = { %{$rule->{precondition}} }; # deep copy this part
           for my $displ (0..$#condition) {
             my $l = $locus + $displ - $d->{target};
-            $rule1{precondition}{$l} = '.' x length($effect) if !defined $rule1{precondition}{$l};
-            next EF_ASSIMR unless compatible($rule1{precondition}{$l}. $condition[$displ]);
-            $rule1{precondition}{$l} = overwrite $rule1{precondition}{$l},  $condition[$displ];
+            if (!defined $rule1{precondition}{$l}) {
+              $_ = parse_feature_string($FS->{generic_pause_phone}, 1);
+              $rule1{or_pause}{$l} = 1 if $condition[$displ] =~ /^$_$/;
+              $rule1{precondition}{$l} = '.' x length($effect);
+            }
+            next EF_ASSIMR unless compatible($rule1{precondition}{$l}, $condition[$displ]);
+            $rule1{precondition}{$l} = overwrite $rule1{precondition}{$l}, $condition[$displ];
           }
           my $fs = parse_feature_string($r->{from}, 1);
           next unless compatible($rule1{precondition}{$locus + 1 - 2*$d->{target}}, $fs);
@@ -771,7 +794,6 @@ sub gen_extra_condition {
           $resolutions{$global_res_count++} = \%rule1;
         }
       }
-
     }
 
     # Conditions that avoid a marked situation changed by a previous rule.
@@ -797,30 +819,32 @@ sub gen_extra_condition {
         # (We just perform this subtraction on the old precondition, direcly.)
         my %rule1 = %$rule;
         $rule1{precondition} = { %{$rule->{precondition}} }; # deep copy this part
+        $rule1{except} = { %{$rule->{except}} } if defined $rule->{except}; # deep copy this part
+
+        my $num_convergences = scalar grep substr($old_precondition, $_, 1) ne '.', 0..length($old_precondition)-1;
         for (0..length($old_precondition)-1) {
           substr($old_precondition, $_, 1) = '.'
               if substr($old_precondition, $_, 1) eq substr($outcome, $_, 1);
         }
         my $num_divergences = scalar grep substr($old_precondition, $_, 1) ne '.', 0..length($old_precondition)-1;
+        $num_convergences -= $num_divergences; # num_convergences is for magic weights
         if ($num_divergences <= 0) {
           substr($rule1{precondition}{$locus}, 0, 1) = 'x'; # nothing is left to match!
         } elsif ($num_divergences <= 1) {
           $old_precondition =~ y/01/10/;
           $rule1{precondition}{$locus} = overwrite $rule1{precondition}{$locus}, $old_precondition;
         } else {
-          # HEREHEREHERE this doesn't work, 'cause except is a scalar right now.
-          push @{$rule1{except}{$locus}}, $old_precondition;
+          $rule1{except}{$locus} .= ' ' if defined $rule1{except}{$locus};
+          $rule1{except}{$locus} .= $old_precondition;
         }
-        $resolution_keys{$global_res_count} = $num_divergences < 1 ? 1 : exp(2 - $num_divergences); 
-            # totally magic function, not even continuous :/
+        $resolution_keys{$global_res_count} = 
+            $num_convergences / ($num_divergences * ($num_divergences - 1) / 2 + 1); # much magic :/
         $resolutions{$global_res_count++} = \%rule1;
       }
     }
-
-    # TODO: word-boundary only conditions.  (Also allow word boundary earlier where this makes sense.)
   } # locus
 
-#print STDERR YAML::Any::Dump(\%resolutions), "\n\n"; #gd
+  #print STDERR YAML::Any::Dump(\%resolutions), "\n\n";
   if (keys %resolutions) {
     my $i = weighted_one_of %resolution_keys;
     return $resolutions{$i};
@@ -872,7 +896,6 @@ sub gen_one_rule {
     $initial_threshold = $FS->{marked}[$k]{initial_prob};
   }
 
-#FIXME: (proximal) this logic causes there to be way too many rules, now.
   my $skip_me = 0;
   if (!$args{dont_skip} and ($kind eq 'repair' or $kind =~ /^assimilate/)) {
     $skip_me = (rand() > $initial_threshold);
@@ -1059,10 +1082,11 @@ sub gen_one_rule {
         if (defined $eselections{$e}) {
           $e =~ /^(.*) ([^ ]*)$/;
           my ($e0, $e1) = ($1, $2);
-          if ($e0 eq '##') { # ad hoc notation for _only_ at end of word
+          if ($e0 eq '##') { # ad hoc notation for _only_ at extremum of word
             $rule->{or_pause}{$e1} = 1;
             $rule->{pause_phone} = $pause_phone;
             substr($rule->{precondition}{$e1}, 0, 1) = 'x'; # ad hoc match prevention
+            # TODO: (proximal) make sure this is working!!
           }
           elsif ($e0 eq '#') { # end of word _allowed_
             $rule->{or_pause}{$e1} = 1;
@@ -3724,6 +3748,7 @@ sub describe_rules {
       push @{$descriptions{$rule->{inactive}}{pre}}, "Rule ($i) becomes inactive.";
     }
 
+    # FIXME: "persistently" is lost if $no_main_VP
     $text .= $main_clause unless $no_main_VP;
     $text .= $environment_text unless $no_main_VP and $frames_start_with_PP;
     if ($deviation_texts) {
@@ -3965,6 +3990,9 @@ else {
     print STDERR "pruning of inactive rules skipped\n";
   }
   $phonology_data->{which_preconditions} = which_preconditions($phonology); # since the numbers are changed
+  for (@{$phonology_data->{phonology}}) {
+    strip_feed_annotation $_;
+  }
 }
 
 $phon_descr = YAML::Any::LoadFile('phon_descr.yml');
