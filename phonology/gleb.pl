@@ -14,12 +14,13 @@
 # - Huh, in 634146154, nasality spreads across high V but doesn't latch on.  Is there a hope 
 #   of describing that?
 # Next as for phonology:
-# - Rules that apply only at word boundary.  Done, but make sure they display okay...
+# - Make sure rules that apply only at word boundary display okay...
 #   (Though how are we going to do phrase boundary?  Why not late composition?)
 # - Better extra conditions.  (In particular, extra conditions that conspire to avoid something
 #   _which there's already a rule against_ should be favoured.)
 # - Never resolve an extra-condition situation by changing the extra condition!!!
 # - Revision of forced non-contrastivity (with providing for noncontrastive stress etc. in mind).
+#   (Update the comment preceding gen_phonology.)
 # - Split resolutions for marked situations.  (This is definitely better than yoking marked situations.)
 #   I think we still need excepts, though.
 # - Presence of certain contrasts influencing chances of certain assimilations.
@@ -181,21 +182,6 @@ sub add_entailments {
 # to this one.  
 # Other things there can be:
 # _Deletions_ happen after effects.  Deletions should be a list of indices in decreasing order.
-
-# Generator rules also have probabilities of application, and have two effects stored.
-# We don't currently actually ever _run_ generator rules, but it's nice to know 
-# that level is still there I guess.
-
-=pod
-sub generate_syllable {
-  my $syllable_structure = shift;
-  my @syllable;
-  for my $phone (@$syllable_structure) {
-    push @syllable, $phone->{features} if (rand() < $phone->{prob});
-  }
-  @syllable;
-}
-=cut
 
 
 # Memoise a rule for the computations performed in feeds(!).
@@ -672,14 +658,184 @@ sub persistence_variants {
   @makings;
 }
 
+# Generate an extra condition for a given rule.
+#
+# We use generable_val to figure out which extra conditions actually will be nontrivial;
+# and the syllable structure, so we know where it's plausible to stick the extra condition
+# (but we don't if $args{bar_sequences}).
+# We use the current phonology, for the avoiding things there is already a rule against.
+
+sub gen_extra_condition {
+  my ($rule, %args) = (shift, @_);
+  my (%resolution_keys, %resolutions);
+  my $global_res_count = 0;
+
+  for my $locus (keys %{$rule->{effects}}) {
+    my $effect = $rule->{effects}{$locus};
+
+    # Conditions of the same family as the effects (which we don't have stored in a special structure).
+    %_ = map(($_ => 1), map split(/ /, $FS->{features}[$_]{families}), 
+        grep substr($effect, $_, 1) ne '.', 0..length($effect)-1);
+    my @families = grep compatible(parse_feature_string($FS->{families}{$_}, 1), $rule->{precondition}{$locus}),
+        grep $_, keys %_;
+    my @family_features = grep {
+      my $i = $_;
+      grep $FS->{features}[$i]{families} =~ /\b$_\b/, @families;
+    } grep((defined $args{generable_val}[0][$_] && @{$args{generable_val}[0][$_]} && 
+            defined $args{generable_val}[1][$_] && @{$args{generable_val}[1][$_]}), 
+        0..length($effect)-1);
+    # TODO: handle this when there's no generable_val.  also, a more uniform way of dropping ungenerables
+    for my $f (@family_features) {
+      next if substr($rule->{precondition}{$locus}, $f, 1) ne '.';
+      for my $v (0..1) {
+        next if $v == 0 and $FS->{features}[$f]{univalent};
+        my %rule1 = %$rule;
+        $rule1{precondition} = { %{$rule->{precondition}} }; # deep copy this part
+        substr($rule1{precondition}{$locus}, $f, 1) = $v;
+        $resolution_keys{$global_res_count} = $FS->{features}[$f]{univalent} ? 1 : 0.5; # magic factor
+          # equiprobable on features, aot on their values
+        $resolutions{$global_res_count++} = \%rule1;
+      }
+    }
+    
+    # Conditions related to the outcome.
+    my $outcome = overwrite $rule->{precondition}{$locus}, $effect;
+    $outcome =~ s/[<>]/./;
+    for my $rel (@{$FS->{relations}}) {
+      next if $rel->{spread_only};
+      $_ = parse_feature_string($rel->{to}, 1);
+      next unless $outcome =~ /^$_$/;
+      
+      my %rule1 = %$rule;
+      $rule1{precondition} = { %{$rule->{precondition}} }; # deep copy this part
+      my $extra = parse_feature_string($rel->{from}, 1);
+      next unless compatible($rule1{precondition}{$locus}, $extra);
+      $rule1{precondition}{$locus} = overwrite $rule1{precondition}{$locus}, $extra;
+      next if $rule1{precondition}{$locus} == $rule->{precondition}{$locus};
+      $resolution_keys{$global_res_count} = $rel->{weight}; # implicit magic factor
+      $resolutions{$global_res_count++} = \%rule1;
+    }
+
+    # Conditions to which the outcome is a (possibly related) assimilation.
+    # TODO: once preconditions can have equality w/out fixed values, allow it here in special cases (like homorganicity).
+    # TODO: once assimilations can be long distance, allow that in those cases here.
+    unless ($args{bar_sequences}) {
+      for my $f (0..$#{$FS->{features}}) {
+        next if substr($effect, $f, 1) eq '.';
+
+        EF_ASSIM: for my $d (@{$FS->{features}[$f]{assimilation}}) {
+          my @condition = map parse_feature_string($_, 1), split /, */, $d->{condition}, -1;
+          next unless $outcome =~ /^$condition[$d->{target}]$/;
+
+          my %rule1 = %$rule;
+          $rule1{precondition} = { %{$rule->{precondition}} }; # deep copy this part
+          for my $displ (0..$#condition) {
+            my $l = $locus + $displ - $d->{target};
+            $rule1{precondition}{$l} = '.' x length($effect) if !defined $rule1{precondition}{$l};
+            next EF_ASSIM unless compatible($rule1{precondition}{$l}. $condition[$displ]);
+            $rule1{precondition}{$l} = overwrite $rule1{precondition}{$l},  $condition[$displ];
+          }
+          next unless compatible(substr($rule1{precondition}{$locus + 1 - 2*$d->{target}}, $f, 1), 
+                                          substr($rule1{precondition}{$locus}, $f, 1));
+          substr($rule1{precondition}{$locus + 1 - 2*$d->{target}}, $f, 1) =
+              substr($rule1{precondition}{$locus}, $f, 1); # impose the actual assimilation
+          
+          $resolution_keys{$global_res_count} = ($d->{prob} >= 1/24.0 ? 1/24.0 : $d->{prob}) * 48; # magic factor
+          $resolutions{$global_res_count++} = \%rule1;
+        }
+      }
+
+      # pretty duplicative
+      for my $r (@{$FS->{relations}}) {
+        $_ = parse_feature_string($r->{to}, 1);
+        next if $effect !~ /^$_$/;
+
+        EF_ASSIMR: for my $d (@{$r->{assimilation}}) {
+          my @condition = map parse_feature_string($_, 1), split /, */, $d->{condition}, -1;
+          next unless $outcome =~ /^$condition[$d->{target}]$/;
+
+          my %rule1 = %$rule;
+          $rule1{precondition} = { %{$rule->{precondition}} }; # deep copy this part
+          for my $displ (0..$#condition) {
+            my $l = $locus + $displ - $d->{target};
+            $rule1{precondition}{$l} = '.' x length($effect) if !defined $rule1{precondition}{$l};
+            next EF_ASSIMR unless compatible($rule1{precondition}{$l}. $condition[$displ]);
+            $rule1{precondition}{$l} = overwrite $rule1{precondition}{$l},  $condition[$displ];
+          }
+          my $fs = parse_feature_string($r->{from}, 1);
+          next unless compatible($rule1{precondition}{$locus + 1 - 2*$d->{target}}, $fs);
+          $rule1{precondition}{$locus + 1 - 2*$d->{target}} = 
+              overwrite($rule1{precondition}{$locus + 1 - 2*$d->{target}}, $fs); # impose the actual assimilation
+          
+          $resolution_keys{$global_res_count} = ($d->{prob} >= 1/24.0 ? 1/24.0 : $d->{prob}) * 48; # magic factor
+          $resolutions{$global_res_count++} = \%rule1;
+        }
+      }
+
+    }
+
+    # Conditions that avoid a marked situation changed by a previous rule.
+    for my $old_rule (@{$args{phonology}}) {
+      next if defined $old_rule->{inactive};
+      next if keys %{$old_rule->{precondition}} >= 2 and $args{bar_sequences};
+      for my $old_locus (keys %{$old_rule->{effects}}) {
+        my $old_precondition = $old_rule->{precondition}{$old_locus};
+        next if $old_precondition =~ /u/;
+        next unless compatible($old_precondition, $outcome);
+        my $old_effect = $old_rule->{effects}{$old_locus};
+        # We take a rule to avoid markedness if its effect 
+        # is incompatible with its precondition.
+        for (0..length($old_effect)-1) {
+          substr($old_effect, $_, 1) = substr($old_rule->{effects}{$old_locus+1}, $_, 1)
+            if substr($old_effect, $_, 1) eq '>';
+          substr($old_effect, $_, 1) = substr($old_rule->{effects}{$old_locus-1}, $_, 1)
+            if substr($old_effect, $_, 1) eq '<';
+        }
+        next if compatible($old_effect, $old_precondition);
+
+        # We let how good this thing is as a condition to avoid depend on how many features have to be added.  
+        # (We just perform this subtraction on the old precondition, direcly.)
+        my %rule1 = %$rule;
+        $rule1{precondition} = { %{$rule->{precondition}} }; # deep copy this part
+        for (0..length($old_precondition)-1) {
+          substr($old_precondition, $_, 1) = '.'
+              if substr($old_precondition, $_, 1) eq substr($outcome, $_, 1);
+        }
+        my $num_divergences = scalar grep substr($old_precondition, $_, 1) ne '.', 0..length($old_precondition)-1;
+        if ($num_divergences <= 0) {
+          substr($rule1{precondition}{$locus}, 0, 1) = 'x'; # nothing is left to match!
+        } elsif ($num_divergences <= 1) {
+          $old_precondition =~ y/01/10/;
+          $rule1{precondition}{$locus} = overwrite $rule1{precondition}{$locus}, $old_precondition;
+        } else {
+          # HEREHEREHERE this doesn't work, 'cause except is a scalar right now.
+          push @{$rule1{except}{$locus}}, $old_precondition;
+        }
+        $resolution_keys{$global_res_count} = $num_divergences < 1 ? 1 : exp(2 - $num_divergences); 
+            # totally magic function, not even continuous :/
+        $resolutions{$global_res_count++} = \%rule1;
+      }
+    }
+
+    # TODO: word-boundary only conditions.  (Also allow word boundary earlier where this makes sense.)
+  } # locus
+
+#print STDERR YAML::Any::Dump(\%resolutions), "\n\n"; #gd
+  if (keys %resolutions) {
+    my $i = weighted_one_of %resolution_keys;
+    return $resolutions{$i};
+  }
+  return $rule;
+}
+
 # To expand a rule tag:
-# - do the chance of extra conditions thing.
 # - make all the resolutions, incl. related features, incl. loop-preserving and -breaking forms.
-# - make the rules (retaining the tag, for later remaking).  when flipping a feature between 0 and 1, 
-# clear features formerly requiring it.
+# - make the rules (retaining the tag, for later remaking).  When flipping a feature between 0 and 1, 
+#   clear features formerly requiring it.
+# - do the chance of extra conditions thing.
 # - repeat to make any necessary new rules for loopbreaks.
 
-# The format of rule tags is "$type $list_index", where $type is one of the values that
+# The format of rule tags is "$kind $list_index", where $kind is one of the values that
 # appear herein several times.
 sub gen_one_rule {
   my ($phonology, $tag) = (shift, shift); 
@@ -694,37 +850,15 @@ sub gen_one_rule {
     return;
   }
 
-  # Need to have the precondition here so that the extra condition stuff can enrich it.
-  my $precondition;
   # Where the data describing this thing is appended.  Used for assimilation so far.
   my $d; 
-  if ($kind eq 'stripping') {
-    $precondition = $FS->{strippings}[$k]{condition_parsed};
-  } elsif ($kind eq 'default') {
-    $precondition = parse_feature_string($FS->{features}[$k]{default}[$rest]{condition}, 1);
-    $precondition = overwrite $precondition, parse_feature_string($FS->{features}[$k]{requires}, 1)
-        if defined $FS->{features}[$k]{requires};
-    substr($precondition, $k, 1) = 'u';
-    # this avoids a bad situation which antitheticals can cause
-    return if defined $args{extra_precondition} and substr($args{extra_precondition}, $k, 1) ne '.';
-  } elsif ($kind eq 'repair') {
-    $precondition = parse_feature_string($FS->{marked}[$k]{condition}, 1);
-  } elsif ($kind =~ /^assimilate/) {
+  if ($kind =~ /^assimilate/) {
     $d = $FS->{features}[$k]{assimilation}[$rest] if $kind eq 'assimilate';
     $d = $FS->{relations}[$k]{assimilation}[$rest] if $kind eq 'assimilate_related';
-    $precondition = join ' ', map parse_feature_string($_, 1), split /, */, $d->{condition}, -1;
-  }
-  if (defined $args{extra_precondition}) {
-    my @precondition_phones = split / /, $precondition;
-    my @extra_phones = split / /, $args{extra_precondition};
-    for (0..$#precondition_phones) {
-      return unless compatible($precondition_phones[$_], add_entailments($extra_phones[$_]));
-    }
-    $precondition = overwrite $precondition, $args{extra_precondition};
   }
 
   # Not doing assimilation rules (or strippings) since they can't much come out differently.
-  my $threshold;
+  my $threshold = 0;
   if ($kind eq 'default') {
     $threshold = $FS->{features}[$k]{default}[$rest]{value};
   } elsif ($kind eq 'repair') {
@@ -732,62 +866,38 @@ sub gen_one_rule {
   } elsif ($kind =~ /^assimilate/) {
     $threshold = $d->{prob};
   }
-  $threshold = 0 if !defined $threshold;
 
   my $initial_threshold = $threshold; # e.g. for things which are more unlikely than marked, in a way that feature choice can't handle
   if ($kind eq 'repair' and $args{initial} and defined $FS->{marked}[$k]{initial_prob}) {
     $initial_threshold = $FS->{marked}[$k]{initial_prob};
   }
 
-  my $skip_me = (rand() > $initial_threshold);
-  my $add_a_condition = (rand() < ($skip_me ? 1-$threshold : $threshold)*2/5.0); # magic constant
-
-  # Lame things here: we only ever add an extra condition once; it only ever
-  # consists of one feature.  At least we can recurse.
-  # TODO: if this isn't the phone-resolution stage, sometimes add the condition
-  # to a new phone which didn't previously have one.  This requires a little art
-  # to know what good conditions for the adjacent phones are.
-  # On the other hand, adding a condition to a phone in the environment that's not
-  # changing should be essentially as rare as adding one on a new adjacent phone.
-  #
-  # This should be predisposed to sensible conditions (roughly, of the correct family.)
-  #
-  # It should also be predisposed to conditions that avoid a situation which has a
-  # persisting rule against it.
-
-  # FIXME: this can currently do weird idiocy of the type of adding an innocuous feature 
-  # to a constraint, then resolving by changing that innocuous feature.  
-
-  if ($add_a_condition and $kind ne 'stripping') {
-    my @phones = split / /, $precondition;
-    my $r = int rand @phones;
-    if (defined $args{generator}) {
-      my $full_precondition = add_requirements $phones[$r];
-      my @potential_preconditions;
-      for my $genrule (@{$args{generator}}) {
-        my $i = index($genrule->{effects}{0}, '1');
-        # again, prob[0] stands in for all the probabilities
-        next unless substr($full_precondition, $i, 1) eq '.' 
-             and compatible($full_precondition, $genrule->{precondition}{0})
-             and $genrule->{prob}[0] > 0 and $genrule->{prob}[0] < 1;
-        push @potential_preconditions, $genrule;
-      }
-      if (@potential_preconditions) {
-        my $rule = $potential_preconditions[int rand @potential_preconditions];
-        my $extra_precondition; 
-        if (defined $FS->{features}[index($rule->{effects}{0}, '1')]{univalent}) {
-          $extra_precondition = $rule->{effects}{0}; 
-        } else {
-          $extra_precondition = rand(2) > 1 ? $rule->{effects}{0} : $rule->{antieffects}{0};
-        }
-        $extra_precondition = join ' ', map(($_ == $r ? $extra_precondition : '.' x @{$FS->{features}}), 
-                                            0..$#phones);
-        gen_one_rule($phonology, $tag, %args, extra_precondition => $extra_precondition);
-      }
-    }
+#FIXME: (proximal) this logic causes there to be way too many rules, now.
+  my $skip_me = 0;
+  if (!$args{dont_skip} and ($kind eq 'repair' or $kind =~ /^assimilate/)) {
+    $skip_me = (rand() > $initial_threshold);
   }
+  my $add_a_condition = 0;
+  if ($kind ne 'stripping') {
+    $add_a_condition = (rand() < ($skip_me ? $threshold * 2/5.0 : 1/15.0)); # magic constants
+  }
+  return if $skip_me and !$add_a_condition;
+
   
-  return if ($kind eq 'repair' or $kind =~ /^assimilate/) and $skip_me;
+  # This had been out front due to an old handling of extra preconditions.  Lazily left so.
+  my $precondition;
+  if ($kind eq 'stripping') {
+    $precondition = $FS->{strippings}[$k]{condition_parsed};
+  } elsif ($kind eq 'default') {
+    $precondition = parse_feature_string($FS->{features}[$k]{default}[$rest]{condition}, 1);
+    $precondition = overwrite $precondition, parse_feature_string($FS->{features}[$k]{requires}, 1)
+        if defined $FS->{features}[$k]{requires};
+    substr($precondition, $k, 1) = 'u';
+  } elsif ($kind eq 'repair') {
+    $precondition = parse_feature_string($FS->{marked}[$k]{condition}, 1);
+  } elsif ($kind =~ /^assimilate/) {
+    $precondition = join ' ', map parse_feature_string($_, 1), split /, */, $d->{condition}, -1;
+  }
 
   my (@resolutions, @weights);
   my $total_base_weight = 0;
@@ -952,7 +1062,7 @@ sub gen_one_rule {
           if ($e0 eq '##') { # ad hoc notation for _only_ at end of word
             $rule->{or_pause}{$e1} = 1;
             $rule->{pause_phone} = $pause_phone;
-            $rule->{precondition}{$e1} = overwrite $rule->{precondition}{$e1}, 'x'; # ad hoc match prevention
+            substr($rule->{precondition}{$e1}, 0, 1) = 'x'; # ad hoc match prevention
           }
           elsif ($e0 eq '#') { # end of word _allowed_
             $rule->{or_pause}{$e1} = 1;
@@ -1069,7 +1179,7 @@ sub gen_one_rule {
   } # 'repair'
   
   else {
-    print STDERR "unknown rule tag: $tag\n";
+    warn "unknown rule tag: $tag";
     return;
   }
 
@@ -1099,6 +1209,11 @@ sub gen_one_rule {
       }
     } # $displ
   } # RESOLVE
+
+  # Adorn the rule with extra conditions, if we decided to before.
+  if ($add_a_condition) {
+    $selected_rule = gen_extra_condition $selected_rule, phonology => $phonology, %args;
+  }
 
   # If any of the preconditions of this rule are not generable by anything coming before,
   # and it's a one-time rule, it's never triggerable; just drop it and don't write it down.
@@ -1146,7 +1261,7 @@ sub gen_one_rule {
 
   # It's correct for extra condition rules to have no tag, so that they
   # just drop out when regenerated.
-  $selected_rule->{tag} = $tag unless defined $args{extra_precondition};
+  $selected_rule->{tag} = $tag unless $add_a_condition;
   $selected_rule->{priority} = 0 if !defined $selected_rule->{priority};
   if (defined $selected_rule->{base_weight}) {
     $selected_rule->{recastability} = (1 - $selected_rule->{base_weight} / $total_base_weight);
@@ -1206,12 +1321,18 @@ sub gen_one_rule {
     my ($tag, $avoid) = ($1, $2);
     my %otherargs = %args;
     delete $otherargs{avoid};
-    delete $otherargs{extra_precondition};
+    delete $otherargs{dont_skip};
 #    print "{\n"; # debug
     gen_one_rule($phonology, $tag, avoid => [(split /\|/, $avoid), @{$args{avoid}}], %otherargs);
 #    print "}\n"; # debug
   }
   delete $selected_rule->{broken_tags};
+
+  # If this is the added-condition version of a rule which we also wanted to generate unadorned,
+  # recurse to do the unadorned form.
+  if ($add_a_condition and !$skip_me) {
+    gen_one_rule($phonology, $tag, %args, dont_skip => 1);
+  }
 }
 
 
@@ -1219,11 +1340,14 @@ sub gen_one_rule {
 # A complete generated phonology has the following layers.
 #
 # (1) General single segment repair and default feature insertion rules.
-#     [A few of the default insertion rules may be harmonic in nature.  Aside from this exception,]
-#     These are context-independent.
+#     [It is planned that a few of the default insertion rules may be harmonic in nature.  
+#     Aside from this exception:] These are context-independent.
 # (2) General cluster resolution, allophony, and the like.  Any time from 
 #     the start of this block onward is a sensible affix attachment time.
 #
+# The start of (2) is called start_sequences.  Phonemes are regarded as being those phones
+# which can be extant at the start of (2).
+
 # Alternations will not be implemented by the resolutions of features in
 # different contexts alone.  Instead, we'll eventually generate a thing for them:
 # perhaps a table with several small dimensions, and for each value of each dimension
@@ -1243,15 +1367,14 @@ sub gen_one_rule {
 # This still needs some thought on what to do about features in an alternation
 # that don't fulfill their requisites for generation (think also about sound change).  
 
-# The most general allowable form of a syllable position features specification
-# consists of feature strings alternated with weights.  Each probability
-# associates to the feature string before it; a missing final weight will be chosen
-# to make the sum 1.
-
 sub gen_phonology {
   my (@phone_generator, @phonology);
   my @syllable_structure;
 
+  # The most general allowable form of a syllable position features specification
+  # consists of feature strings alternated with weights.  Each probability
+  # associates to the feature string before it; a missing final weight will be chosen
+  # to make the sum 1.
   for my $slot (@{$FS->{syllable_template}}) {
     next if rand() >= $slot->{prob};
     do {
@@ -1324,7 +1447,6 @@ sub gen_phonology {
             }
             push @by_families, $max_phone;
           }
-          # print "doing $f->{name} for @by_families\n"; # debug
         }
 
         my $precondition = parse_feature_string($sit->{condition}, 1);
@@ -1521,6 +1643,8 @@ sub gen_phonology {
         generator => \@phone_generator, 
         generable_val => \@generable_val, 
         initial => 1,
+        syllable_structure => \@syllable_structure, # used only by extra conditions, presently
+        bar_sequences => defined $start_sequences ? undef : 1,
         forcibly_unmark => defined $start_sequences ? undef : \%forcibly_unmark; 
   }
     
@@ -1537,6 +1661,7 @@ sub name_phone {
            $use_html ? $phonetic_alphabets{IPA} : $phonetic_alphabets{CXS};
   my %taken_care_of;
   my $s = '##';
+  $s = "<abbr title=\"$phone\">$s</abbr>" if $use_html; # handy for debugging
   
   for my $x (keys %{$pa->{ligations}}) {
     next if $phone !~ /^$x$/;
@@ -1552,7 +1677,7 @@ sub name_phone {
     last;
   }
 
-  if ($s eq '##') {
+  if ($s =~ /##/) {
     for my $x (keys %{$pa->{characters}}) {
       next if $phone !~ /^$x$/;
       $s = $pa->{characters}{$x};
