@@ -7,15 +7,7 @@
 # (A greater proportion of the numbers are wholly fabricated, though!)
 
 # Short-term plan.
-# These are important but require some more thought:
-# - There is a misstatement in 11598455.  It is a fundamental one: the rule as stated is
-#   _always_ wrong, given that an assimilation to the _same_ environment interferes with
-#   what would otherwise be the resolution of the resulting segment.  
-# - Huh, in 634146154, nasality spreads across high V but doesn't latch on.  Is there a hope 
-#   of describing that?
-# Next as for phonology:
-# - Revision of forced non-contrastivity (with providing for noncontrastive stress etc. in mind).
-#   (Update the comment preceding gen_phonology.)
+# - We can simplify ``a phone or word-initially''.
 # - Split resolutions for marked situations.  (This is definitely better than yoking marked situations.)
 #   I think we still need excepts, though.
 # - Presence of certain contrasts influencing chances of certain assimilations.
@@ -23,6 +15,23 @@
 #   (also markednesses?  e.g. /b_< b_<_k/ shd be collapsed, and often /v\ w/.
 #    can kluge that with a change in one direction though)
 # - Might have to bite the bullet and do constraints against sequences (e.g. trapped resonant, /tl/, ...)
+# - Implement some of the assimilations we already have code support for.
+#
+# - Revision of forced non-contrastivity (with providing for noncontrastive stress etc. in mind).
+#   For subsequent stuff I probably do want to have an insertion point below a small number
+#   of groups of rules.  
+#   Closer to the crux of the problem is this: right now, every feature is specified at start_sequences.
+#   But it seems most natural for stress and tone to be allowed not to be marked yet.  
+#   (Possibly this is a special behaviour of tiered things.)
+#   otgh, I don't see how the pushing-into-phonology I foresee having to do could produce
+#   a description in which a feature was unspecified at start_sequences; the rules which first specify it
+#   would be tempting to push back.
+#   However we do it, we must avoid the situation where pushing back breaks all forced nonconstrastives!
+#   Solving that should also solve the current dilemma.
+#
+#   Does it suffice to have groups of rules which no persistent rule can be run in between,
+#   together with stuff like freshening rules for the stress?
+#
 # > 0.3.1.  
 #   After that, should we privilege 
 # (a) advanced inventory tracking, with the bigram transition matrix stuff; or
@@ -648,7 +657,7 @@ sub persistence_variants {
           $loopbreak_penalty *= $phonology->[$j]{recastability} if defined $phonology->[$j]{recastability};
         }
       }
-    }
+    } # if $persistent
 
     push @makings, [$rule,
                     $base_weight *
@@ -702,7 +711,7 @@ sub gen_extra_condition {
         my %rule1 = %$rule;
         $rule1{precondition} = { %{$rule->{precondition}} }; # deep copy this part
         substr($rule1{precondition}{$locus}, $f, 1) = $v;
-        $resolution_keys{$global_res_count} = $FS->{features}[$f]{univalent} ? 1 : 0.5; # magic factor
+        $resolution_keys{$global_res_count} = $FS->{features}[$f]{univalent} ? 1.0 : 0.5; # magic factor
           # equiprobable on features, aot on their values
         $resolutions{$global_res_count++} = \%rule1;
       }
@@ -722,7 +731,7 @@ sub gen_extra_condition {
       next unless compatible($rule1{precondition}{$locus}, $extra);
       $rule1{precondition}{$locus} = overwrite $rule1{precondition}{$locus}, $extra;
       next if $rule1{precondition}{$locus} == $rule->{precondition}{$locus};
-      $resolution_keys{$global_res_count} = $rel->{weight}; # implicit magic factor
+      $resolution_keys{$global_res_count} = $rel->{weight}; # magic factor
       $resolutions{$global_res_count++} = \%rule1;
     }
 
@@ -739,20 +748,22 @@ sub gen_extra_condition {
 
           my %rule1 = %$rule;
           $rule1{precondition} = { %{$rule->{precondition}} }; # deep copy this part
+          $rule1{or_pause} = { %{$rule->{or_pause}} }; # deep copy this part
           for my $displ (0..$#condition) {
             my $l = $locus + $displ - $d->{target};
             if (!defined $rule1{precondition}{$l}) {
               $_ = parse_feature_string($FS->{generic_pause_phone}, 1);
-              $rule1{or_pause}{$l} = 1 if $condition[$displ] =~ /^$_$/;
+              $rule1{or_pause}{$l} = 1 if $_ =~ /^$condition[$displ]$/;
               $rule1{precondition}{$l} = '.' x length($effect);
             }
             next EF_ASSIM unless compatible($rule1{precondition}{$l}, $condition[$displ]);
             $rule1{precondition}{$l} = overwrite $rule1{precondition}{$l}, $condition[$displ];
           }
-          next unless compatible(substr($rule1{precondition}{$locus + 1 - 2*$d->{target}}, $f, 1), 
-                                          substr($rule1{precondition}{$locus}, $f, 1));
+          $_ = '.'  x length($effect);
+          substr($_, $f, 1) = substr($rule1{precondition}{$locus}, $f, 1); 
+          next unless compatible(substr($rule1{precondition}{$locus + 1 - 2*$d->{target}}, $f, 1), $_);
           substr($rule1{precondition}{$locus + 1 - 2*$d->{target}}, $f, 1) =
-              substr($rule1{precondition}{$locus}, $f, 1); # impose the actual assimilation
+              overwrite(substr($rule1{precondition}{$locus + 1 - 2*$d->{target}}, $f, 1), $_); # impose the actual assimilation
           
           $resolution_keys{$global_res_count} = ($d->{prob} >= 1/24.0 ? 1/24.0 : $d->{prob}) * 48; # magic factor
           $resolutions{$global_res_count++} = \%rule1;
@@ -770,20 +781,21 @@ sub gen_extra_condition {
 
           my %rule1 = %$rule;
           $rule1{precondition} = { %{$rule->{precondition}} }; # deep copy this part
+          $rule1{or_pause} = { %{$rule->{or_pause}} }; # deep copy this part
           for my $displ (0..$#condition) {
             my $l = $locus + $displ - $d->{target};
             if (!defined $rule1{precondition}{$l}) {
               $_ = parse_feature_string($FS->{generic_pause_phone}, 1);
-              $rule1{or_pause}{$l} = 1 if $condition[$displ] =~ /^$_$/;
+              $rule1{or_pause}{$l} = 1 if $_ =~ /^$condition[$displ]$/;
               $rule1{precondition}{$l} = '.' x length($effect);
             }
             next EF_ASSIMR unless compatible($rule1{precondition}{$l}, $condition[$displ]);
             $rule1{precondition}{$l} = overwrite $rule1{precondition}{$l}, $condition[$displ];
           }
-          my $fs = parse_feature_string($r->{from}, 1);
-          next unless compatible($rule1{precondition}{$locus + 1 - 2*$d->{target}}, $fs);
+          $_ = parse_feature_string($r->{from}, 1);
+          next unless compatible($rule1{precondition}{$locus + 1 - 2*$d->{target}}, $_);
           $rule1{precondition}{$locus + 1 - 2*$d->{target}} = 
-              overwrite($rule1{precondition}{$locus + 1 - 2*$d->{target}}, $fs); # impose the actual assimilation
+              overwrite($rule1{precondition}{$locus + 1 - 2*$d->{target}}, $_); # impose the actual assimilation
           
           $resolution_keys{$global_res_count} = ($d->{prob} >= 1/24.0 ? 1/24.0 : $d->{prob}) * 48; # magic factor
           $resolutions{$global_res_count++} = \%rule1;
@@ -839,7 +851,7 @@ sub gen_extra_condition {
     }
   } # locus
 
-  #print STDERR YAML::Any::Dump(\%resolutions), "\n\n";
+  # print STDERR YAML::Any::Dump(\%resolutions), "\n\n";
   if (keys %resolutions) {
     my $i = weighted_one_of %resolution_keys;
     return $resolutions{$i};
@@ -1136,7 +1148,7 @@ sub gen_one_rule {
         if (substr($reqd, $i, 1) eq '0' and defined $FS->{features}[$i]{univalent}) {
           $i++, redo if !defined $FS->{marked}[$k]{flip}{$FS->{features}[$i]{name}};
           $effects = overwrite($effects, parse_feature_string($FS->{marked}[$k]{univalent_addition}, 1));
-          $no_persist = 1;
+          #$no_persist = 1; #TESTING
         }
         # Weights for flipping individual features: given in {flip}.
         $base_weight = (defined $FS->{marked}[$k]{flip}{$FS->{features}[$i]{name}} ? 
@@ -1367,7 +1379,8 @@ sub gen_one_rule {
 # The start of (2) is called start_sequences.  Phonemes are regarded as being those phones
 # which can be extant at the start of (2).
 
-# Alternations will not be implemented by the resolutions of features in
+# Alternations (whose implementaiton is probably not to be soon, comparatively...)
+# will not be implemented by the resolutions of features in
 # different contexts alone.  Instead, we'll eventually generate a thing for them:
 # perhaps a table with several small dimensions, and for each value of each dimension
 # one (or a few?) feature-values from among the contrastive features,
@@ -3037,6 +3050,13 @@ sub describe_syllable_structure {
 
 # TODO: this needs lots of updating when new rule types arise, for instance
 # those that can have multiple effects.
+
+# More current issues:
+# - There is a misstatement in 11598455.  It is a fundamental one: the rule as stated is
+#   _always_ wrong, given that an assimilation to the _same_ environment interferes with
+#   what would otherwise be the resolution of the resulting segment.  
+# - In 634146154, nasality spreads across high V but doesn't latch on.  Describe that when it happens?
+
 sub describe_rules {
   my ($pd, %args) = (shift, @_);
   my %descriptions;
