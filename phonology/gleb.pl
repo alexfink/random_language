@@ -14,7 +14,8 @@
 #   (I'm thinking of resonant voice assimilation, and V frontness assim to C.)
 #   (also markednesses?  e.g. /b_< b_<_k/ shd be collapsed, and often /v\ w/.
 #    can kluge that with a change in one direction though)
-# - Might have to bite the bullet and do constraints against sequences (e.g. trapped resonant, /tl/, ...)
+# - Might have to bite the bullet and do constraints against sequences 
+#   (e.g. trapped resonant, /tl/, increasing sonority sequences in V_V, ...)
 # - Implement some of the assimilations we already have code support for.
 #
 # - Revision of forced non-contrastivity (with providing for noncontrastive stress etc. in mind).
@@ -980,6 +981,7 @@ sub gen_one_rule {
     return;
   } 
   
+  # kinds handled here: qw/assimilate assimilate_related/
   elsif ($kind =~ /^assimilate/) {
     my @phones = split / /, $precondition;
     my $target = $d->{target};
