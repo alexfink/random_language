@@ -8,8 +8,6 @@
 
 # Short-term plan.
 # - We can simplify ``a phone or word-initially''.
-# - Split resolutions for marked situations.  (This is definitely better than yoking marked situations.)
-#   I think we still need excepts, though.
 # - Presence of certain contrasts influencing chances of certain assimilations.
 #   (I'm thinking of resonant voice assimilation, and V frontness assim to C.)
 #   (also markednesses?  e.g. /b_< b_<_k/ shd be collapsed, and often /v\ w/.
@@ -23,14 +21,15 @@
 #   of groups of rules.  
 #   Closer to the crux of the problem is this: right now, every feature is specified at start_sequences.
 #   But it seems most natural for stress and tone to be allowed not to be marked yet.  
-#   (Possibly this is a special behaviour of tiered things.)
+#   (Probably this is a special behaviour of tiered things.  In languages where they just
+#   play no role at all, I guess there should be a floated-late rule filling them in.)
 #   otgh, I don't see how the pushing-into-phonology I foresee having to do could produce
 #   a description in which a feature was unspecified at start_sequences; the rules which first specify it
 #   would be tempting to push back.
 #   However we do it, we must avoid the situation where pushing back breaks all forced nonconstrastives!
 #   Solving that should also solve the current dilemma.
 #
-#   Does it suffice to have groups of rules which no persistent rule can be run in between,
+#   Does it suffice, or even help. to have groups of rules which no persistent rule can be run in between,
 #   together with stuff like freshening rules for the stress?
 #
 # > 0.3.1.  
@@ -890,7 +889,7 @@ sub gen_one_rule {
   }
 
   # Not doing assimilation rules (or strippings) since they can't much come out differently.
-  my $threshold = 0;
+  my $threshold = 1;
   if ($kind eq 'default') {
     $threshold = $FS->{features}[$k]{default}[$rest]{value};
   } elsif ($kind eq 'repair') {
@@ -915,25 +914,15 @@ sub gen_one_rule {
   return if $skip_me and !$add_a_condition;
 
   
-  # This had been out front due to an old handling of extra preconditions.  Lazily left so.
-  my $precondition;
-  if ($kind eq 'stripping') {
-    $precondition = $FS->{strippings}[$k]{condition_parsed};
-  } elsif ($kind eq 'default') {
-    $precondition = parse_feature_string($FS->{features}[$k]{default}[$rest]{condition}, 1);
-    $precondition = overwrite $precondition, parse_feature_string($FS->{features}[$k]{requires}, 1)
-        if defined $FS->{features}[$k]{requires};
-    substr($precondition, $k, 1) = 'u';
-  } elsif ($kind eq 'repair') {
-    $precondition = parse_feature_string($FS->{marked}[$k]{condition}, 1);
-  } elsif ($kind =~ /^assimilate/) {
-    $precondition = join ' ', map parse_feature_string($_, 1), split /, */, $d->{condition}, -1;
-  }
-
   my (@resolutions, @weights);
   my $total_base_weight = 0;
 
   if ($kind eq 'default') {
+    my $precondition = parse_feature_string($FS->{features}[$k]{default}[$rest]{condition}, 1);
+    $precondition = overwrite $precondition, parse_feature_string($FS->{features}[$k]{requires}, 1)
+        if defined $FS->{features}[$k]{requires};
+    substr($precondition, $k, 1) = 'u';
+
     for (0..1) {
       my $effects = '.' x @{$FS->{features}}; 
       substr($effects, $k, 1) = $_;
@@ -958,6 +947,8 @@ sub gen_one_rule {
   } 
   
   elsif ($kind eq 'stripping') {
+    my $precondition = $FS->{strippings}[$k]{condition_parsed};
+
     for my $s (@{$FS->{strippings}[$k]{substitute}}) {
       $s =~ /^(.*) *: *(.*)$/;
       my $rule = {
@@ -983,7 +974,7 @@ sub gen_one_rule {
   
   # kinds handled here: qw/assimilate assimilate_related/
   elsif ($kind =~ /^assimilate/) {
-    my @phones = split / /, $precondition;
+    my @phones = map parse_feature_string($_, 1), split /, */, $d->{condition}, -1;
     my $target = $d->{target};
 
     # Randomly pick whether each extra feature is included
@@ -1095,7 +1086,6 @@ sub gen_one_rule {
             $rule->{or_pause}{$e1} = 1;
             $rule->{pause_phone} = $pause_phone;
             substr($rule->{precondition}{$e1}, 0, 1) = 'x'; # ad hoc match prevention
-            # TODO: (proximal) make sure this is working!!
           }
           elsif ($e0 eq '#') { # end of word _allowed_
             $rule->{or_pause}{$e1} = 1;
@@ -1121,7 +1111,29 @@ sub gen_one_rule {
     } # TV
   } # assimilate
 
-  elsif ($kind eq 'repair') {
+  # kinds handled here: qw/repair repair_split/
+  elsif ($kind =~ /^repair/) {
+    my $d;
+    if ($kind eq 'repair_split') {
+      $d = $FS->{marked}[$k]{split}[$rest];
+    } else {
+      $d = $FS->{marked}[$k];
+    }
+
+    # If there are split resolutions, recurse to handle them.  
+    # Note that depth-two splits don't in fact work now.
+    if (defined $d->{split}) {
+      for my $i (0..$#{$d->{split}}) {
+        gen_one_rule($phonology, "repair_split $k $i", %args, dont_skip => 1) 
+            if rand() < $d->{split}[$i]{prob};
+      }
+    }
+
+    my $precondition = parse_feature_string($FS->{marked}[$k]{condition}, 1);
+    my $base_precondition = $precondition;
+    if ($kind eq 'repair_split') {
+      $precondition = overwrite $precondition, parse_feature_string($d->{condition}, 1);
+    }
     my $reqd = add_requirements $precondition;
     
     # Deletion is always available, at low weight, just in case nothing else works.
@@ -1129,8 +1141,13 @@ sub gen_one_rule {
       precondition => {0 => $precondition},
       deletions => [0],
     };
+    my $except;
+    if (defined $d->{except}) {
+      $except = join ' ', map parse_feature_string($_, 1), split /, */, $d->{except};
+      $rule->{except} = {0 => $except};
+    }
     push @resolutions, $rule;
-    push @weights, defined $FS->{marked}[$k]{deletion} ? $FS->{marked}[$k]{deletion} : 1e-12; # last resort!
+    push @weights, defined $d->{deletion} ? $d->{deletion} : 1e-12; # last resort!
 
     my $i = 0;
     my $resolution_type = 0;
@@ -1138,28 +1155,29 @@ sub gen_one_rule {
       my $effects;
       my $base_weight = 0;
       my $no_persist = 0;
-      $no_persist = 1 if defined $FS->{marked}[$k]{phonemic_only};
+      $no_persist = 1 if defined $d->{phonemic_only};
  
       if ($resolution_type == 0) {
         $i = 0, $resolution_type++, next if $i >= length($precondition);
-        $i++, redo if substr($precondition, $i, 1) !~ /[01]/; # only flip actual things in the situation
-        $i++, redo if defined $FS->{features}[$i]{structural};
+        unless (defined $d->{flip}{$FS->{features}[$i]{name}}) {
+          $i++, redo if substr($base_precondition, $i, 1) !~ /[01]/; # only flip actual things in the *base* situation
+          $i++, redo if defined $FS->{features}[$i]{structural};
+        }
         $effects = '.' x length($precondition);
         substr($effects, $i, 1) = (substr($reqd, $i, 1) eq '1' ? '0' : '1');
         # don't turn univalents on (unless specially allowed)
         if (substr($reqd, $i, 1) eq '0' and defined $FS->{features}[$i]{univalent}) {
-          $i++, redo if !defined $FS->{marked}[$k]{flip}{$FS->{features}[$i]{name}};
-          $effects = overwrite($effects, parse_feature_string($FS->{marked}[$k]{univalent_addition}, 1));
-          #$no_persist = 1; #TESTING
+          $i++, redo if !defined $d->{flip}{$FS->{features}[$i]{name}};
+          $effects = overwrite($effects, parse_feature_string($d->{univalent_addition}, 1));
         }
         # Weights for flipping individual features: given in {flip}.
-        $base_weight = (defined $FS->{marked}[$k]{flip}{$FS->{features}[$i]{name}} ? 
-            $FS->{marked}[$k]{flip}{$FS->{features}[$i]{name}} : 1);
+        $base_weight = (defined $d->{flip}{$FS->{features}[$i]{name}} ? 
+            $d->{flip}{$FS->{features}[$i]{name}} : 1);
       } 
 
       elsif ($resolution_type == 1) {
         $i = 0, $resolution_type++, next if $i >= @{$FS->{relations}};
-        # just bail if we're in a stripping condition.
+        # just bail if we're in a stripping condition. --- HERE: why did I do this?
         for my $str (@{$FS->{strippings}}) {
           my $strip_condition = $str->{condition_parsed};
           $i = 0, $resolution_type++, next RESOLUTION_TYPE if $precondition =~ /^$strip_condition$/;
@@ -1180,10 +1198,10 @@ sub gen_one_rule {
         # Weights for doing any complicated feature change: given in {relate_weight},
         # which apply to anything they match.
         $base_weight = $FS->{relations}[$i]{weight};
-        if(defined $FS->{marked}[$k]{related_weight}) {
-          for my $outcome (keys %{$FS->{marked}[$k]{related_weight}}) {
+        if(defined $d->{related_weight}) {
+          for my $outcome (keys %{$d->{related_weight}}) {
             my $f = parse_feature_string($outcome, 1);
-            $base_weight *= $FS->{marked}[$k]{related_weight}{$outcome} if $effects =~ /^$f$/;
+            $base_weight *= $d->{related_weight}{$outcome} if $effects =~ /^$f$/;
           }
         }
       }
@@ -1196,11 +1214,14 @@ sub gen_one_rule {
           # Recastability is filled out below.
          base_weight => $base_weight,
       };
+      if (defined $d->{except}) {
+        $rule->{except} = {0 => $except};
+      }
       if ($threshold < 1) {
         $rule->{cede} = 1-$threshold;
       }
 
-      my $persistence_weight = defined $FS->{marked}[$k]{persist} ? $FS->{marked}[$k]{persist} : $threshold;
+      my $persistence_weight = defined $d->{persist} ? $d->{persist} : $threshold;
       my @variants = persistence_variants $phonology, [$rule, $base_weight], $persistence_weight, 
                                           $no_persist, $args{generable_val};
       for (@variants) {
