@@ -20,6 +20,7 @@ version: "4.0a"
 
 # Coronal to velar after high vowels is attested.  (How to make this perseverate over NC clusters?  A tier??)  Also make sure [t] <> [k] by previous vowel frontness is in.
 # [B\] often has developed from [bu] or [mb)u]
+# velar frication near low
 
 # fricatives and unvoiced resonants sometimes becoming _aspirated_ stops
 
@@ -455,7 +456,7 @@ features:
       - condition: "+voice, -voice -long, +voice" 
         target: 1
         prob: 0.111111
-        extras: {"+resonant 1": 0.166667, "+fricative 1": 0.4, "-fricative 1": 0.1, "-spread_glottis 1": 0.975, "-constricted_glottis 1": 0.975}
+        extras: {"+resonant 1": 0.166667, "+fricative 1": 0.4, "-fricative 1": 0.1, "-spread_glottis 1": 0.975, "-constricted_glottis 1": 0.975, "# 2": 0.025}
       # TODO: put prominence in these vowel devoicing changes.  ??add epenthesis-style for long V to the second
       - condition: "-voice, +voice -long, -voice" 
         target: 1
@@ -1256,6 +1257,7 @@ relations:
   - from: "+resonant"
     to: "+nasal"
     weight: 0.2
+  # TODO: some version of the Spanish [nm mn dn ...] > [lm mr dr ...] changes
 
   - from: "+prenasalised"
     to: "+nasal"
@@ -1307,11 +1309,6 @@ relations:
   - from: "coronal +affricate"
     to: "-affricate -sibilant -lateral"
     weight: 0.333333
-
-  # Uvular stops like to affricate, I think.
-  - from: "dorsal -high -affricate -nasal"
-    to: "+affricate"
-    weight: 0.1
 
   - from: "+high"
     to: "+affricate"
@@ -1654,7 +1651,7 @@ relations:
       - condition: "dorsal +resonant -lateral -tap_or_trill, -syllabic"
         target: 0
         prob: 0.066667
-      - condition: "-syllabic, dorsal +resonant -lateral -tap_or_trillc"
+      - condition: "-syllabic, dorsal +resonant -lateral -tap_or_trill"
         target: 1
         prob: 0.033333
       # chance of glide formation
@@ -1824,6 +1821,21 @@ relations:
         target: 1
         prob: 0.006667
         extras: {"+back 0": 0.25, "-high 0": 0.75, "+low 0": 0.285714}
+
+  - from: "-high"
+    to: "+fricative"
+    weight: 0
+    spread_only: true
+    assimilation:
+      - condition: "dorsal -resonant, dorsal +resonant -lateral -tap_or_trill"
+        target: 0
+        prob: 0.0075
+        extras: {"+low 1": 0.666667, "-ATR 1": 0.75} 
+      - condition: "dorsal +resonant -lateral -tap_or_trill, dorsal -resonant"
+        target: 1
+        prob: 0.0075
+        extras: {"+low 0": 0.666667, "-ATR 0": 0.75}
+          # TODO: matchedness in front-backness for these two
 
   # pinch at the [i] corner of the vowel space: [1] and [I] are close
   - from: "+high -front -back"
