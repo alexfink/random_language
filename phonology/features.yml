@@ -1478,11 +1478,12 @@ relations:
     assimilation:
       - condition: "dorsal +resonant -lateral -tap_or_trill, -retroflex"
         target: 0
-        prob: 0.033333
+        prob: 0.05
+        extras: {"-anterior 1": 0.5}
       - condition: "-syllabic, -retroflex"
         target: 0
-        prob: 0.015
-        extras: {"-resonant 1": 0.6}
+        prob: 0.025
+        extras: {"!dorsal +resonant -lateral -tap_or_trill 1": 0.6, "-anterior 1": 0.5}
 
   - from: "coronal"
     to: "+front"
@@ -1491,7 +1492,8 @@ relations:
     assimilation:
       - condition: "dorsal +resonant -lateral -tap_or_trill, -retroflex"
         target: 0
-        prob: 0.006667
+        prob: 0.033333
+        extras: {"-back 0": 0.8, "-anterior 1": 0.5}
 
   # a labial effect of fronting
   - from: "labial +front"
@@ -2214,14 +2216,6 @@ marked:
     related_weight:
       "labial": 0.01
 
-  # Right now nasal vowels and nasal glides are separately constrained against.
-  # This seems very poor; but I guess it's a necessary consequence of having every constraint have a single resolution, i.e. no conspiracies.
-  - condition: "+syllabic +nasal +high" 
-    prob: 0.5
-    flip:
-     nasal: 2
-     high: 2
-
   - condition: "+nasal +affricate"
     prob: 0.9975
     flip:
@@ -2465,6 +2459,22 @@ marked:
     related_weight:
       "+fricative": 0.05
 
+  - condition: "+nasal +resonant"
+    except: "-high"
+    prob: 0.5
+    flip:
+      nasal: 2
+    split: 
+      - condition: "dorsal +resonant -lateral -tap_or_trill +high"
+        prob: 1
+        flip:
+          high: 64
+          nasal: 64
+          dorsal: 0
+          resonant: 0
+          lateral: 0
+          tap_or_trill: 0
+
   # This change, anyway, should be fairly likely, 'cause it's the route by which I mean to do V~ > VN breaking.
   - condition: "-syllabic +nasal +resonant" 
     prob: 0.444444
@@ -2604,8 +2614,8 @@ marked:
     related_weight:
       "": 0
 
-  # TODO: syllabic is wrong here.  this needs an except
-  - condition: "+pharyngealised +front -syllabic"
+  - condition: "+pharyngealised +front"
+    except: "dorsal +resonant -lateral -tap_or_trill"
     prob: 0.95
 
   - condition: "+pharyngealised +ATR"

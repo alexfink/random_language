@@ -6,7 +6,9 @@
 # and Marcus and UPSID for being proximal sources for various numbers.
 # (A greater proportion of the numbers are wholly fabricated, though!)
 
-# Short-term plan.
+# This code needs to be cleaned up stylistically.
+# Short-term plan for features:
+# - Make the storing of related assimilations not stupid.
 # - We can simplify ``a phone or word-initially''.
 # - Presence of certain contrasts influencing chances of certain assimilations.
 #   (I'm thinking of resonant voice assimilation, and V frontness assim to C.)
@@ -16,22 +18,11 @@
 #   (e.g. trapped resonant, /tl/, increasing sonority sequences in V_V, ...)
 # - Implement some of the assimilations we already have code support for.
 #
-# - Revision of forced non-contrastivity (with providing for noncontrastive stress etc. in mind).
-#   For subsequent stuff I probably do want to have an insertion point below a small number
-#   of groups of rules.  
-#   Closer to the crux of the problem is this: right now, every feature is specified at start_sequences.
-#   But it seems most natural for stress and tone to be allowed not to be marked yet.  
-#   (Probably this is a special behaviour of tiered things.  In languages where they just
-#   play no role at all, I guess there should be a floated-late rule filling them in.)
-#   otgh, I don't see how the pushing-into-phonology I foresee having to do could produce
-#   a description in which a feature was unspecified at start_sequences; the rules which first specify it
-#   would be tempting to push back.
-#   However we do it, we must avoid the situation where pushing back breaks all forced nonconstrastives!
-#   Solving that should also solve the current dilemma.
-#
-#   Does it suffice, or even help. to have groups of rules which no persistent rule can be run in between,
-#   together with stuff like freshening rules for the stress?
-#
+# - Some structure like clusters of rules which act inseparably and persist together
+#   is essential, for surface filters that redistribute a phoneme.  
+#   (Once the bigram tracking and pushing back is in, we might run a pass 
+#   over the phonology and do some of this, as appropriate.
+#   That'll probably take far too long, though.)
 # > 0.3.1.  
 #   After that, should we privilege 
 # (a) advanced inventory tracking, with the bigram transition matrix stuff; or
@@ -501,6 +492,8 @@ sub run_one_rule {
   $changed;
 }
 
+# Persistent rules implement so-called surface filters.  
+
 # Persistence is the default state of affairs for a non-generator rule.
 # The {inactive} property on a rule is a rule number N, at which point this one
 # becomes inactive (it won't run as a resolution when the current rule is >= N).
@@ -516,6 +509,7 @@ sub run_one_rule {
 # it makes no more changes.  This way things like assimilation will work
 # across groups of more than two phones.  It also means we must disallow
 # certain rule types (e.g. a single rule to achieve l...l, r...r > l...r).
+# TODO: whether LtR or RtL needs to be an option here.  
 
 # Only do rules start..end-1, if these are provided.  
 # If passed cleanup => $i, don't even do a single rule but rather just
