@@ -6,24 +6,27 @@
 # and Marcus and UPSID for being proximal sources for various numbers.
 # (A greater proportion of the numbers are wholly fabricated, though!)
 
-# This code needs to be cleaned up stylistically.
+# Proximal plan for cleanliness:
+# - Unify all resolving rules.  Start by eliminating the distinction between
+#   assimilate and assimilate_related.  
+# - Refactoring: make some classes, do some encapsulation, split files out.
 # Short-term plan for features:
-# - Make the storing of related assimilations not stupid.
-# - We can simplify ``a phone or word-initially''.
+# - Out of the first of the above will fall a framework for general constraints against sequences 
+#   (e.g. trapped resonant, /tl/, increasing sonority sequences in V_V, ...)
 # - Presence of certain contrasts influencing chances of certain assimilations.
 #   (I'm thinking of resonant voice assimilation, and V frontness assim to C.)
 #   (also markednesses?  e.g. /b_< b_<_k/ shd be collapsed, and often /v\ w/.
 #    can kluge that with a change in one direction though)
-# - Might have to bite the bullet and do constraints against sequences 
-#   (e.g. trapped resonant, /tl/, increasing sonority sequences in V_V, ...)
 # - Implement some of the assimilations we already have code support for.
-#
+# - Do something to get rid of syllable structures where the coda can have two resonants but never an obstruent.
+# - We can simplify ``a phone or word-initially''.
+# > 0.3.1.  
 # - Some structure like clusters of rules which act inseparably and persist together
 #   is essential, for surface filters that redistribute a phoneme.  
 #   (Once the bigram tracking and pushing back is in, we might run a pass 
 #   over the phonology and do some of this, as appropriate.
 #   That'll probably take far too long, though.)
-# > 0.3.1.  
+#
 #   After that, should we privilege 
 # (a) advanced inventory tracking, with the bigram transition matrix stuff; or
 # (b) new phonology?  (long-distance rules; syllable tracking > moraic stuff)
@@ -104,8 +107,8 @@ sub parse_feature_string {
   return $phone if !defined $_[0];
   my @a = split / /, $_[0];
   for my $f (@a) {
-    if ($f =~ /^([+-])(.*)/) {
-      substr($phone, $feature_indices{$2}, 1) = $1 eq '+' ? '1' : '0'; 
+    if ($f =~ /^([^\w\s])(.*)/) {
+      substr($phone, $feature_indices{$2}, 1) = $1 eq '+' ? '1' : $1 eq '-' ? '0' : $1; 
     } else {
       substr($phone, $feature_indices{$f}, 1) = '1';
     }
@@ -972,137 +975,121 @@ sub gen_one_rule {
     my $target = $d->{target};
 
     # Randomly pick whether each extra feature is included
-    # (rather than actually looping over all 2^n choices).
     my %eselections = map(($_ => 1), grep rand() < (defined $d->{extras}{$_} ? $d->{extras}{$_} : 0), 
                                           keys %{$d->{extras}});
 
-    # Keep this small if you want to finish.  Doesn't work on relations.
+    # The bound_features are only distinct from the further_features in that 
+    # extra preconditions might be inserted for the bound_features.
     my @bound_features = ($k, map $feature_indices{$_}, split / /, 
         defined($d->{bound_features}) ? $d->{bound_features} : '');
 
-    # The capabilities of this for more than one bound feature are not currently used.
-    TV: for my $tv (0..(1<<2*@bound_features)-2) {
-      my @t; my $tv_temp = $tv;
-      while ($tv_temp > 0) {
-        next TV if $tv_temp & 3 == 3;
-        # for things like place which are virtually mutually exclusive:
-        next TV if $tv_temp & 3 == 1 and defined $d->{exclusive}; 
-        push @t, $tv_temp & 3;
-        $tv_temp >>= 2; 
-      }
+    my $effects = '.' x @{$FS->{features}};
+    if ($kind eq 'assimilate') {
+      substr($effects, $_, 1) = $target ? '<' : '>' for @bound_features; 
+    } elsif ($kind eq 'assimilate_related') {
+      $effects = overwrite $effects, parse_feature_string($FS->{relations}[$k]{to}, 1);
+      $phones[1-$target] = overwrite $phones[1-$target], parse_feature_string($FS->{relations}[$k]{from}, 1);
+    }
+    if (defined $d->{further_features}) {
+      substr($effects, $_, 1) = $target ? '<' : '>' for map $feature_indices{$_}, split / /, $d->{further_features}; 
+    }
 
-      my $effects = '.' x @{$FS->{features}};
-      if ($kind eq 'assimilate') {
-        substr($effects, $_, 1) = $target ? '<' : '>' for @bound_features; 
-      } elsif ($kind eq 'assimilate_related') {
-        $effects = overwrite $effects, parse_feature_string($FS->{relations}[$k]{to}, 1);
-        $phones[1-$target] = overwrite $phones[1-$target], parse_feature_string($FS->{relations}[$k]{from}, 1);
+    my $rule = {
+      precondition => {map(($_ => $phones[$_]), 0..$#phones)},
+      effects => {$target => $effects},
+      recastability => 1 - $d->{prob},
+      tag => $tag,
+      cede => 1 - $threshold,
+    };
+    if (defined $d->{constant}) {
+      for (%{$d->{constant}}) {
+        next unless rand() < $d->{constant}{$_}; # may want this to be randomised at some point
+        /^(.*) ([^ ]*)$/;
+        my ($e0, $e1) = ($1, $2);
+        $rule->{effects}{$e1} = overwrite $rule->{effects}{$e1}, parse_feature_string($e0,1);
       }
-      if (defined $d->{further_features}) {
-        substr($effects, $_, 1) = $target ? '<' : '>' for map $feature_indices{$_}, split / /, $d->{further_features}; 
-      }
-      my $rule = {
-        precondition => {map(($_ => $phones[$_]), 0..$#phones)},
-        effects => {$target => $effects},
-        recastability => 1 - $d->{prob},
-        tag => $tag,
-        cede => 1,
-      };
-      if (defined $d->{constant}) {
-        for (%{$d->{constant}}) {
-          next unless rand() < $d->{constant}{$_}; # may want this to be randomised at some point
-          /^(.*) ([^ ]*)$/;
-          my ($e0, $e1) = ($1, $2);
-          $rule->{effects}{$e1} = overwrite $rule->{effects}{$e1}, parse_feature_string($e0,1);
+    }
+    if ($kind eq 'assimilate' and !$d->{no_value_restriction}) {
+      for (0..@bound_features-1) {
+        my $restriction = rand(2.0 + 4.0/(1-$threshold)); # 4 is a magic factor
+        if ($restriction < 2.0) {
+          substr($rule->{precondition}{$target}, $bound_features[$_], 1) = int($restriction)
+              if substr($rule->{precondition}{$target}, $bound_features[$_], 1) eq 'u';
         }
       }
-      # Both the things being spread from and to need to support this feature.  
-      if ($kind eq 'assimilate') {
+    }
+
+    # Both the things being spread from and to need to support this feature.  
+    if ($kind eq 'assimilate') {
+      $rule->{precondition}{$target} = overwrite $rule->{precondition}{$target}, 
+          parse_feature_string($FS->{features}[$k]{requires}, 1);
+      $rule->{precondition}{1-$target} = overwrite $rule->{precondition}{1-$target}, 
+          parse_feature_string($FS->{features}[$k]{requires}, 1);
+    } elsif ($kind eq 'assimilate_related') {
+      for (split / /, $FS->{relations}[$k]{to}) {
+        /^[+-]?(.*)$/;
         $rule->{precondition}{$target} = overwrite $rule->{precondition}{$target}, 
-            parse_feature_string($FS->{features}[$k]{requires}, 1);
+            parse_feature_string($FS->{features}[$feature_indices{$1}]{requires}, 1);
+      }
+      for (split / /, $FS->{relations}[$k]{from}) {
+        /^[+-]?(.*)$/;
         $rule->{precondition}{1-$target} = overwrite $rule->{precondition}{1-$target}, 
-            parse_feature_string($FS->{features}[$k]{requires}, 1);
-      } elsif ($kind eq 'assimilate_related') {
-        for (split / /, $FS->{relations}[$k]{to}) {
-          /^[+-]?(.*)$/;
-          $rule->{precondition}{$target} = overwrite $rule->{precondition}{$target}, 
-              parse_feature_string($FS->{features}[$feature_indices{$1}]{requires}, 1);
-        }
-        for (split / /, $FS->{relations}[$k]{from}) {
-          /^[+-]?(.*)$/;
-          $rule->{precondition}{1-$target} = overwrite $rule->{precondition}{1-$target}, 
-              parse_feature_string($FS->{features}[$feature_indices{$1}]{requires}, 1);
-        }
+            parse_feature_string($FS->{features}[$feature_indices{$1}]{requires}, 1);
       }
-      # But not if it's stripped off.
-      for my $str (@{$FS->{strippings}}) {
-        for my $displ (0,1) { 
-          if ($rule->{precondition}{$displ} =~ /^$str->{condition_parsed}$/) {
-            my $effects = parse_feature_string($str->{strip}, 1);
-            $effects =~ s/1/a/g; # temporary char
-            $rule->{precondition}{$displ} = overwrite $rule->{precondition}{$displ}, $effects;
-            $rule->{precondition}{$displ} =~ s/a/./g;
-          }
+    }
+    # But not if it's stripped off.
+    for my $str (@{$FS->{strippings}}) {
+      for my $displ (0,1) { 
+        if ($rule->{precondition}{$displ} =~ /^$str->{condition_parsed}$/) {
+          my $effects = parse_feature_string($str->{strip}, 1);
+          $effects =~ s/1/a/g; # temporary char
+          $rule->{precondition}{$displ} = overwrite $rule->{precondition}{$displ}, $effects;
+          $rule->{precondition}{$displ} =~ s/a/./g;
         }
       }
-      if (defined $d->{except}) {
-        my %except = %{$d->{except}};
-        $except{$_} = parse_feature_string($except{$_}, 1) for keys %except;
-        $rule->{except} = {%except};
-      }
+    }
+    if (defined $d->{except}) {
+      my %except = %{$d->{except}};
+      $except{$_} = parse_feature_string($except{$_}, 1) for keys %except;
+      $rule->{except} = {%except};
+    }
 
-      my $base_weight = 1;
-      if ($kind eq 'assimilate' and !$d->{no_value_restriction}) {
-        for (0..@bound_features-1) {
-          $t[$_] = 0 if !defined $t[$_];
-          if ($t[$_] != 2) {
-            substr($rule->{precondition}{$target}, $bound_features[$_], 1) = $t[$_]
-                if substr($rule->{precondition}{$target}, $bound_features[$_], 1) eq 'u';
-            $base_weight *= 1-$threshold;
-          }
+    my $pause_phone;
+    @_ = split / +([0-9.]+) */, $d->{pause_phone};
+    if (scalar @_ == 1) {
+      $pause_phone = parse_feature_string($d->{pause_phone});
+    } elsif (scalar @_ > 1) {
+      $pause_phone = parse_feature_string weighted_one_of @_;
+    }
+
+    # As a corollary of the sort here, '-' assignments follow '+' ones.
+    for my $e (sort keys %{$d->{extras}}) {
+      if (defined $eselections{$e}) {
+        $e =~ /^(.*) ([^ ]*)$/;
+        my ($e0, $e1) = ($1, $2);
+        if ($e0 eq '##') { # ad hoc notation for _only_ at extremum of word
+          $rule->{or_pause}{$e1} = 1;
+          $rule->{pause_phone} = $pause_phone;
+          substr($rule->{precondition}{$e1}, 0, 1) = 'x'; # ad hoc match prevention
+        }
+        elsif ($e0 eq '#') { # end of word _allowed_
+          $rule->{or_pause}{$e1} = 1;
+          $rule->{pause_phone} = $pause_phone;
+        } elsif ($e0 =~ /^!/) {
+          $rule->{except}{$e1} .= ' ' if defined $rule->{except}{$e1};
+          $rule->{except}{$e1} .= parse_feature_string(substr($e0,1),1);
+        } else {
+          $rule->{precondition}{$e1} = overwrite $rule->{precondition}{$e1}, parse_feature_string($e0,1);
         }
       }
+    }
 
-      my $pause_phone;
-      @_ = split / +([0-9.]+) */, $d->{pause_phone};
-      if (scalar @_ == 1) {
-        $pause_phone = parse_feature_string($d->{pause_phone});
-      } elsif (scalar @_ > 1) {
-        $pause_phone = parse_feature_string weighted_one_of @_;
-      }
-
-      # As a corollary of the sort here, '-' assignments follow '+' ones.
-      for my $e (sort keys %{$d->{extras}}) {
-        if (defined $eselections{$e}) {
-          $e =~ /^(.*) ([^ ]*)$/;
-          my ($e0, $e1) = ($1, $2);
-          if ($e0 eq '##') { # ad hoc notation for _only_ at extremum of word
-            $rule->{or_pause}{$e1} = 1;
-            $rule->{pause_phone} = $pause_phone;
-            substr($rule->{precondition}{$e1}, 0, 1) = 'x'; # ad hoc match prevention
-          }
-          elsif ($e0 eq '#') { # end of word _allowed_
-            $rule->{or_pause}{$e1} = 1;
-            $rule->{pause_phone} = $pause_phone;
-          } elsif ($e0 =~ /^!/) {
-            $rule->{except}{$e1} .= ' ' if defined $rule->{except}{$e1};
-            $rule->{except}{$e1} .= parse_feature_string(substr($e0,1),1);
-          } else {
-            $rule->{precondition}{$e1} = overwrite $rule->{precondition}{$e1}, parse_feature_string($e0,1);
-          }
-        }
-      }
-
-      my @variants = persistence_variants $phonology, [$rule, $base_weight], $threshold, 
-                                          0, $args{generable_val};
-      for (@variants) {
-        push @resolutions, $_->[0];
-        push @weights, $_->[1];
-      }
-
-      last if $kind eq 'assimilate_related';
-      last if $kind eq 'assimilate' and $d->{no_value_restriction};
-    } # TV
+    my @variants = persistence_variants $phonology, [$rule, 1], $threshold, 
+                                        0, $args{generable_val};
+    for (@variants) {
+      push @resolutions, $_->[0];
+      push @weights, $_->[1];
+    }
   } # assimilate
 
   # kinds handled here: qw/repair repair_split/
@@ -1171,7 +1158,7 @@ sub gen_one_rule {
 
       elsif ($resolution_type == 1) {
         $i = 0, $resolution_type++, next if $i >= @{$FS->{relations}};
-        # just bail if we're in a stripping condition. --- HERE: why did I do this?
+        # just bail if we're in a stripping condition. --- why did I do this?
         for my $str (@{$FS->{strippings}}) {
           my $strip_condition = $str->{condition_parsed};
           $i = 0, $resolution_type++, next RESOLUTION_TYPE if $precondition =~ /^$strip_condition$/;

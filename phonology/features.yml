@@ -1,7 +1,9 @@
 ---
-version: "4.0a"
+version: "5"
 
 # Also see end of file for more things TODO.
+
+# TODO: colored glottal stop > dorsal resonant shd yield voiceds.
 
 # one-time coronal palatalisation rule?
 
@@ -1967,6 +1969,9 @@ relations:
         prob: 0.015625
         extras: {"-ATR 1": 0.4}
 
+
+
+# HEREHEREHEREHEREHEREHEREHEREHERE: need a new {assimilations}
 
 
 
