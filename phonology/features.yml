@@ -7,7 +7,7 @@ version: "5"
 
 # one-time coronal palatalisation rule?
 
-# plosive phonation neutralisation before obstruents -- sometimes, like finally, to aspirates or glottaliseds (often pause alone, so that wants a code change)
+# plosive phonation neutralisation before obstruents -- sometimes, like finally, to aspirates or glottaliseds
 # palatalisation, labialisation, velarisation are release-timed so should be losable finally or pre-obstruentally (like that phonation).  right now I have it just assimilable, not losable
 # retroflexion and apicality most prominent in VC contexts!  they can neutralise initially! DONE
 # collect all the flat: velarised, pharyngealised, labialised, retroflex.  for instance, is [tu] > [t_wu] > [t`u] in yet? DONE
@@ -895,8 +895,7 @@ relations:
     to: "+high +front -ATR"
     weight: 0.333333
 
-  # TODO: (proximal) this isn't restricted to front
-  - from: "+high +front -ATR"
+  - from: "+high -ATR"
     to: "+high -front -back"
     weight: 0.111111
 
@@ -1025,7 +1024,7 @@ assimilations:
     prob: 0.1
     extras: {"+voice 0": 0.875, "+nasal 0": 0.4, "+fricative 0": 0.25, "-tap_or_trill 1": 0.666667}
     resolve: {"r }resonant >nasal >lateral >tap_or_trill 0": 1}
-  # TODO: (proximal) in the other direction, things like stopping in nasal+glide, unless that can be folded in with nasal+fricative
+
   # most resonants can metathesise, so maybe this needs to be at a distance?
 
   - condition: "-resonant, +nasal"
@@ -1049,13 +1048,6 @@ assimilations:
     prob: 0.125
     extras: {"+resonant 0": 0.833333, "+syllabic 1": 0.75, "dorsal -lateral -tap_or_trill 1": 0.666667, "!-syllabic +resonant 1": 0.2} 
     resolve: {"r {nasal 1": 1}
-  # The next change has the problem that it can bypass prenasals...
-
-  - condition: "-syllabic +nasal, -syllabic -nasal"
-    except: {1: "dorsal +resonant -lateral -tap_or_trill"}
-    prob: 0.028 # TODO: epenthesis should be more common a resolution
-    extras: {"+voice 1": 0.166667, "-voice 1": 0.142857, "+resonant 1": 0.75, "-resonant 1": 0.125, "-resonant +fricative 1": 0.285714} # the last for *[ns] stuff
-    resolve: {"r }nasal >resonant 0": 1} # nasals are resonantoid
 
   - condition: "-syllabic -nasal, -syllabic +nasal"
     except: {0: "dorsal +resonant -lateral -tap_or_trill"}
@@ -1063,6 +1055,23 @@ assimilations:
     extras: {"+voice 0": 0.166667, "-voice 0": 0.142857, "+resonant 0": 0.75, "-resonant 0": 0.125}
     resolve: {"r {nasal <resonant 1": 1}
   # should non-nasality ever assimilate?  [l~l] > [ll] doesn't look unreasonable
+
+  # The next change has the problem that it can bypass prenasals...
+  - condition: "-syllabic +nasal, -syllabic -nasal"
+    except: {1: "dorsal +resonant -lateral -tap_or_trill"}
+    prob: 0.028 # TODO: epenthesis should be more common a resolution
+    extras: {"+voice 1": 0.166667, "-voice 1": 0.142857, "+resonant 1": 0.75, "-resonant 1": 0.125, "-resonant +fricative 1": 0.285714} # the last for *[ns] stuff
+    resolve: {"r }nasal >resonant 0": 1} # nasals are resonantoid
+
+  # *[ns] etc.
+  - condition: "+nasal -syllabic, -syllabic"
+    except: {0: "-fricative"}
+    prob: 0.142857
+    extras: {"+fricative 1": 0.8, "!+resonant 1": 0.5, "!dorsal +resonant -lateral -tap_or_trill 1": 0.75}
+    resolve: 
+      "r -dorsal -coronal -labial 0": 1
+      "r -resonant -fricative 1": 1
+      # epenthesis!
 
   # nasal dissimilation (e.g. in Spanish sequences).  assim and dissim at a distance
 
@@ -1151,8 +1160,8 @@ assimilations:
     except: {1: "+resonant"}
     prob: 0.6
     extras: {"-nasal 0": 0.975, "# 1": 0.25}
+    pause_phone: "-spread_glottis 11 +spread_glottis 1"
     resolve: {"r }spread_glottis 0": 1}
-  # TODO: (proximal) there are lots of examples of final voiceless stop _aspiration_ (Yakut is just one), and perhaps even neutralisation to aspiration in coda!
 
   - condition: ", -resonant"
     except: {0: "+resonant"}
@@ -1207,6 +1216,7 @@ assimilations:
     except: {1: "+resonant"}
     prob: 0.6
     extras: {"-nasal 1": 0.9, "# 1": 0.125}
+    pause_phone: "-constricted_glottis 6 +constricted_glottis 1"
     resolve: {"r }constricted_glottis 0": 1}
 
   - condition: ", -resonant -nasal"
@@ -1797,12 +1807,6 @@ assimilations:
     resolve: {"r +fricative 1": 1}
       # TODO: matchedness in front-backness for the above two
 
-  - condition: "+nasal -syllabic, -syllabic"
-    except: {0: "-fricative"}
-    prob: 0.066667
-    extras: {"+fricative 1": 0.8, "!+resonant 1": 0.5, "!dorsal +resonant -lateral -tap_or_trill 1": 0.75}
-    resolve: {"r -dorsal -coronal -labial 0": 1}
-
   # rhinoglottophilia
   - condition: "+resonant, -dorsal -coronal -labial"
     prob: 0.0125
@@ -2198,7 +2202,6 @@ marked:
       "-dorsal -coronal -labial": 0
 
   # We used to see vl resonant > stop too much.  But I think I curbed that somehow.
-  # TODO: (proximal) tilt this against voiceless nasals
   - condition: "+resonant -voice"
     prob: 0.9375
     phonemic_only: true
