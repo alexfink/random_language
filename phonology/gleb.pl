@@ -17,7 +17,7 @@
 #   (I'm thinking of resonant voice assimilation, and V frontness assim to C.)
 #   (also markednesses?  e.g. /b_< b_<_k/ shd be collapsed, and often /v\ w/.
 #    can kluge that with a change in one direction though)
-# - Implement some of the assimilations we already have code support for.
+# - Implement some of the assimilations we already have code support for (e.g. final aspiration).
 # - Do something to get rid of syllable structures where the coda can have two resonants but never an obstruent.
 # - We can simplify ``a phone or word-initially''.
 # > 0.3.1.  
@@ -869,7 +869,7 @@ sub gen_one_rule {
   my ($phonology, $tag) = (shift, shift); 
   my %args = @_;
   my ($kind, $k, $rest) = split / /, $tag;
-  #print "[" . scalar @$phonology . "] tag is $tag\n"; # debug
+  # print STDERR "[" . scalar @$phonology . "] tag is $tag\n"; # debug
 
   if ($kind eq 'default' and !defined $rest) {
     for my $i (0..@{$FS->{features}[$k]{default}}-1) {
@@ -878,21 +878,14 @@ sub gen_one_rule {
     return;
   }
 
-  # Where the data describing this thing is appended.  Used for assimilation so far.
-  my $d; 
-  if ($kind =~ /^assimilate/) {
-    $d = $FS->{features}[$k]{assimilation}[$rest] if $kind eq 'assimilate';
-    $d = $FS->{relations}[$k]{assimilation}[$rest] if $kind eq 'assimilate_related';
-  }
-
   # Not doing assimilation rules (or strippings) since they can't much come out differently.
   my $threshold = 1;
   if ($kind eq 'default') {
     $threshold = $FS->{features}[$k]{default}[$rest]{value};
   } elsif ($kind eq 'repair') {
     $threshold = $FS->{marked}[$k]{prob};
-  } elsif ($kind =~ /^assimilate/) {
-    $threshold = $d->{prob};
+  } elsif ($kind eq 'assimilation') {
+    $threshold = $FS->{assimilations}[$k]{prob};
   }
 
   my $initial_threshold = $threshold; # e.g. for things which are more unlikely than marked, in a way that feature choice can't handle
@@ -901,7 +894,7 @@ sub gen_one_rule {
   }
 
   my $skip_me = 0;
-  if (!$args{dont_skip} and ($kind eq 'repair' or $kind =~ /^assimilate/)) {
+  if (!$args{dont_skip} and ($kind eq 'repair' or $kind eq 'assimilation')) {
     $skip_me = (rand() > $initial_threshold);
   }
   my $add_a_condition = 0;
@@ -969,89 +962,21 @@ sub gen_one_rule {
     return;
   } 
   
-  # kinds handled here: qw/assimilate assimilate_related/
-  elsif ($kind =~ /^assimilate/) {
+  elsif ($kind eq 'assimilation') {
+    my $d = $FS->{assimilations}[$k];
     my @phones = map parse_feature_string($_, 1), split /, */, $d->{condition}, -1;
-    my $target = $d->{target};
 
-    # Randomly pick whether each extra feature is included
-    my %eselections = map(($_ => 1), grep rand() < (defined $d->{extras}{$_} ? $d->{extras}{$_} : 0), 
-                                          keys %{$d->{extras}});
-
-    # The bound_features are only distinct from the further_features in that 
-    # extra preconditions might be inserted for the bound_features.
-    my @bound_features = ($k, map $feature_indices{$_}, split / /, 
-        defined($d->{bound_features}) ? $d->{bound_features} : '');
-
-    my $effects = '.' x @{$FS->{features}};
-    if ($kind eq 'assimilate') {
-      substr($effects, $_, 1) = $target ? '<' : '>' for @bound_features; 
-    } elsif ($kind eq 'assimilate_related') {
-      $effects = overwrite $effects, parse_feature_string($FS->{relations}[$k]{to}, 1);
-      $phones[1-$target] = overwrite $phones[1-$target], parse_feature_string($FS->{relations}[$k]{from}, 1);
-    }
-    if (defined $d->{further_features}) {
-      substr($effects, $_, 1) = $target ? '<' : '>' for map $feature_indices{$_}, split / /, $d->{further_features}; 
-    }
-
-    my $rule = {
+    my %base_rule = (
       precondition => {map(($_ => $phones[$_]), 0..$#phones)},
-      effects => {$target => $effects},
       recastability => 1 - $d->{prob},
       tag => $tag,
       cede => 1 - $threshold,
-    };
-    if (defined $d->{constant}) {
-      for (%{$d->{constant}}) {
-        next unless rand() < $d->{constant}{$_}; # may want this to be randomised at some point
-        /^(.*) ([^ ]*)$/;
-        my ($e0, $e1) = ($1, $2);
-        $rule->{effects}{$e1} = overwrite $rule->{effects}{$e1}, parse_feature_string($e0,1);
-      }
-    }
-    if ($kind eq 'assimilate' and !$d->{no_value_restriction}) {
-      for (0..@bound_features-1) {
-        my $restriction = rand(2.0 + 4.0/(1-$threshold)); # 4 is a magic factor
-        if ($restriction < 2.0) {
-          substr($rule->{precondition}{$target}, $bound_features[$_], 1) = int($restriction)
-              if substr($rule->{precondition}{$target}, $bound_features[$_], 1) eq 'u';
-        }
-      }
-    }
+    ); 
 
-    # Both the things being spread from and to need to support this feature.  
-    if ($kind eq 'assimilate') {
-      $rule->{precondition}{$target} = overwrite $rule->{precondition}{$target}, 
-          parse_feature_string($FS->{features}[$k]{requires}, 1);
-      $rule->{precondition}{1-$target} = overwrite $rule->{precondition}{1-$target}, 
-          parse_feature_string($FS->{features}[$k]{requires}, 1);
-    } elsif ($kind eq 'assimilate_related') {
-      for (split / /, $FS->{relations}[$k]{to}) {
-        /^[+-]?(.*)$/;
-        $rule->{precondition}{$target} = overwrite $rule->{precondition}{$target}, 
-            parse_feature_string($FS->{features}[$feature_indices{$1}]{requires}, 1);
-      }
-      for (split / /, $FS->{relations}[$k]{from}) {
-        /^[+-]?(.*)$/;
-        $rule->{precondition}{1-$target} = overwrite $rule->{precondition}{1-$target}, 
-            parse_feature_string($FS->{features}[$feature_indices{$1}]{requires}, 1);
-      }
-    }
-    # But not if it's stripped off.
-    for my $str (@{$FS->{strippings}}) {
-      for my $displ (0,1) { 
-        if ($rule->{precondition}{$displ} =~ /^$str->{condition_parsed}$/) {
-          my $effects = parse_feature_string($str->{strip}, 1);
-          $effects =~ s/1/a/g; # temporary char
-          $rule->{precondition}{$displ} = overwrite $rule->{precondition}{$displ}, $effects;
-          $rule->{precondition}{$displ} =~ s/a/./g;
-        }
-      }
-    }
     if (defined $d->{except}) {
       my %except = %{$d->{except}};
       $except{$_} = parse_feature_string($except{$_}, 1) for keys %except;
-      $rule->{except} = {%except};
+      $base_rule{except} = {%except};
     }
 
     my $pause_phone;
@@ -1061,36 +986,98 @@ sub gen_one_rule {
     } elsif (scalar @_ > 1) {
       $pause_phone = parse_feature_string weighted_one_of @_;
     }
-
-    # As a corollary of the sort here, '-' assignments follow '+' ones.
+    # As a corollary of the sort here, '-' assignments follow '+' ones.  TODO: make this saner?
     for my $e (sort keys %{$d->{extras}}) {
-      if (defined $eselections{$e}) {
+      if (rand() < $d->{extras}{$e}) {
         $e =~ /^(.*) ([^ ]*)$/;
         my ($e0, $e1) = ($1, $2);
         if ($e0 eq '##') { # ad hoc notation for _only_ at extremum of word
-          $rule->{or_pause}{$e1} = 1;
-          $rule->{pause_phone} = $pause_phone;
-          substr($rule->{precondition}{$e1}, 0, 1) = 'x'; # ad hoc match prevention
-        }
-        elsif ($e0 eq '#') { # end of word _allowed_
-          $rule->{or_pause}{$e1} = 1;
-          $rule->{pause_phone} = $pause_phone;
+          $base_rule{or_pause}{$e1} = 1;
+          $base_rule{pause_phone} = $pause_phone;
+          substr($base_rule{precondition}{$e1}, 0, 1) = 'x'; # ad hoc match prevention
+        } elsif ($e0 eq '#') { # end of word _allowed_
+          $base_rule{or_pause}{$e1} = 1;
+          $base_rule{pause_phone} = $pause_phone;
         } elsif ($e0 =~ /^!/) {
-          $rule->{except}{$e1} .= ' ' if defined $rule->{except}{$e1};
-          $rule->{except}{$e1} .= parse_feature_string(substr($e0,1),1);
+          $base_rule{except}{$e1} .= ' ' if defined $base_rule{except}{$e1};
+          $base_rule{except}{$e1} .= parse_feature_string(substr($e0,1),1);
         } else {
-          $rule->{precondition}{$e1} = overwrite $rule->{precondition}{$e1}, parse_feature_string($e0,1);
+          $base_rule{precondition}{$e1} = overwrite $base_rule{precondition}{$e1}, parse_feature_string($e0,1);
         }
       }
     }
 
-    my @variants = persistence_variants $phonology, [$rule, 1], $threshold, 
-                                        0, $args{generable_val};
-    for (@variants) {
-      push @resolutions, $_->[0];
-      push @weights, $_->[1];
+    while (($_, my $weight) = each %{$d->{resolve}}) {
+      /^([^ ]*) +(.*)$/;
+      my ($reskind, $arg) = ($1, $2);
+
+      my %rule = %base_rule; 
+
+      if ($reskind eq 'r') { # resolve as specified
+        my @effects_strings = split /, +/, $arg;
+        my %effects = ();
+        for (@effects_strings) {
+          /^(.*) +([0-9]*)$/;
+          my ($effect, $target) = ($1, $2);
+          my $parsed_effect = parse_feature_string($effect, 1);
+
+          for (0..length($effects{$target})-1) {
+            if (substr($parsed_effect, $_, 1) =~ /[{}]/) {
+              my $restriction = rand(2.0 + 4.0/(1-$threshold)); # 4 is a magic factor
+              if ($restriction < 2.0) {
+                substr($rule{precondition}{$target}, $_, 1) = int($restriction)
+                    if substr($rule{precondition}{$target}, $_, 1) eq 'u';
+              }
+            }
+          }
+          $parsed_effect =~ y/{}/<>/;
+
+          # In case of assimilation, both the things being spread from and to need to support the feature,
+          # unless assimilation in that feature as well assures that this is unnecessary.  
+          for (0..length($parsed_effect)-1) {
+            if (substr($parsed_effect, $_, 1) ne '.') {
+              my $requirements = parse_feature_string($FS->{features}[$_]{requires}, 1);
+              for my $i (0..length($requirements)-1) {
+                substr($requirements, $i, 1) = '.'
+                    if substr($parsed_effect, $_, 1) =~ /[<>]/ 
+                    and substr($parsed_effect, $i, 1) eq substr($parsed_effect, $_, 1);
+              }
+              $rule{precondition}{$target} = overwrite $rule{precondition}{$target}, $requirements;
+              if (substr($parsed_effect, $_, 1) =~ /[<>]/) {
+                my $source = (substr($parsed_effect, $_, 1) eq '>') ? $target + 1 : $target - 1;
+                $rule{precondition}{$source} = overwrite $rule{precondition}{$source}, $requirements;
+              }
+            }
+          }
+          
+          $effects{$target} = $parsed_effect;
+        }
+
+        # But not if it's stripped off.
+        for my $str (@{$FS->{strippings}}) {
+          for my $displ (keys %{$rule{precondition}}) { 
+            if ($rule{precondition}{$displ} =~ /^$str->{condition_parsed}$/) {
+              my $effect = parse_feature_string($str->{strip}, 1);
+              $effect =~ s/1/a/g; # temporary char
+              $rule{precondition}{$displ} = overwrite $rule{precondition}{$displ}, $effect;
+              $rule{precondition}{$displ} =~ s/a/./g;
+            }
+          }
+        }
+
+        $rule{effects} = \%effects;
+      } #r
+
+      my @variants = persistence_variants $phonology, [\%rule, 1], $threshold, 
+                                          0, $args{generable_val};
+      my $total_weight = 0;
+      $total_weight += $_->[1] for @variants;
+      for (@variants) {
+        push @resolutions, $_->[0];
+        push @weights, $_->[1] * $weight / $total_weight;
+      }
     }
-  } # assimilate
+  } # assimilation
 
   # kinds handled here: qw/repair repair_split/
   elsif ($kind =~ /^repair/) {
@@ -1634,8 +1621,7 @@ sub gen_phonology {
     }
     push @{$repair_rule_tags[$when]}, "repair $k" unless defined $FS->{marked}[$k]{phonemic_only};
   }
-  my @assim_tags = ((map "assimilate $_", (0..@{$FS->{features}}-1)), 
-                    (map "assimilate_related $_", (0..@{$FS->{relations}}-1)));
+  my @assim_tags = ((map "assimilation $_", (0..@{$FS->{assimilations}}-1)));
   for my $i (0..@assim_tags-1) {
     my $j = $i + int rand(@assim_tags - $i);
     $_ = $assim_tags[$i]; 
@@ -1655,16 +1641,7 @@ sub gen_phonology {
     push @rule_tags, "repair $k" if defined $FS->{marked}[$k]{phonemic_only};
   }
   push @rule_tags, '#'; # false tag for end of phoneme straightening-out
-  for my $tag (@assim_tags) {
-    my ($kind, $k) = split / /, $tag, 2;
-    my $bound = 0;
-    if ($kind eq 'assimilate' and defined $FS->{features}[$k]{assimilation}) {
-      $bound = @{$FS->{features}[$k]{assimilation}};
-    } elsif ($kind eq 'assimilate_related' and defined $FS->{relations}[$k]{assimilation}) {
-      $bound = @{$FS->{relations}[$k]{assimilation}};
-    }
-    push @rule_tags, map "$tag $_", 0..$bound-1;
-  }
+  push @rule_tags, @assim_tags;
 
   my $start_sequences; # end of rules that pertain only to individual segments
   for my $tag (@rule_tags) {
