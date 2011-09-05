@@ -7,8 +7,8 @@ version: "5"
 
 # one-time coronal palatalisation rule?
 
-# plosive phonation neutralisation before obstruents -- sometimes, like finally, to aspirates or glottaliseds
-# palatalisation, labialisation, velarisation are release-timed so should be losable finally or pre-obstruentally (like that phonation).  right now I have it just assimilable, not losable
+# plosive phonation neutralisation before obstruents -- sometimes, like finally, to aspirates or glottaliseds. DONE
+# palatalisation, labialisation, velarisation are release-timed so should be losable finally or pre-obstruentally (like that phonation).  right now I have it just assimilable, not losable. (proximal) using alternate resolutions
 # retroflexion and apicality most prominent in VC contexts!  they can neutralise initially! DONE
 # collect all the flat: velarised, pharyngealised, labialised, retroflex.  for instance, is [tu] > [t_wu] > [t`u] in yet? DONE
 # Blevins knows of no cases of V-coloring-C coarticulatory effects in pharyngealiseation (DONE), creaky or breathy (DONE), or rhoticity (really?)
@@ -22,7 +22,7 @@ version: "5"
 
 # Coronal to velar after high vowels is attested.  (How to make this perseverate over NC clusters?  A tier??)  Also make sure [t] <> [k] by previous vowel frontness is in.
 # [B\] often has developed from [bu] or [mb)u]
-# velar frication near low
+# velar frication near low. DONE I think
 
 # fricatives and unvoiced resonants sometimes becoming _aspirated_ stops
 
@@ -1161,7 +1161,10 @@ assimilations:
     prob: 0.6
     extras: {"-nasal 0": 0.975, "# 1": 0.25}
     pause_phone: "-spread_glottis 11 +spread_glottis 1"
-    resolve: {"r }spread_glottis 0": 1}
+    resolve: 
+      "r }spread_glottis 0": 1
+      "r -spread_glottis 0": 0.125 # sometimes just neutralise
+      "r +spread_glottis 0": 0.011364
 
   - condition: ", -resonant"
     except: {0: "+resonant"}
@@ -1217,7 +1220,10 @@ assimilations:
     prob: 0.6
     extras: {"-nasal 1": 0.9, "# 1": 0.125}
     pause_phone: "-constricted_glottis 6 +constricted_glottis 1"
-    resolve: {"r }constricted_glottis 0": 1}
+    resolve: 
+      "r }constricted_glottis 0": 1
+      "r -constricted_glottis 0": 0.125 # sometimes just neutralise
+      "r +constricted_glottis 0": 0.020833
 
   - condition: ", -resonant -nasal"
     except: {0: "+resonant"}
@@ -2431,6 +2437,8 @@ marked:
           resonant: 0
           lateral: 0
           tap_or_trill: 0
+        related_weight:
+          "": 0.1
 
   # This change, anyway, should be fairly likely, 'cause it's the route by which I mean to do V~ > VN breaking.
   - condition: "-syllabic +nasal +resonant" 
