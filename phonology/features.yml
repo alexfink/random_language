@@ -1467,12 +1467,12 @@ assimilations:
 
   - condition: "-syllabic, dorsal +resonant -lateral -tap_or_trill"
     prob: 0.06
-    extras: {"+round 1": 0.95, "dorsal 0": 0.6, "+high 1": 0.5, "-low 1": 0.5}
+    extras: {"+round 1": 0.95, "dorsal 0": 0.7, "+high 1": 0.5, "-low 1": 0.5}
     resolve: {"r }round 0": 1}
 
   - condition: "dorsal +resonant -lateral -tap_or_trill, -syllabic"
     prob: 0.06
-    extras: {"+round 0": 0.95, "dorsal 1": 0.6, "+high 0": 0.5, "-low 0": 0.5}
+    extras: {"+round 0": 0.95, "dorsal 1": 0.7, "+high 0": 0.5, "-low 0": 0.5}
     resolve: {"r {round 1": 1}
 
   - condition: "-syllabic, dorsal +resonant -lateral -tap_or_trill"
