@@ -7,8 +7,6 @@
 # (A greater proportion of the numbers are wholly fabricated, though!)
 
 # Proximal plan for cleanliness:
-# - Unify all resolving rules.  Start by eliminating the distinction between
-#   assimilate and assimilate_related.  
 # - Refactoring: make some classes, do some encapsulation, split files out.
 # Short-term plan for features:
 # - Out of the first of the above will fall a framework for general constraints against sequences 
@@ -17,15 +15,17 @@
 #   (I'm thinking of resonant voice assimilation, and V frontness assim to C.)
 #   (also markednesses?  e.g. /b_< b_<_k/ shd be collapsed, and often /v\ w/.
 #    can kluge that with a change in one direction though)
-# - Implement some of the assimilations we already have code support for (e.g. final aspiration).
-# - Do something to get rid of syllable structures where the coda can have two resonants but never an obstruent.
+# - Implement some of the assimilations we already have code support for.
+# - Do something to get rid of syllable structures where the coda can have two resonants 
+#   but never an obstruent (3327079296 presently).
+# - Coronals shouldn't front vowels, nor labials round them, etc., unless more obvious sources do too.
 # - We can simplify ``a phone or word-initially''.
 # > 0.3.1.  
-# - Some structure like clusters of rules which act inseparably and persist together
-#   is essential, for surface filters that redistribute a phoneme.  
-#   (Once the bigram tracking and pushing back is in, we might run a pass 
-#   over the phonology and do some of this, as appropriate.
-#   That'll probably take far too long, though.)
+# - For surface filters that redistribute a phoneme, we need rules which
+#   bar running of earlier persistent rules after first passing them in applying sound changes.
+#   This way, the second always runs immediately after the first.
+#   Other than this, these clusters of rules need no unusual properties
+#   (e.g. they can be pushed back normally.)
 #
 #   After that, should we privilege 
 # (a) advanced inventory tracking, with the bigram transition matrix stuff; or
@@ -962,10 +962,33 @@ sub gen_one_rule {
     return;
   } 
   
-  elsif ($kind eq 'assimilation') {
-    my $d = $FS->{assimilations}[$k];
-    my @phones = map parse_feature_string($_, 1), split /, */, $d->{condition}, -1;
+  elsif ($kind =~ /^assimilation/ or $kind =~ /^repair/) { # TESTING
+    my $unsplit_d;
+    if ($kind =~ /^assimilation/) {
+      $unsplit_d = $FS->{assimilations}[$k];
+    } elsif ($kind =~ /^repair/) {
+      $unsplit_d = $FS->{marked}[$k];
+    }
+    my $d;
+    if ($kind =~ /_split$/) {
+      $d = $unsplit_d->{split}[$rest];
+    } else {
+      $d = $unsplit_d;
+    }
 
+    # If there are split resolutions, recurse to handle them.  
+    # Recursive splits don't in fact work, as this is currently implemented.
+    if (defined $d->{split}) {
+      for my $i (0..$#{$d->{split}}) {
+        gen_one_rule($phonology, "${kind}_split $k $i", %args, dont_skip => 1) 
+            if rand() < $d->{split}[$i]{prob};
+      }
+    }
+
+    # the condition on a split is further to the condition on the parent
+    my @unsplit_phones = map parse_feature_string($_, 1), split /, */, $unsplit_d->{condition}, -1;
+    my @phones = map parse_feature_string($_, 1), split /, */, $d->{condition}, -1;
+    $phones[$_] = overwrite $unsplit_phones[$_], $phones[$_] for 0..$#phones;
     my %base_rule = (
       precondition => {map(($_ => $phones[$_]), 0..$#phones)},
       recastability => 1 - $d->{prob},
@@ -975,7 +998,9 @@ sub gen_one_rule {
 
     if (defined $d->{except}) {
       my %except = %{$d->{except}};
-      $except{$_} = parse_feature_string($except{$_}, 1) for keys %except;
+      for my $displ (keys %except) {
+        $except{$displ} = join ' ', map parse_feature_string($_, 1), split /, */, $d->{except}{$displ};
+      }
       $base_rule{except} = {%except};
     }
 
@@ -1007,13 +1032,24 @@ sub gen_one_rule {
       }
     }
 
-    while (($_, my $weight) = each %{$d->{resolve}}) {
+    # {resolve} is a weight-hash of possible resolutions, whose keys are of the form "$operation $argument".
+    # 
+    # If the resolution part isn't written, we will resolve phone 0 freely.
+    # (This is intended for marked single phoneme rules.  In particular, the last-resort deletion
+    # that these rules once had is now no more.)
+    my %resolutions;
+    %resolutions = %{$d->{resolve}} if defined %{$d->{resolve}};
+    $resolutions{'free 0'} = 1 unless keys %resolutions;
+
+    while (($_, my $weight) = each %resolutions) {
       /^([^ ]*) +(.*)$/;
       my ($reskind, $arg) = ($1, $2);
 
       my %rule = %base_rule; 
+      my @variants = (); # where to put the generated rules
 
-      if ($reskind eq 'r') { # resolve as specified
+      # resolve as specified
+      if ($reskind eq 'r') {
         my @effects_strings = split /, +/, $arg;
         my %effects = ();
         for (@effects_strings) {
@@ -1066,10 +1102,108 @@ sub gen_one_rule {
         }
 
         $rule{effects} = \%effects;
+        push @variants, persistence_variants $phonology, [\%rule, 1], $threshold, 
+                                             0, $args{generable_val};
       } #r
 
-      my @variants = persistence_variants $phonology, [\%rule, 1], $threshold, 
-                                          0, $args{generable_val};
+      elsif ($reskind eq 'delete') {
+        push @{$rule{deletions}}, $arg;
+        push @variants, [\%rule, 1];
+      } #delete
+
+      # Resolve the named phone in the ways listed in {flip} and {related_weight}.
+      # In {flip} is a hash of single features to be flipped, with multiplicative weights;
+      # in {related_weight} is a hash of multiplicative weights applying to resolutions via related features.
+      # For essentially historical reasons, {flip} and {related_weight} belong to the whole constraint,
+      # not the resolution.  If entries in {flip} or keys in {related_weight} are followed by
+      # a number, they apply only to the phone of that index, else they apply to all phones.
+      # TESTING
+      elsif ($reskind eq 'free') {
+        my $resolvend = $phones[$arg];
+        my $reqd = add_requirements $resolvend;
+        my $i = 0;
+        my $resolution_type = 0;
+        RESOLUTION_TYPE: while ($resolution_type <= 1) {
+          my $effects;
+          my $base_weight = 0;
+          my $no_persist = 0;
+          $no_persist = 1 if defined $d->{phonemic_only};
+
+          %rule = %base_rule; 
+
+          if ($resolution_type == 0) {
+            $i = 0, $resolution_type++, next if $i >= length($resolvend);
+            unless (defined $d->{flip}{$FS->{features}[$i]{name}}) {
+              $i++, redo if substr($unsplit_phones[$arg], $i, 1) !~ /[01]/; # only flip actual things in the *base* situation
+              $i++, redo if defined $FS->{features}[$i]{structural};
+            }
+            $effects = '.' x length($resolvend);
+            substr($effects, $i, 1) = (substr($reqd, $i, 1) eq '1' ? '0' : '1');
+            # don't turn univalents on (unless specially allowed)
+            if (substr($reqd, $i, 1) eq '0' and defined $FS->{features}[$i]{univalent}) {
+              $i++, redo if !defined $d->{flip}{$FS->{features}[$i]{name}};
+              $effects = overwrite($effects, parse_feature_string($d->{univalent_addition}, 1));
+                  # this still needs to have multiple phones enabled on it
+            }
+            # Weights for flipping individual features: given in {flip}.
+            $base_weight = (defined $d->{flip}{$FS->{features}[$i]{name} . " $arg"} ? 
+                $d->{flip}{$FS->{features}[$i]{name} . " $arg"} : 
+                (defined $d->{flip}{$FS->{features}[$i]{name}} ? 
+                $d->{flip}{$FS->{features}[$i]{name}} : 1));
+          } 
+
+          elsif ($resolution_type == 1) {
+            $i = 0, $resolution_type++, next if $i >= @{$FS->{relations}};
+            # just bail if we're in a stripping condition. --- why did I do this?
+            for my $str (@{$FS->{strippings}}) {
+              my $strip_condition = $str->{condition_parsed};
+              $i = 0, $resolution_type++, next RESOLUTION_TYPE if $resolvend =~ /^$strip_condition$/;
+            }
+
+            $i++, redo if defined $FS->{relations}[$i]{spread_only};
+            
+            my $from = parse_feature_string($FS->{relations}[$i]{from}, 1);
+            $i++, redo if $resolvend !~ /^$from$/;
+            $effects = add_requirements(parse_feature_string($FS->{relations}[$i]{to}, 1));
+            if (compatible(add_entailments($effects), $resolvend)) {
+              # This is the place where we get the first word.  That's problematic.
+              $FS->{relations}[$i]{from} =~ /^([^ ]*)/;
+              $_ = parse_feature_string($1, 1);
+              y/01/10/;
+              $effects = overwrite($effects, add_requirements($_));
+            }
+            # Weights for doing any complicated feature change: given in {relate_weight},
+            # which apply to anything they match.
+            $base_weight = $FS->{relations}[$i]{weight};
+            if(defined $d->{related_weight}) {
+              for my $outcome (keys %{$d->{related_weight}}) {
+                if ($outcome =~ /^(.*) ([0-9]*)$/) {
+                  next unless $arg == $2;
+                  $outcome = $1;
+                }
+                my $f = parse_feature_string($outcome, 1);
+                $base_weight *= $d->{related_weight}{$outcome} if $effects =~ /^$f$/;
+              }
+            }
+          }
+
+          $total_base_weight += $base_weight;
+
+          $rule{effects}{$arg} = $effects;
+          # This base_weight is used to fill out recastability, below.
+          $rule{base_weight} = $base_weight; 
+
+          my $persistence_weight = defined $d->{persist} ? $d->{persist} : $threshold;
+          push @variants, persistence_variants $phonology, [\%rule, $base_weight], $persistence_weight, 
+                                              $no_persist, $args{generable_val};
+          for (@variants) {
+            push @resolutions, $_->[0];
+            push @weights, $_->[1];
+          }
+          $i++;
+        } # resolution type
+      } # free
+
       my $total_weight = 0;
       $total_weight += $_->[1] for @variants;
       for (@variants) {
@@ -1079,127 +1213,6 @@ sub gen_one_rule {
     }
   } # assimilation
 
-  # kinds handled here: qw/repair repair_split/
-  elsif ($kind =~ /^repair/) {
-    my $d;
-    if ($kind eq 'repair_split') {
-      $d = $FS->{marked}[$k]{split}[$rest];
-    } else {
-      $d = $FS->{marked}[$k];
-    }
-
-    # If there are split resolutions, recurse to handle them.  
-    # Note that depth-two splits don't in fact work now.
-    if (defined $d->{split}) {
-      for my $i (0..$#{$d->{split}}) {
-        gen_one_rule($phonology, "repair_split $k $i", %args, dont_skip => 1) 
-            if rand() < $d->{split}[$i]{prob};
-      }
-    }
-
-    my $precondition = parse_feature_string($FS->{marked}[$k]{condition}, 1);
-    my $base_precondition = $precondition;
-    if ($kind eq 'repair_split') {
-      $precondition = overwrite $precondition, parse_feature_string($d->{condition}, 1);
-    }
-    my $reqd = add_requirements $precondition;
-    
-    # Deletion is always available, at low weight, just in case nothing else works.
-    my $rule = {
-      precondition => {0 => $precondition},
-      deletions => [0],
-    };
-    my $except;
-    if (defined $d->{except}) {
-      $except = join ' ', map parse_feature_string($_, 1), split /, */, $d->{except};
-      $rule->{except} = {0 => $except};
-    }
-    push @resolutions, $rule;
-    push @weights, defined $d->{deletion} ? $d->{deletion} : 1e-12; # last resort!
-
-    my $i = 0;
-    my $resolution_type = 0;
-    RESOLUTION_TYPE: while ($resolution_type <= 1) {
-      my $effects;
-      my $base_weight = 0;
-      my $no_persist = 0;
-      $no_persist = 1 if defined $d->{phonemic_only};
- 
-      if ($resolution_type == 0) {
-        $i = 0, $resolution_type++, next if $i >= length($precondition);
-        unless (defined $d->{flip}{$FS->{features}[$i]{name}}) {
-          $i++, redo if substr($base_precondition, $i, 1) !~ /[01]/; # only flip actual things in the *base* situation
-          $i++, redo if defined $FS->{features}[$i]{structural};
-        }
-        $effects = '.' x length($precondition);
-        substr($effects, $i, 1) = (substr($reqd, $i, 1) eq '1' ? '0' : '1');
-        # don't turn univalents on (unless specially allowed)
-        if (substr($reqd, $i, 1) eq '0' and defined $FS->{features}[$i]{univalent}) {
-          $i++, redo if !defined $d->{flip}{$FS->{features}[$i]{name}};
-          $effects = overwrite($effects, parse_feature_string($d->{univalent_addition}, 1));
-        }
-        # Weights for flipping individual features: given in {flip}.
-        $base_weight = (defined $d->{flip}{$FS->{features}[$i]{name}} ? 
-            $d->{flip}{$FS->{features}[$i]{name}} : 1);
-      } 
-
-      elsif ($resolution_type == 1) {
-        $i = 0, $resolution_type++, next if $i >= @{$FS->{relations}};
-        # just bail if we're in a stripping condition. --- why did I do this?
-        for my $str (@{$FS->{strippings}}) {
-          my $strip_condition = $str->{condition_parsed};
-          $i = 0, $resolution_type++, next RESOLUTION_TYPE if $precondition =~ /^$strip_condition$/;
-        }
-
-        $i++, redo if defined $FS->{relations}[$i]{spread_only};
-        
-        my $from = parse_feature_string($FS->{relations}[$i]{from}, 1);
-        $i++, redo if $precondition !~ /^$from$/;
-        $effects = add_requirements(parse_feature_string($FS->{relations}[$i]{to}, 1));
-        if (compatible(add_entailments($effects), $precondition)) {
-          # This is the place where we get the first word.  That's problematic.
-          $FS->{relations}[$i]{from} =~ /^([^ ]*)/;
-          $_ = parse_feature_string($1, 1);
-          y/01/10/;
-          $effects = overwrite($effects, add_requirements($_));
-        }
-        # Weights for doing any complicated feature change: given in {relate_weight},
-        # which apply to anything they match.
-        $base_weight = $FS->{relations}[$i]{weight};
-        if(defined $d->{related_weight}) {
-          for my $outcome (keys %{$d->{related_weight}}) {
-            my $f = parse_feature_string($outcome, 1);
-            $base_weight *= $d->{related_weight}{$outcome} if $effects =~ /^$f$/;
-          }
-        }
-      }
-
-      $total_base_weight += $base_weight;
-
-      my $rule = {
-         precondition => {0 => $precondition},
-         effects => {0 => $effects},
-          # Recastability is filled out below.
-         base_weight => $base_weight,
-      };
-      if (defined $d->{except}) {
-        $rule->{except} = {0 => $except};
-      }
-      if ($threshold < 1) {
-        $rule->{cede} = 1-$threshold;
-      }
-
-      my $persistence_weight = defined $d->{persist} ? $d->{persist} : $threshold;
-      my @variants = persistence_variants $phonology, [$rule, $base_weight], $persistence_weight, 
-                                          $no_persist, $args{generable_val};
-      for (@variants) {
-        push @resolutions, $_->[0];
-        push @weights, $_->[1];
-      }
-      $i++;
-    } # resolution type
-  } # 'repair'
-  
   else {
     warn "unknown rule tag: $tag";
     return;
@@ -1588,6 +1601,11 @@ sub gen_phonology {
 
   # Choose the order the rules are going to appear in, and write down a list of rule tag strings.
 
+  # Marked single phones and sequences are handled by rules of the same type.  
+  # If the constraint is against a sequence of length one, the rule is placed before 
+  # the point defining what the phonemes ar.  Sequences of greater length are placed after,
+  # and correspond to allophony.
+
   # Default provision rules come in a random order; contrastive features are more likely to 
   # come early; among uncontrastive features the unlikely to have been contrastive are biased to come late.
 
@@ -1610,8 +1628,12 @@ sub gen_phonology {
   @feature_at_position = sort {$sortkey[$b] <=> $sortkey[$a]} (0..@{$FS->{features}}-1);
   $position_of_feature[$feature_at_position[$_]] = 1 + $_ for (0..@{$FS->{features}}-1);
 
+  my @single_repair_indices = grep $FS->{marked}[$_]{condition} !~ /,/, 0..$#{$FS->{marked}};
+  my @sequence_repair_indices = grep $FS->{marked}[$_]{condition} =~ /,/, 0..$#{$FS->{marked}};
+
   my @repair_rule_tags;
-  for my $k (0..@{$FS->{marked}}-1) {
+  for my $k (@single_repair_indices) {
+  # How should {prevented_by} be generalised?
     next if defined $FS->{marked}[$k]{prevented_by} and $prevent_marked{$FS->{marked}[$k]{prevented_by}};
     my $f = parse_feature_string $FS->{marked}[$k]{condition};
     my $when = 0;
@@ -1621,7 +1643,7 @@ sub gen_phonology {
     }
     push @{$repair_rule_tags[$when]}, "repair $k" unless defined $FS->{marked}[$k]{phonemic_only};
   }
-  my @assim_tags = ((map "assimilation $_", (0..@{$FS->{assimilations}}-1)));
+  my @assim_tags = ((map "repair $_", (@sequence_repair_indices)));
   for my $i (0..@assim_tags-1) {
     my $j = $i + int rand(@assim_tags - $i);
     $_ = $assim_tags[$i]; 
@@ -1636,7 +1658,7 @@ sub gen_phonology {
     push @rule_tags, "default $feature_at_position[$i-1]" unless $i <= 0 or defined $special_filling{$feature_at_position[$i-1]};
     push @rule_tags, @{$repair_rule_tags[$i]} if defined $repair_rule_tags[$i];
   }
-  for my $k (0..@{$FS->{marked}}-1) {
+  for my $k (@single_repair_indices) {
     next if defined $FS->{marked}[$k]{prevented_by} and $prevent_marked{$FS->{marked}[$k]{prevented_by}};
     push @rule_tags, "repair $k" if defined $FS->{marked}[$k]{phonemic_only};
   }
@@ -3935,11 +3957,8 @@ for my $rel (@{$FS->{relations}}) {
     my %flipped = %$rel;
     $flipped{from} = $rel->{to};
     $flipped{to} = $rel->{from};
-    delete $flipped{assimilation};
-    $flipped{assimilation} = $rel->{otherway_assimilation} if defined $rel->{otherway_assimilation};
     push @otherway_relations, \%flipped;
   }
-  delete $rel->{otherway_assimilation};
 }
 push @{$FS->{relations}}, @otherway_relations;
 
