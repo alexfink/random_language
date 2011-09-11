@@ -3,7 +3,7 @@ version: "5"
 
 # Also see end of file for more things TODO.
 
-# TODO: colored glottal stop > dorsal resonant shd yield voiceds.
+# TODO: colored glottal stop > dorsal resonant shd yield voiceds.  grep for "Nearly always, coloured"
 
 # one-time coronal palatalisation rule?
 
@@ -1967,7 +1967,6 @@ marked:
     prevented_by: alveolar_velar
     flip:
       dorsal: 2
-    deletion: 0
     # there should never be any reason to outright delete a coarticulate.  
     # I think loops aren't a problem here
 
@@ -1976,7 +1975,6 @@ marked:
     prevented_by: labial_velar
     flip:
       dorsal: 2
-    deletion: 0
     split:
       - condition: "+resonant"
         prob: 1
@@ -1986,7 +1984,6 @@ marked:
   - condition: "labial coronal"
     prob: 0.95 # lowered a bit
     prevented_by: labial_alveolar
-    deletion: 0
 
   # Coarticulate fricatives are quite selected against.
   # For now just one case; is that all we actually need?
@@ -1994,13 +1991,11 @@ marked:
     prob: 0.99
     related_weight:
       "-dorsal -coronal -labial": 0
-    deletion: 0
 
   - condition: "labial dorsal +resonant"
     prob: 0.99
     related_weight:
       "-dorsal -coronal -labial": 0
-    deletion: 0
     flip:
       labial: 15
 
@@ -2010,7 +2005,6 @@ marked:
       dorsal: 20 # we want these to yield coarticulates thus
     related_weight:
       "-dorsal -coronal -labial": 0
-    deletion: 0
 
   # +high +low and +front +back are dealt with by antitheticality.
 
@@ -2212,7 +2206,9 @@ marked:
     split:
       - condition: "+syllabic"
         prob: 1
-        deletion: 1 # this is newish.  careful now
+        resolve:
+          "free 0": 1.5
+          "delete 0": 1 # this is newish.  careful now
         flip:
           voice: 1.333333
           resonant: 0 # catch it in the relateds
@@ -2272,7 +2268,7 @@ marked:
   # we'd like it if like the [j w] rules can tend to come before this.
   - condition: "-dorsal -coronal -labial -constricted_glottis -spread_glottis -pharyngealised"
     prob: 1
-    deletion: 14 
+    resolve: {"delete 0": 14}
     flip:
       constricted_glottis: 0
       spread_glottis: 0
@@ -2330,10 +2326,10 @@ marked:
   # Voiced phonation rules.  
 
   # TODO: uniformise the phonation assimilations (above) so that
-  # sonorants can behave uniformly.
+  # sonorants can behave uniformly.  ... done?
 
   - condition: "-syllabic +voice +constricted_glottis"
-    except: "+implosive"
+    except: {0: "+implosive"}
     prob: 0.975
     prevented_by: creaky_sonorant
     flip:
@@ -2393,7 +2389,9 @@ marked:
     initial_prob: 0.625 # inflated but perhaps what we need
     prob: 0.2
     phonemic_only: true # this in conjunction with an onset change...?
-    deletion: 0.03125
+    resolve:
+      "free 0": 3
+      "delete 0": 0.03125
     flip:
       nasal: 0.25
 
@@ -2414,7 +2412,7 @@ marked:
       "+fricative": 0.05
 
   - condition: "+nasal +resonant"
-    except: "-high"
+    except: {0: "-high"}
     prob: 0.5
     flip:
       nasal: 2
@@ -2569,7 +2567,7 @@ marked:
       "": 0
 
   - condition: "+pharyngealised +front"
-    except: "dorsal +resonant -lateral -tap_or_trill"
+    except: {0: "dorsal +resonant -lateral -tap_or_trill"}
     prob: 0.95
 
   - condition: "+pharyngealised +ATR"
@@ -2677,16 +2675,15 @@ marked:
   # The ordinary-but-still-often-absent stuff is mostly here.
   - condition: "-dorsal -coronal -labial +constricted_glottis"
     prob: 0.5
-    deletion: 14
+    resolve: {"delete 0": 14}
 
   - condition: "-dorsal -coronal -labial +spread_glottis"
     prob: 0.5
-    deletion: 14
+    resolve: {"delete 0": 14}
 
   - condition: "-syllabic dorsal -front -back"
     prob: 0.999
     phonemic_only: true
-    deletion: 0
     flip:
       dorsal: 0 # and they should resolve one side or the other
 
@@ -2787,9 +2784,11 @@ marked:
   # the gap for semivowels of all sorts.
   - condition: "-syllabic dorsal +resonant -lateral -tap_or_trill"
     prob: 0.2 # was 0.125
+    resolve:
+      "free 0": 1
+      "delete 0": 2 # TESTING
     flip:
       dorsal: 0 # these varmints are resistant to placelessising, now
-      deletion: 4 # that'll git 'em.
       resonant: 0.25 # 'cause this goes straight to stops
     related_weight:
       "": 0.5
