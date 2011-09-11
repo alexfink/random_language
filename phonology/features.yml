@@ -937,7 +937,9 @@ relations:
 
 
 
-assimilations:
+marked:
+  # We begin with the sequences, assimilations &c.
+
   # this is the big nasal &c place assimilation change
   - condition: "-resonant, -syllabic"
     except: {1: "-dorsal -coronal -labial"}
@@ -1923,8 +1925,8 @@ assimilations:
 
 
 
-# msd
-marked:
+# msd -- here begin single-phoneme conditions
+
   # Glottals often have nasality passthrough, but they don't go nasal themselves.  Thus this shouldn't be phonemic_only.
   # Split resolution for the product of nasals that go placeless (per Blevins this is often [N], or a nasal glide.)
   - condition: "-dorsal -coronal -labial +nasal"

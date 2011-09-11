@@ -7,7 +7,6 @@
 # (A greater proportion of the numbers are wholly fabricated, though!)
 
 # Proximal plan for cleanliness:
-# - Unify the resolving rules.  
 # - Refactoring: make some classes, do some encapsulation, split files out.
 # Short-term plan for features:
 # - Out of the first of the above will fall a framework for general constraints against sequences 
@@ -1033,8 +1032,10 @@ sub gen_one_rule {
       }
     }
 
-    # If the resolution part isn't written, resolve phone 0 freely.
-    # (Intended for marked single phoneme rules.  In particular, the last-resort deletion
+    # {resolve} is a weight-hash of possible resolutions, whose keys are of the form "$operation $argument".
+    # 
+    # If the resolution part isn't written, we will resolve phone 0 freely.
+    # (This is intended for marked single phoneme rules.  In particular, the last-resort deletion
     # that these rules once had is now no more.)
     my %resolutions;
     %resolutions = %{$d->{resolve}} if defined %{$d->{resolve}};
@@ -1600,6 +1601,11 @@ sub gen_phonology {
 
   # Choose the order the rules are going to appear in, and write down a list of rule tag strings.
 
+  # Marked single phones and sequences are handled by rules of the same type.  
+  # If the constraint is against a sequence of length one, the rule is placed before 
+  # the point defining what the phonemes ar.  Sequences of greater length are placed after,
+  # and correspond to allophony.
+
   # Default provision rules come in a random order; contrastive features are more likely to 
   # come early; among uncontrastive features the unlikely to have been contrastive are biased to come late.
 
@@ -1622,9 +1628,12 @@ sub gen_phonology {
   @feature_at_position = sort {$sortkey[$b] <=> $sortkey[$a]} (0..@{$FS->{features}}-1);
   $position_of_feature[$feature_at_position[$_]] = 1 + $_ for (0..@{$FS->{features}}-1);
 
+  my @single_repair_indices = grep $FS->{marked}[$_]{condition} !~ /,/, 0..$#{$FS->{marked}};
+  my @sequence_repair_indices = grep $FS->{marked}[$_]{condition} =~ /,/, 0..$#{$FS->{marked}};
+
   my @repair_rule_tags;
-  for my $k (0..@{$FS->{marked}}-1) {
-# TODO: make sure {prevented_by} survives unification
+  for my $k (@single_repair_indices) {
+  # How should {prevented_by} be generalised?
     next if defined $FS->{marked}[$k]{prevented_by} and $prevent_marked{$FS->{marked}[$k]{prevented_by}};
     my $f = parse_feature_string $FS->{marked}[$k]{condition};
     my $when = 0;
@@ -1634,7 +1643,7 @@ sub gen_phonology {
     }
     push @{$repair_rule_tags[$when]}, "repair $k" unless defined $FS->{marked}[$k]{phonemic_only};
   }
-  my @assim_tags = ((map "assimilation $_", (0..@{$FS->{assimilations}}-1)));
+  my @assim_tags = ((map "repair $_", (@sequence_repair_indices)));
   for my $i (0..@assim_tags-1) {
     my $j = $i + int rand(@assim_tags - $i);
     $_ = $assim_tags[$i]; 
@@ -1649,7 +1658,7 @@ sub gen_phonology {
     push @rule_tags, "default $feature_at_position[$i-1]" unless $i <= 0 or defined $special_filling{$feature_at_position[$i-1]};
     push @rule_tags, @{$repair_rule_tags[$i]} if defined $repair_rule_tags[$i];
   }
-  for my $k (0..@{$FS->{marked}}-1) {
+  for my $k (@single_repair_indices) {
     next if defined $FS->{marked}[$k]{prevented_by} and $prevent_marked{$FS->{marked}[$k]{prevented_by}};
     push @rule_tags, "repair $k" if defined $FS->{marked}[$k]{phonemic_only};
   }
