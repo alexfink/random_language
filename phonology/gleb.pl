@@ -100,12 +100,19 @@ sub std_normal {
   return sqrt(-2*log rand(1)) * cos(rand(TWOPI));
 }
 
-# When passed a second argument, uses dots for unspecified values instead (esp. for use in regexes).
-sub parse_feature_string {
-  my $re = defined $_[1];
-  my $phone = ($re ? '.' : 'u') x @{$FS->{features}};
-  return $phone if !defined $_[0];
-  my @a = split / /, $_[0];
+package FeatureSystem;
+# TODO: (proximal) put a reference to the feature system in the phonology.  But be certain not to
+# include it in saved phonologies!  That would inflate them ridiculously.
+
+# TODO: (ongoing!) (may as well, while this is happening) fix the calling conventions for this!
+# TODO: (proximal) rename to something leaner.
+# Uses dots for unspecified values, unless $args{undefined} is true when it uses 'u'.
+sub parse {
+  my ($self, $fs, %args) = (shift, shift, @_);
+  my $re = !defined $args{undefined};
+  my $phone = ($re ? '.' : 'u') x @{$self->{features}};
+  return $phone if !defined $fs;
+  my @a = split / /, $fs;
   for my $f (@a) {
     if ($f =~ /^([^\w\s])(.*)/) {
       substr($phone, $feature_indices{$2}, 1) = $1 eq '+' ? '1' : $1 eq '-' ? '0' : $1; 
@@ -118,18 +125,52 @@ sub parse_feature_string {
 
 # Called with two args, displays undef things.
 sub feature_string {
+  my $self = shift;
   my $phone = shift; 
   my $fs = '';
   my $c;
   for my $i (0..(length $phone)-1) {
     $fs .= ($fs ? ' ' : '') . 
-           ($c eq '1' ? (defined $FS->{features}[$i]{univalent} ? '' : '+') : 
+           ($c eq '1' ? (defined $self->{features}[$i]{univalent} ? '' : '+') : 
            ($c eq 'u' ? '?' : ($c eq '0' ? '-' : $c))) . 
-           $FS->{features}[$i]{name} 
+           $self->{features}[$i]{name} 
         unless ($c = substr($phone, $i, 1)) eq '.' or ($c eq 'u' and !@_);
   }
   $fs;
 }
+
+sub load_file {
+  my $filename = shift;
+  my $FS = YAML::Any::LoadFile($filename);
+  bless $FS;
+
+  $feature_indices{$FS->{features}[$_]{name}} = $_ for (0..@{$FS->{features}}-1);
+  for my $i (0..@{$FS->{features}}-1) {
+    if (defined $FS->{features}[$i]{requires}) {
+      my $s = $FS->parse($FS->{features}[$i]{requires}, undefined => 1);
+      for (0..length($s)-1) {
+        push @{$features_requiring[substr($s, $_, 1)][$_]}, $i if (substr($s, $_, 1) =~ /[01]/);
+      }
+    }
+  }
+  for my $str (@{$FS->{strippings}}) {
+    $str->{condition_parsed} = $FS->parse($str->{condition}, 1);
+  }
+  my @otherway_relations;
+  for my $rel (@{$FS->{relations}}) {
+    if (defined $rel->{twoway}) {
+      my %flipped = %$rel;
+      $flipped{from} = $rel->{to};
+      $flipped{to} = $rel->{from};
+      push @otherway_relations, \%flipped;
+    }
+  }
+  push @{$FS->{relations}}, @otherway_relations;
+  
+  return $FS;
+}
+
+package main;
 
 
 
@@ -155,7 +196,7 @@ sub compatible {
 sub add_requirements {
   my $reqd = $_[0];
   for my $i (0..length($_[0])-1) {
-    $reqd = overwrite($reqd, parse_feature_string($FS->{features}[$i]{requires}, 1)) 
+    $reqd = overwrite($reqd, $FS->parse($FS->{features}[$i]{requires})) 
         if substr($_[0], $i, 1) =~ /[01]/ and defined $FS->{features}[$i]{requires};
   }
   $reqd;
@@ -688,7 +729,7 @@ sub gen_extra_condition {
     # Conditions of the same family as the effects (which we don't have stored in a special structure).
     %_ = map(($_ => 1), map split(/ /, $FS->{features}[$_]{families}), 
         grep substr($effect, $_, 1) ne '.', 0..length($effect)-1);
-    my @families = grep compatible(parse_feature_string($FS->{families}{$_}, 1), $rule->{precondition}{$locus}),
+    my @families = grep compatible($FS->parse($FS->{families}{$_}), $rule->{precondition}{$locus}),
         grep $_, keys %_;
     my @family_features = grep {
       my $i = $_;
@@ -715,12 +756,12 @@ sub gen_extra_condition {
     $outcome =~ s/[<>]/./;
     for my $rel (@{$FS->{relations}}) {
       next if $rel->{spread_only};
-      $_ = parse_feature_string($rel->{to}, 1);
+      $_ = $FS->parse($rel->{to});
       next unless $outcome =~ /^$_$/;
       
       my %rule1 = %$rule;
       $rule1{precondition} = { %{$rule->{precondition}} }; # deep copy this part
-      my $extra = parse_feature_string($rel->{from}, 1);
+      my $extra = $FS->parse($rel->{from});
       next unless compatible($rule1{precondition}{$locus}, $extra);
       $rule1{precondition}{$locus} = overwrite $rule1{precondition}{$locus}, $extra;
       next if $rule1{precondition}{$locus} == $rule->{precondition}{$locus};
@@ -736,7 +777,7 @@ sub gen_extra_condition {
         next if substr($effect, $f, 1) eq '.';
 
         EF_ASSIM: for my $d (@{$FS->{features}[$f]{assimilation}}) {
-          my @condition = map parse_feature_string($_, 1), split /, */, $d->{condition}, -1;
+          my @condition = map $FS->parse($_), split /, */, $d->{condition}, -1;
           next unless $outcome =~ /^$condition[$d->{target}]$/;
 
           my %rule1 = %$rule;
@@ -745,7 +786,7 @@ sub gen_extra_condition {
           for my $displ (0..$#condition) {
             my $l = $locus + $displ - $d->{target};
             if (!defined $rule1{precondition}{$l}) {
-              $_ = parse_feature_string($FS->{generic_pause_phone}, 1);
+              $_ = $FS->parse($FS->{generic_pause_phone});
               $rule1{or_pause}{$l} = 1 if $_ =~ /^$condition[$displ]$/;
               $rule1{precondition}{$l} = '.' x length($effect);
             }
@@ -765,11 +806,11 @@ sub gen_extra_condition {
 
       # pretty duplicative
       for my $r (@{$FS->{relations}}) {
-        $_ = parse_feature_string($r->{to}, 1);
+        $_ = $FS->parse($r->{to});
         next if $effect !~ /^$_$/;
 
         EF_ASSIMR: for my $d (@{$r->{assimilation}}) {
-          my @condition = map parse_feature_string($_, 1), split /, */, $d->{condition}, -1;
+          my @condition = map $FS->parse($_), split /, */, $d->{condition}, -1;
           next unless $outcome =~ /^$condition[$d->{target}]$/;
 
           my %rule1 = %$rule;
@@ -778,14 +819,14 @@ sub gen_extra_condition {
           for my $displ (0..$#condition) {
             my $l = $locus + $displ - $d->{target};
             if (!defined $rule1{precondition}{$l}) {
-              $_ = parse_feature_string($FS->{generic_pause_phone}, 1);
+              $_ = $FS->parse($FS->{generic_pause_phone});
               $rule1{or_pause}{$l} = 1 if $_ =~ /^$condition[$displ]$/;
               $rule1{precondition}{$l} = '.' x length($effect);
             }
             next EF_ASSIMR unless compatible($rule1{precondition}{$l}, $condition[$displ]);
             $rule1{precondition}{$l} = overwrite $rule1{precondition}{$l}, $condition[$displ];
           }
-          $_ = parse_feature_string($r->{from}, 1);
+          $_ = $FS->parse($r->{from});
           next unless compatible($rule1{precondition}{$locus + 1 - 2*$d->{target}}, $_);
           $rule1{precondition}{$locus + 1 - 2*$d->{target}} = 
               overwrite($rule1{precondition}{$locus + 1 - 2*$d->{target}}, $_); # impose the actual assimilation
@@ -904,8 +945,8 @@ sub gen_one_rule {
   my $total_base_weight = 0;
 
   if ($kind eq 'default') {
-    my $precondition = parse_feature_string($FS->{features}[$k]{default}[$rest]{condition}, 1);
-    $precondition = overwrite $precondition, parse_feature_string($FS->{features}[$k]{requires}, 1)
+    my $precondition = $FS->parse($FS->{features}[$k]{default}[$rest]{condition});
+    $precondition = overwrite $precondition, $FS->parse($FS->{features}[$k]{requires})
         if defined $FS->{features}[$k]{requires};
     substr($precondition, $k, 1) = 'u';
 
@@ -923,7 +964,7 @@ sub gen_one_rule {
       # This could be made more general later.
       for (@{$FS->{strippings}}) {
         if ($_->{strip} =~ /(^| )$FS->{features}[$k]{name}( |$)/) {
-          $rule->{except} = {0 => parse_feature_string($_->{condition}, 1)};
+          $rule->{except} = {0 => $FS->parse($_->{condition})};
           last;
         }
       }
@@ -938,14 +979,14 @@ sub gen_one_rule {
     for my $s (@{$FS->{strippings}[$k]{substitute}}) {
       $s =~ /^(.*) *: *(.*)$/;
       my $rule = {
-        precondition => {0 => overwrite($precondition, parse_feature_string($1, 1))},
-        effects => {0 => parse_feature_string($2, 1)},
+        precondition => {0 => overwrite($precondition, $FS->parse($1))},
+        effects => {0 => $FS->parse($2)},
         recastability => 0,
       };
       push @$phonology, $rule;
     }
 
-    my $effects = parse_feature_string($FS->{strippings}[$k]{strip}, 1);
+    my $effects = $FS->parse($FS->{strippings}[$k]{strip});
     $effects =~ s/1/u/g;
     my $rule = {
       precondition => {0 => $precondition},
@@ -982,8 +1023,8 @@ sub gen_one_rule {
     }
 
     # the condition on a split is further to the condition on the parent
-    my @unsplit_phones = map parse_feature_string($_, 1), split /, */, $unsplit_d->{condition}, -1;
-    my @phones = map parse_feature_string($_, 1), split /, */, $d->{condition}, -1;
+    my @unsplit_phones = map $FS->parse($_), split /, */, $unsplit_d->{condition}, -1;
+    my @phones = map $FS->parse($_), split /, */, $d->{condition}, -1;
     $phones[$_] = overwrite $unsplit_phones[$_], $phones[$_] for 0..$#phones;
     my %base_rule = (
       precondition => {map(($_ => $phones[$_]), 0..$#phones)},
@@ -995,23 +1036,23 @@ sub gen_one_rule {
     if (defined $d->{except}) {
       my %except = %{$d->{except}};
       for my $displ (keys %except) {
-        $except{$displ} = join ' ', map parse_feature_string($_, 1), split /, */, $d->{except}{$displ};
+        $except{$displ} = join ' ', map $FS->parse($_), split /, */, $d->{except}{$displ};
       }
       $base_rule{except} = {%except};
     }
     if ($kind =~ /_split$/ and defined $unsplit_d->{except}) {
       for my $displ (keys %{$unsplit_d->{except}}) {
         $base_rule{except}{$displ} .= ' ' if defined $base_rule{except}{$displ};
-        $base_rule{except}{$displ} .= join ' ', map parse_feature_string($_, 1), split /, */, $unsplit_d->{except}{$displ};
+        $base_rule{except}{$displ} .= join ' ', map $FS->parse($_), split /, */, $unsplit_d->{except}{$displ};
       }
     }
 
     my $pause_phone;
     @_ = split / +([0-9.]+) */, $d->{pause_phone};
     if (scalar @_ == 1) {
-      $pause_phone = parse_feature_string($d->{pause_phone});
+      $pause_phone = $FS->parse($d->{pause_phone}, undefined => 1);
     } elsif (scalar @_ > 1) {
-      $pause_phone = parse_feature_string weighted_one_of @_;
+      $pause_phone = $FS->parse(weighted_one_of @_, undefined => 1);
     }
     # As a corollary of the sort here, '-' assignments follow '+' ones.  TODO: make this saner?
     for my $e (sort keys %{$d->{extras}}) {
@@ -1027,9 +1068,9 @@ sub gen_one_rule {
           $base_rule{pause_phone} = $pause_phone;
         } elsif ($e0 =~ /^!/) {
           $base_rule{except}{$e1} .= ' ' if defined $base_rule{except}{$e1};
-          $base_rule{except}{$e1} .= parse_feature_string(substr($e0,1),1);
+          $base_rule{except}{$e1} .= $FS->parse(substr($e0,1));
         } else {
-          $base_rule{precondition}{$e1} = overwrite $base_rule{precondition}{$e1}, parse_feature_string($e0,1);
+          $base_rule{precondition}{$e1} = overwrite $base_rule{precondition}{$e1}, $FS->parse($e0);
         }
       }
     }
@@ -1057,7 +1098,7 @@ sub gen_one_rule {
         for (@effects_strings) {
           /^(.*) +([0-9]*)$/;
           my ($effect, $target) = ($1, $2);
-          my $parsed_effect = parse_feature_string($effect, 1);
+          my $parsed_effect = $FS->parse($effect);
 
           for (0..length($effects{$target})-1) {
             if (substr($parsed_effect, $_, 1) =~ /[{}]/) {
@@ -1074,7 +1115,7 @@ sub gen_one_rule {
           # unless assimilation in that feature as well assures that this is unnecessary.  
           for (0..length($parsed_effect)-1) {
             if (substr($parsed_effect, $_, 1) ne '.') {
-              my $requirements = parse_feature_string($FS->{features}[$_]{requires}, 1);
+              my $requirements = $FS->parse($FS->{features}[$_]{requires});
               for my $i (0..length($requirements)-1) {
                 substr($requirements, $i, 1) = '.'
                     if substr($parsed_effect, $_, 1) =~ /[<>]/ 
@@ -1095,7 +1136,7 @@ sub gen_one_rule {
         for my $str (@{$FS->{strippings}}) {
           for my $displ (keys %{$rule{precondition}}) { 
             if ($rule{precondition}{$displ} =~ /^$str->{condition_parsed}$/) {
-              my $effect = parse_feature_string($str->{strip}, 1);
+              my $effect = $FS->parse($str->{strip});
               $effect =~ s/1/a/g; # temporary char
               $rule{precondition}{$displ} = overwrite $rule{precondition}{$displ}, $effect;
               $rule{precondition}{$displ} =~ s/a/./g;
@@ -1144,7 +1185,7 @@ sub gen_one_rule {
             # don't turn univalents on (unless specially allowed)
             if (substr($reqd, $i, 1) eq '0' and defined $FS->{features}[$i]{univalent}) {
               $i++, redo if !defined $d->{flip}{$FS->{features}[$i]{name}};
-              $effects = overwrite($effects, parse_feature_string($d->{univalent_addition}, 1));
+              $effects = overwrite($effects, $FS->parse($d->{univalent_addition}));
                   # this still needs to have multiple phones enabled on it
             }
             # Weights for flipping individual features: given in {flip}.
@@ -1164,13 +1205,13 @@ sub gen_one_rule {
 
             $i++, redo if defined $FS->{relations}[$i]{spread_only};
             
-            my $from = parse_feature_string($FS->{relations}[$i]{from}, 1);
+            my $from = $FS->parse($FS->{relations}[$i]{from});
             $i++, redo if $resolvend !~ /^$from$/;
-            $effects = add_requirements(parse_feature_string($FS->{relations}[$i]{to}, 1));
+            $effects = add_requirements($FS->parse($FS->{relations}[$i]{to}));
             if (compatible(add_entailments($effects), $resolvend)) {
               # This is the place where we get the first word.  That's problematic.
               $FS->{relations}[$i]{from} =~ /^([^ ]*)/;
-              $_ = parse_feature_string($1, 1);
+              $_ = $FS->parse($1);
               y/01/10/;
               $effects = overwrite($effects, add_requirements($_));
             }
@@ -1183,7 +1224,7 @@ sub gen_one_rule {
                   next unless $arg == $2;
                   $outcome = $1;
                 }
-                my $f = parse_feature_string($outcome, 1);
+                my $f = $FS->parse($outcome);
                 $base_weight *= $d->{related_weight}{$outcome} if $effects =~ /^$f$/;
               }
             }
@@ -1411,7 +1452,7 @@ package Phonology;
 
 sub generate {
   print STDERR "generating phonology...\n" if $verbose;
-  my $pd = Phonology->generate_preliminary;
+  my $pd = Phonology::generate_preliminary();
   $pd->annotate_with_preconditions;
   print STDERR "computing inventory...\n" if $verbose;
   $pd->compute_inventory; # base inventory for generation
@@ -1447,7 +1488,7 @@ sub generate_preliminary {
       my $remaining_weight = 1; # pre-fuzz weight
       my $fuzzed_weight = 0; # post-fuzz weight
       while (@featureses) {
-        my $phone = main::parse_feature_string shift @featureses;
+        my $phone = $FS->parse(shift @featureses, undefined => 1);
         $remaining_weight -= @featureses[0] if @featureses;
         $_ = (@featureses ? shift @featureses : $remaining_weight) * (rand() + rand());
         $fuzzed_weight += $_;
@@ -1464,7 +1505,7 @@ sub generate_preliminary {
       $rslot->{reprune} = 1 if defined $slot->{reprune} and rand() < $slot->{reprune};
       if (defined $slot->{except}) {
         while (my ($k, $v) = each %{$slot->{except}}) {
-          push @{$rslot->{except}}, parse_feature_string($k,1) if rand() < $v;
+          push @{$rslot->{except}}, $FS->parse($k) if rand() < $v;
         }
       }
       push @syllable_structure, $rslot;
@@ -1475,7 +1516,7 @@ sub generate_preliminary {
   my @generable_val; # defined($generable_val[$v][$f]) iff the $f-th feature can take value $v \in 0,1.
                      # If it's an empty list, that's ok; that just means the feature can only come up in phone generation.
   my %family_inventories;
-  $family_inventories{$_} = { parse_feature_string($FS->{families}{$_}, 1) => 1 }
+  $family_inventories{$_} = { $FS->parse($FS->{families}{$_}) => 1 }
       for (keys %{$FS->{families}});
   my %special_filling; # which features we're using a U in the syllable structure in
   my %prevent_marked; # when we look through the markeds, which ones we don't do
@@ -1486,7 +1527,7 @@ sub generate_preliminary {
     for my $sit (@{$f->{generated}}) {
       if (rand() < $sit->{contrast}) {
         my $requires;
-        $requires = parse_feature_string($f->{requires}, 1) if defined $f->{requires};
+        $requires = $FS->parse($f->{requires}) if defined $f->{requires};
 
         my @by_families;
         if (defined $sit->{by_family} and rand() < $sit->{by_family_prob}) {
@@ -1511,13 +1552,13 @@ sub generate_preliminary {
           }
         }
 
-        my $precondition = parse_feature_string($sit->{condition}, 1);
+        my $precondition = $FS->parse($sit->{condition});
         substr($precondition, $feature_indices{$f->{name}}, 1) = 'u';
         $precondition = overwrite $precondition, $requires if defined $f->{requires};
         my %rule = (
           precondition => {0 => $precondition},
-          effects => {0 => parse_feature_string($f->{name}, 1)}, # er, rework this
-          antieffects => {0 => parse_feature_string('-' . $f->{name}, 1)}, 
+          effects => {0 => $FS->parse($f->{name})}, # er, rework this
+          antieffects => {0 => $FS->parse('-' . $f->{name})},
           prob => [map fuzz($sit->{prob}), @syllable_structure],
         );
         substr($rule{effects}{0}, $feature_indices{$f->{antithetical}}, 1) = '0' if (defined $f->{antithetical});
@@ -1551,7 +1592,7 @@ sub generate_preliminary {
                 $phone = overwrite $phone, $rule{antieffects}{0};
               } elsif ($r < $f->{slots}{$slot->{tag}}[0] + $f->{slots}{$slot->{tag}}[1]) {
                 $phone = overwrite $phone, $rule{effects}{0};
-                $phone = overwrite $phone, parse_feature_string($f->{slot_if_on}, 1)
+                $phone = overwrite $phone, $FS->parse($f->{slot_if_on})
                     if defined $f->{slot_if_on};
               } elsif ($r < $f->{slots}{$slot->{tag}}[0] + $f->{slots}{$slot->{tag}}[1] +  $f->{slots}{$slot->{tag}}[2]) {
                 substr($phone, $feature_indices{$f->{name}}, 1) = 'U';
@@ -1604,16 +1645,16 @@ sub generate_preliminary {
                         and rand() < $FS->{features}[$i]{forcibly_unmark}) {
       my @l = ();
       for my $default (@{$FS->{features}[$i]{default}}) {
-        my $phone = parse_feature_string($default->{condition}, 1);
+        my $phone = $FS->parse($default->{condition});
         for (0..@{$FS->{features}}-1) {
           push @l, $_ if substr($phone, $_, 1) ne '.';
         }
       }
       FUSTRIP: for my $stripping (@{$FS->{strippings}}) {
-        my $trigger = parse_feature_string($stripping->{strip}, 1);
+        my $trigger = $FS->parse($stripping->{strip});
         for my $i (@l) {
           if (substr($trigger, $i, 1) ne '.') {
-              my $phone = parse_feature_string($stripping->{condition}, 1);
+              my $phone = $FS->parse($stripping->{condition});
               for (0..@{$FS->{features}}-1) {
                 push @l, $_ if substr($phone, $_, 1) ne '.';
               }            
@@ -1661,7 +1702,7 @@ sub generate_preliminary {
   for my $k (@single_repair_indices) {
   # How should {prevented_by} be generalised?
     next if defined $FS->{marked}[$k]{prevented_by} and $prevent_marked{$FS->{marked}[$k]{prevented_by}};
-    my $f = parse_feature_string $FS->{marked}[$k]{condition};
+    my $f = $FS->parse($FS->{marked}[$k]{condition}, undefined => 1);
     my $when = 0;
     for (0..length($f)-1) {
       $when = $position_of_feature[$_]
@@ -1735,8 +1776,8 @@ sub name_phone {
   
   for my $x (keys %{$pa->{ligations}}) {
     next if $phone !~ /^$x$/;
-    my $phone0 = overwrite $phone, parse_feature_string($pa->{ligations}{$x}[0], 1);
-    my $phone1 = overwrite $phone, parse_feature_string($pa->{ligations}{$x}[1], 1);
+    my $phone0 = overwrite $phone, $FS->parse($pa->{ligations}{$x}[0]);
+    my $phone1 = overwrite $phone, $FS->parse($pa->{ligations}{$x}[1]);
     my ($tc0, $s0) = name_phone($phone0, %args, no_modifiers => 1);
     my ($tc1, $s1) = name_phone($phone1, %args, no_modifiers => 1);
     $s = $pa->{ligations}{$x}[2];
@@ -1990,7 +2031,7 @@ sub generate_form {
   my $entropy = $normal * $target_entropy; 
 
   # Form generation was once done by rules with probabilistic effects.  But that is long obsolete.
-  # TODO: remove this.  (It's marked OBSOLETE: above.)
+  # TODO: remove this.  (It's marked OBSOLETE: above.)  I think {antieffects} is eliminable too.
   
   my @form;
   # The form of this loop will very much be changing when we start asking for
@@ -2129,7 +2170,7 @@ sub describe_inventory {
     $buffer .= "phonemic inventory:\n"; 
     for my $p (sort keys %{$pd->{gen_inventory}}) { 
       my $n = join '', map name_phone($_), split / /, $p;
-      $buffer .= "/" . ($n !~ /\#\#/ ? $n : feature_string($p)) . "/\t@{$pd->{gen_inventory}{$p}}\n";
+      $buffer .= "/" . ($n !~ /\#\#/ ? $n : FS->feature_string($p)) . "/\t@{$pd->{gen_inventory}{$p}}\n";
       push @{$things_named{$n}}, $p if ($n !~ /\#\#/);
     }
     for my $name (keys %things_named) { # left in in case it crops up
@@ -2395,10 +2436,10 @@ sub tabulate {
     }
     my $t0 = tabulate($pd, %args, 
                            structure => $str->{0}, 
-                           condition => overwrite($condition, parse_feature_string("-$split_feature", 1)));
+                           condition => overwrite($condition, $FS->parse("-$split_feature")));
     my $t1 = tabulate($pd, %args, 
                            structure => $str->{1}, 
-                           condition => overwrite($condition, parse_feature_string("+$split_feature", 1)));
+                           condition => overwrite($condition, $FS->parse("+$split_feature")));
     return $first ?
         $t1 . "<br />\n" . $t0 :
         $t0 . "<br />\n" . $t1;
@@ -2416,25 +2457,25 @@ sub tabulate {
     }
 
     while (my ($k, $v) = each %{$str->{undefineds}}) {
-      $str->{undef_p}{parse_feature_string($k, 1)} = parse_feature_string($v, 1); # p for 'parsed'
+      $str->{undef_p}{$FS->parse($k)} = $FS->parse($v); # p for 'parsed'
     }
     
     while (my ($k, $v) = each %{$str->{flips}}) {
       my @which = grep $str->{order_i}[$_] == $feature_indices{$v}, 0..@{$str->{order_i}}-1;
-      $str->{flips_p}{parse_feature_string($k, 1)} = $which[0];
+      $str->{flips_p}{$FS->parse($k)} = $which[0];
     }
     
     @fs = split / /, $str->{collapse};
     for my $f (@fs) {
       if (defined $str->{named_collapses}{$f}) {
         push @{$str->{collapse_i}}, $f;
-        my $ae = add_entailments parse_feature_string($str->{named_collapses}{$f}{to}, 1);
+        my $ae = add_entailments $FS->parse($str->{named_collapses}{$f}{to});
         my %undefinenda = map(($_ => 1), grep substr($ae, $_, 1) eq 'u', 0..length($ae)-1);
         %{$str->{named_collapses_p}{$f}} = (
-            from => table_sortkey(parse_feature_string($str->{named_collapses}{$f}{from}, 1), $str),
-            to => table_sortkey(parse_feature_string($str->{named_collapses}{$f}{to}, 1), $str),
+            from => table_sortkey($FS->parse($str->{named_collapses}{$f}{from}), $str),
+            to => table_sortkey($FS->parse($str->{named_collapses}{$f}{to}), $str),
             undefine => [grep $undefinenda{$str->{order_i}[$_]}, 0..@{$str->{order_i}}-1],
-            avoid_unless => table_sortkey(parse_feature_string($str->{named_collapses}{$f}{avoid_unless}, 1), $str),
+            avoid_unless => table_sortkey($FS->parse($str->{named_collapses}{$f}{avoid_unless}), $str),
         );
       } else {
         my @which = grep $str->{order_i}[$_] == $feature_indices{$f}, 0..@{$str->{order_i}}-1;
@@ -2454,7 +2495,7 @@ sub tabulate {
   for my $thing (qw/rows columns rows_mod columns_mod/) {
     for (@{$str->{labels}{$thing}}) {
       my ($phone, $label) = split /: */;
-      my $position = table_sortkey parse_feature_string($phone, 1), $str, 1;
+      my $position = table_sortkey $FS->parse($phone), $str, 1;
       push @{$labels{$thing}}, $label;
       if ($thing =~ /^rows/) {
         push @{$label_phones{$thing}}, substr($position, 0, $str->{lengths}[0]);
@@ -2716,7 +2757,7 @@ sub name_natural_class {
       $str->{$scheme}{name_classes}{repeat_mod}{$thing} = $str->{$scheme}{'repeat_' . $thing} if $str->{$scheme}{'repeat_' . $thing};
       for (@{$str->{$scheme}{$thing}}) {
         my ($phone, $label) = split /: */;
-        $phone = parse_feature_string $phone, 1;
+        $phone = $FS->parse($phone);
         $label .= " [$thing]" if $modificate{$thing};
         if ($label =~ /\[.*\]/) {
           push @pmod, $phone;
@@ -2729,7 +2770,7 @@ sub name_natural_class {
         }
       }
     }
-    $_ = parse_feature_string('', 1);
+    $_ = $FS->parse('');
     push @p, $_;
     push @entailed_p, $_;
     push @l, $str->{name}; 
@@ -2740,8 +2781,8 @@ sub name_natural_class {
     $str->{$scheme}{name_classes}{l} = \@l;
     $str->{$scheme}{name_classes}{lmod} = \@lmod;
     while (my ($k, $v) = each %{$str->{$scheme}{eliminate}}) {
-      $str->{$scheme}{name_classes}{eliminate}{parse_feature_string($k, 1)} = 
-          parse_feature_string($v, 1);
+      $str->{$scheme}{name_classes}{eliminate}{$FS->parse($k)} = 
+          $FS->parse($v);
     }
   }
 
@@ -2862,7 +2903,7 @@ sub describe_set {
   }
   my (@usable_extra_classes, @antiusable_extra_classes);
   for (@{$phon_descr->{extra_natural_classes}}) {
-    my $extra = parse_feature_string($_, 1);
+    my $extra = $FS->parse($_);
     push @usable_extra_classes, $extra if !grep !/^$extra$/, @$phones;
     push @antiusable_extra_classes, $extra if !grep /^$extra$/, @$phones;
   }
@@ -2954,7 +2995,7 @@ sub describe_set {
   my $base_antipattern;
   while (my ($phone, $neg) = each %{$str->{labels}{special_negate}}) {
     for (@antipatterns) {
-      ($base, $base_antipattern) = ($neg, $_) if $_ eq parse_feature_string($phone, 1);
+      ($base, $base_antipattern) = ($neg, $_) if $_ eq $FS->parse($phone);
     }
   }
 
@@ -3060,7 +3101,7 @@ sub describe_syllable_structure {
     for my $slot (@{$phon_descr->{syllable_slots}}) {
       my $phone; 
       ($phone, $label) = split /: */, $slot;
-      $phone = '(' . join(')|(', map(parse_feature_string($_, 1), split(/\|/, $phone))) . ')';
+      $phone = '(' . join(')|(', map($FS->parse($_), split(/\|/, $phone))) . ')';
       my $mismatch = 0;
       for (@phones) {
         $mismatch = 1 unless /^$phone$/;
@@ -4001,51 +4042,28 @@ else {
 # David wanted a link to an IPA chart, but I hope that a humane rule description
 # would render that unnecessary.  We'll see.
 
-$FS = YAML::Any::LoadFile('features.yml');
-
-$feature_indices{$FS->{features}[$_]{name}} = $_ for (0..@{$FS->{features}}-1);
-for my $i (0..@{$FS->{features}}-1) {
-  if (defined $FS->{features}[$i]{requires}) {
-    my $s = parse_feature_string($FS->{features}[$i]{requires});
-    for (0..length($s)-1) {
-      push @{$features_requiring[substr($s, $_, 1)][$_]}, $i if (substr($s, $_, 1) =~ /[01]/);
-    }
-  }
-}
-for my $str (@{$FS->{strippings}}) {
-  $str->{condition_parsed} = parse_feature_string($str->{condition}, 1);
-}
-my @otherway_relations;
-for my $rel (@{$FS->{relations}}) {
-  if (defined $rel->{twoway}) {
-    my %flipped = %$rel;
-    $flipped{from} = $rel->{to};
-    $flipped{to} = $rel->{from};
-    push @otherway_relations, \%flipped;
-  }
-}
-push @{$FS->{relations}}, @otherway_relations;
+$FS = FeatureSystem::load_file('features.yml');
 
 $phonetic_alphabets{CXS} = YAML::Any::LoadFile('CXS.yml') if -f 'CXS.yml';
 $phonetic_alphabets{IPA} = YAML::Any::LoadFile('IPA_HTML.yml') if -f 'IPA_HTML.yml';
 for my $alphabet (values %phonetic_alphabets) {
   for my $type (qw/characters ligations/) {
     for my $c (keys %{$alphabet->{$type}}) {
-      $alphabet->{$type}{parse_feature_string $c, 1} = $alphabet->{$type}{$c};
+      $alphabet->{$type}{$FS->parse($c)} = $alphabet->{$type}{$c};
       delete $alphabet->{$type}{$c};
     }
   }
   for my $c (keys %{$alphabet->{modifiers}}) {
     my @fs = split / /, $c;
-    my $s = parse_feature_string($c, 1) . ' ' . parse_feature_string($fs[0], 1);
+    my $s = $FS->parse($c) . ' ' . $FS->parse($fs[0]);
     $alphabet->{modifiers}{$s} = $alphabet->{modifiers}{$c};
     delete $alphabet->{modifiers}{$c};
   }
 }
 
 if (defined $phone_to_interpret) {
-  $phone_to_interpret = parse_feature_string($phone_to_interpret) unless $phone_to_interpret =~ /^[.01u]*$/;
-  print '[' . name_phone($phone_to_interpret) . '] ' . feature_string($phone_to_interpret);
+  $phone_to_interpret = $FS->parse($phone_to_interpret, undefined => 1) unless $phone_to_interpret =~ /^[.01u]*$/;
+  print '[' . name_phone($phone_to_interpret) . '] ' . FS->feature_string($phone_to_interpret);
   $phone_to_interpret =~ /[01]/g;
   print '   ' . (pos($phone_to_interpret) - 1) if defined pos($phone_to_interpret);
   print "\n";
@@ -4061,7 +4079,7 @@ my $pd;
 if (defined $infile) {
   $pd = YAML::Any::LoadFile($infile);
 } else {
-  $pd = Phonology->generate;
+  $pd = Phonology::generate;
 }
 
 $phon_descr = YAML::Any::LoadFile('phon_descr.yml');
@@ -4074,10 +4092,10 @@ if (defined $outfile) {
   if (defined $humane_output) {
     for my $rule (@{$pd->{phone_generator}}, @{$pd->{phonology}}) {
       for my $displ (keys %{$rule->{precondition}}) {
-        $rule->{precondition_humane}{$displ} = feature_string $rule->{precondition}{$displ}, 1;
+        $rule->{precondition_humane}{$displ} = FS->feature_string($rule->{precondition}{$displ}, 1);
       }
       for my $displ (keys %{$rule->{effects}}) {
-        $rule->{effects_humane}{$displ} = feature_string $rule->{effects}{$displ}, 1;
+        $rule->{effects_humane}{$displ} = FS->feature_string($rule->{effects}{$displ}, 1);
       }
     }
     $pd->{phonology}[$_]{number} = $_ for 0..@{$pd->{phonology}}-1;
@@ -4144,7 +4162,7 @@ for (1..$num_words) {
     print "/" . spell_out($word) . "/\t[" . spell_out($surface_word) . "]\n";
     for my $phone (@$surface_word) {
       $_ = name_phone($phone);
-      print feature_string($phone), "\n" if /\#\#/;
+      print FS->feature_string($phone), "\n" if /\#\#/;
     }
   }
 }
