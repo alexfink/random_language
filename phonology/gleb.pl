@@ -37,7 +37,7 @@ use CGI;
 use constant INF => 9**9**9; # is there really nothing sensible better?
 use constant TWOPI => 6.28318530717958647688;
 
-my $version = '0.3.0a';
+my $version = '0.3.0b';
 my $credits = 'Gleb, a phonology generator, by Alex Fink' . 
               (' ' x (29 - length($version))) . # for a total length of 78
               "version $version";
@@ -130,6 +130,8 @@ sub feature_string {
   }
   $fs;
 }
+
+
 
 # Takes a phone and a phone with dots.  Replaces features in the first with non-dots in the second.
 sub overwrite {
@@ -301,17 +303,9 @@ sub conflict {
   return 0;
 }
 
-=doc
-sub feedings {
-  my $phonology = shift;
-  my @fbs;
-  for my $i (0..@$phonology-1) {
-    my @fed = grep feeds($phonology->[$i], $phonology->[$_]), 0..@$phonology-1;
-    push @fbs, {map(($_ => 1), @fed)};
-  }
-  @fbs;
-}
-=cut
+
+
+package Phonology;
 
 # Return annotations regarding which rules have which preconditions or excepts.
 # Used to optimise which rules we consider rerunning in running the phonology.
@@ -319,11 +313,11 @@ sub feedings {
 # We also use {seq} for those rules whose preconditions include a sequence;
 # these are those which can be newly triggered after a deletion.
 
-sub which_preconditions {
-  my $phonology = shift;
+sub annotate_with_preconditions {
+  my $self = shift; 
   my %which;
-  for my $i (0..@$phonology-1) {
-    my $rule = $phonology->[$i];
+  for my $i (0..@$self->{phonology}-1) {
+    my $rule = $self->{phonology}[$i];
     # Strippings need to be special-cased: the features they strip out shouldn't be allowed
     # to be turned on.
     if (defined $rule->{tag} and $rule->{tag} =~ /^stripping/) {
@@ -374,34 +368,36 @@ sub which_preconditions {
     }
     push @{$which{seq}}, $i if keys %{$rule->{precondition}} >= 2;
   }
-  \%which;
+
+  $self->{which_preconditions} = \%which;
 }
 
 # Drop, from a completed phonology, rules that go inactive too early to ever run.
 
 sub trim_inactive {
-  my $pd = shift;
+  my $self = shift;
   my @new_indices;
   my $deleted = 0;
 
-  for (my $i = 0; $i < $pd->{start_sequences}-$deleted; $i++) {
-    if (defined $pd->{phonology}[$i]{inactive} and $pd->{phonology}[$i]{inactive} <= $pd->{start_sequences}) {
-      splice @{$pd->{phonology}}, $i, 1;
+  for (my $i = 0; $i < $self->{start_sequences}-$deleted; $i++) {
+    if (defined $self->{phonology}[$i]{inactive} and $self->{phonology}[$i]{inactive} <= $self->{start_sequences}) {
+      splice @{$self->{phonology}}, $i, 1;
       $i--;
       $deleted++;
     }
     push @new_indices, $i;
   }
   # I don't suppose it actually matters when a rule is inactivated if that time is before it runs.
-  for my $rule (@{$pd->{phonology}}) {
-    $rule->{inactive} = $rule->{inactive} >= $pd->{start_sequences} 
+  for my $rule (@{$self->{phonology}}) {
+    $rule->{inactive} = $rule->{inactive} >= $self->{start_sequences} 
                       ? $rule->{inactive} - $deleted 
                       : $new_indices[$rule->{inactive}]
         if defined $rule->{inactive};
   }
-  $pd->{start_sequences} -= $deleted;
+  $self->{start_sequences} -= $deleted;
 }
 
+package main;
 
 # Record the changes between from $phone0 to $phone1, as described below.
 
@@ -1003,6 +999,12 @@ sub gen_one_rule {
       }
       $base_rule{except} = {%except};
     }
+    if ($kind =~ /_split$/ and defined $unsplit_d->{except}) {
+      for my $displ (keys %{$unsplit_d->{except}}) {
+        $base_rule{except}{$displ} .= ' ' if defined $base_rule{except}{$displ};
+        $base_rule{except}{$displ} .= join ' ', map parse_feature_string($_, 1), split /, */, $unsplit_d->{except}{$displ};
+      }
+    }
 
     my $pause_phone;
     @_ = split / +([0-9.]+) */, $d->{pause_phone};
@@ -1372,6 +1374,8 @@ sub gen_one_rule {
 
 
 
+package Phonology;
+
 # A complete generated phonology has the following layers.
 #
 # (1) General single segment repair and default feature insertion rules.
@@ -1388,7 +1392,6 @@ sub gen_one_rule {
 # different contexts alone.  Instead, we'll eventually generate a thing for them:
 # perhaps a table with several small dimensions, and for each value of each dimension
 # one (or a few?) feature-values from among the contrastive features,
-# probably using related features to generate values of the same contrast as we might.  
 #
 # Things, vowels included, have to be able to alternate with zero!
 # In allophony mode (sound change mode is different)
@@ -1402,8 +1405,31 @@ sub gen_one_rule {
 # as normal and overstamp them with the feature values from the alternation somehow.
 # This still needs some thought on what to do about features in an alternation
 # that don't fulfill their requisites for generation (think also about sound change).  
+#
+# To make good deeper alternations probably requires using related features and stuff
+# to retcon some extra history.  But that seems hard.
 
-sub gen_phonology {
+sub generate {
+  print STDERR "generating phonology...\n" if $verbose;
+  my $pd = Phonology->generate_preliminary;
+  $pd->annotate_with_preconditions;
+  print STDERR "computing inventory...\n" if $verbose;
+  $pd->compute_inventory; # base inventory for generation
+  $pd->postprocess_inventory;
+  delete $pd->{phone_generator}; # now this is needless
+  if ($debug < 1) {
+    $pd->trim_inactive; 
+  } else {
+    print STDERR "pruning of inactive rules skipped\n";
+  }
+  $pd->annotate_with_preconditions; # since the numbers are changed
+  for (@{$pd->{phonology}}) {
+    strip_feed_annotation $_;
+  }
+  return $pd;
+}
+
+sub generate_preliminary {
   my (@phone_generator, @phonology);
   my @syllable_structure;
 
@@ -1421,7 +1447,7 @@ sub gen_phonology {
       my $remaining_weight = 1; # pre-fuzz weight
       my $fuzzed_weight = 0; # post-fuzz weight
       while (@featureses) {
-        my $phone = parse_feature_string shift @featureses;
+        my $phone = main::parse_feature_string shift @featureses;
         $remaining_weight -= @featureses[0] if @featureses;
         $_ = (@featureses ? shift @featureses : $remaining_weight) * (rand() + rand());
         $fuzzed_weight += $_;
@@ -1430,7 +1456,7 @@ sub gen_phonology {
       $featureses{$_} /= $fuzzed_weight for (keys %featureses);
 
       my $rslot = {
-        prob => fuzz($slot->{presence}),
+        prob => main::fuzz($slot->{presence}),
         features => \%featureses,
         tag => $slot->{tag},
       };
@@ -1674,7 +1700,7 @@ sub gen_phonology {
     } 
     # We pass the generator as a way of specifying what contrasts are available.
     # For sound change purposes we'll need an alternate way to pass this information.
-    gen_one_rule \@phonology, $tag, 
+    main::gen_one_rule \@phonology, $tag, 
         generator => \@phone_generator, 
         generable_val => \@generable_val, 
         initial => 1,
@@ -1683,8 +1709,17 @@ sub gen_phonology {
         forcibly_unmark => defined $start_sequences ? undef : \%forcibly_unmark; 
   }
     
-  ($start_sequences, \@syllable_structure, \@phone_generator, \@phonology);
+  my $self = {
+    syllable_structure => \@syllable_structure,
+    phone_generator => \@phone_generator, 
+    phonology => \@phonology,
+    start_sequences => $start_sequences,
+  };
+  bless $self;
 }
+
+package main;
+
 
 
 # In a modifier description, it's only the first phone that the modifier actually spells;
@@ -1773,10 +1808,14 @@ sub add_in {
   }
 }
 
-sub inventory {
-  my $phonology_data = shift;
+package Phonology;
+
+# The inventory this returns is raw, and needs a post-processing stage.
+
+sub compute_inventory {
+  my $self = shift;
   my ($syllable_structure, $phone_generator, $phonology, $which_preconditions) = 
-      @$phonology_data{qw/syllable_structure phone_generator phonology which_preconditions/};
+      @$self{qw/syllable_structure phone_generator phonology which_preconditions/};
   # This is a hash from phones to lists of probabilities in the various syllable positions.  
   # We use these for generation and to calculate the entropy.  However, we don't take any interactions
   # between phones into account for these numbers, so they're kind of crude.
@@ -1784,7 +1823,7 @@ sub inventory {
 
   for my $i (0..@$syllable_structure-1) {
     for my $phone (keys %{$syllable_structure->[$i]{features}}) {
-      add_in \%inventory, $phone, 
+      main::add_in \%inventory, $phone, 
           [map(($_ == $i ? $syllable_structure->[$i]{features}{$phone} : 0), 
                (0..@$syllable_structure-1))];
     }
@@ -1797,11 +1836,11 @@ sub inventory {
     my @v = @{$inventory{$phone}};
       my @word;
       @word = ($phone);
-      run_one_rule \@word, $rule, rand_value => 0;
-      add_in \%inventory2, $word[0], [map $v[$_] * $rule->{prob}[$_], 0..@v-1];
+      main::run_one_rule \@word, $rule, rand_value => 0;
+      main::add_in \%inventory2, $word[0], [map $v[$_] * $rule->{prob}[$_], 0..@v-1];
       @word = ($phone); 
-      run_one_rule \@word, $rule, rand_value => 1;
-      add_in \%inventory2, $word[0], [map $v[$_] * (1 - $rule->{prob}[$_]), 0..@v-1];
+      main::run_one_rule \@word, $rule, rand_value => 1;
+      main::add_in \%inventory2, $word[0], [map $v[$_] * (1 - $rule->{prob}[$_]), 0..@v-1];
     }
     %inventory = %inventory2;
   }
@@ -1811,7 +1850,7 @@ sub inventory {
     my $stripped = add_entailments $phone;
     $stripped =~ s/U/u/g;
     if ($stripped ne $phone) {
-      add_in \%inventory, $stripped, $inventory{$phone};
+      main::add_in \%inventory, $stripped, $inventory{$phone};
       delete $inventory{$phone};
     }
   }
@@ -1822,13 +1861,13 @@ sub inventory {
   for my $phone (keys %inventory) {
     my @word = ($phone);
     print STDERR "in:  $phone\n" if $debug >= 1; 
-    run_phonology \@word, $phonology, 
+    main::run_phonology \@word, $phonology, 
                   which_preconditions => $which_preconditions, 
-                  end => $phonology_data->{start_sequences};
+                  end => $self->{start_sequences};
     my $outcome = join(' ', @word);
     print STDERR "out: $outcome /" . (@word ? name_phone($word[0]) : '') . "/\n" if $debug >= 1;
     $resolver{$phone} = $outcome;
-    add_in \%prinv, $outcome, $inventory{$phone};
+    main::add_in \%prinv, $outcome, $inventory{$phone};
   }
 
   # Handle zero specially: its likelihood should not be given by resolutions
@@ -1853,8 +1892,10 @@ sub inventory {
 
   # We will need to use the resolver when it comes to generating alternations.  
   # It's not necessary to for ordinary stem generation, though; for that the inventory suffices.
-  \%prinv;
+  $self->{gen_inventory} = \%prinv;
 }
+
+package main;
 
 # Do some artificial thing meant to stop a lot of the frequency mass from being concentrated
 # in a few phones.  Fairly harsh.
@@ -1873,68 +1914,72 @@ sub bend_frequencies {
   }
 }
 
+package Phonology;
+
 # Make some tweaks to the inventory of the sort that're problematic to do in initial generation.
 # There is some icky duplication in here.
 sub postprocess_inventory {
-  my $pd = shift;
+  my $self = shift;
 
-  for (my $i = $#{$pd->{syllable_structure}}; $i >= 0; --$i) {
+  for (my $i = $#{$self->{syllable_structure}}; $i >= 0; --$i) {
     # bend frequencies
-    if (defined $pd->{syllable_structure}[$i]{bend}) {
-      bend_frequencies $pd->{gen_inventory}, $i, $pd->{syllable_structure}[$i]{bend};
-      delete $pd->{syllable_structure}[$i]{bend};
+    if (defined $self->{syllable_structure}[$i]{bend}) {
+      bend_frequencies $self->{gen_inventory}, $i, $self->{syllable_structure}[$i]{bend};
+      delete $self->{syllable_structure}[$i]{bend};
     }
 
     # drop nonmatches if we want to force matches
-    if (defined $pd->{syllable_structure}[$i]{reprune}) {
+    if (defined $self->{syllable_structure}[$i]{reprune}) {
       my $sum = 0;
-      for my $phone (keys %{$pd->{gen_inventory}}) {
-        $pd->{gen_inventory}{$phone}[$i] = 0 if $phone and !grep {s/u/./; $phone =~ /^$_$/;} keys %{$pd->{syllable_structure}[$i]{features}};
-        $sum += $pd->{gen_inventory}{$phone}[$i];
-        unless (grep $_ > 0, @{$pd->{gen_inventory}{$phone}}) {
-          delete $pd->{gen_inventory}{$phone};
+      for my $phone (keys %{$self->{gen_inventory}}) {
+        $self->{gen_inventory}{$phone}[$i] = 0 if $phone and !grep {s/u/./; $phone =~ /^$_$/;} keys %{$self->{syllable_structure}[$i]{features}};
+        $sum += $self->{gen_inventory}{$phone}[$i];
+        unless (grep $_ > 0, @{$self->{gen_inventory}{$phone}}) {
+          delete $self->{gen_inventory}{$phone};
         }
       }
-      for my $phone (keys %{$pd->{gen_inventory}}) {
-        $pd->{gen_inventory}{$phone}[$i] /= $sum;
+      for my $phone (keys %{$self->{gen_inventory}}) {
+        $self->{gen_inventory}{$phone}[$i] /= $sum;
       }
-      delete $pd->{syllable_structure}[$i]{reprune};
+      delete $self->{syllable_structure}[$i]{reprune};
     }
 
     # drop excepted things
-    if (defined $pd->{syllable_structure}[$i]{except}) {
+    if (defined $self->{syllable_structure}[$i]{except}) {
       my $sum = 0;
-      for my $phone (keys %{$pd->{gen_inventory}}) {
-        $pd->{gen_inventory}{$phone}[$i] = 0 if grep $phone =~ /^$_$/, @{$pd->{syllable_structure}[$i]{except}};        
-        $sum += $pd->{gen_inventory}{$phone}[$i];
-        unless (grep $_ > 0, @{$pd->{gen_inventory}{$phone}}) {
-          delete $pd->{gen_inventory}{$phone};
+      for my $phone (keys %{$self->{gen_inventory}}) {
+        $self->{gen_inventory}{$phone}[$i] = 0 if grep $phone =~ /^$_$/, @{$self->{syllable_structure}[$i]{except}};        
+        $sum += $self->{gen_inventory}{$phone}[$i];
+        unless (grep $_ > 0, @{$self->{gen_inventory}{$phone}}) {
+          delete $self->{gen_inventory}{$phone};
         }
       }
-      for my $phone (keys %{$pd->{gen_inventory}}) {
-        $pd->{gen_inventory}{$phone}[$i] /= $sum;
+      for my $phone (keys %{$self->{gen_inventory}}) {
+        $self->{gen_inventory}{$phone}[$i] /= $sum;
       }
-      delete $pd->{syllable_structure}[$i]{except};
+      delete $self->{syllable_structure}[$i]{except};
     }
 
     # eliminate positions with nothing in them
-    if ($pd->{gen_inventory}{''}[$i] >= 1) {
-      for my $phone (keys %{$pd->{gen_inventory}}) {
-        splice @{$pd->{gen_inventory}{$phone}}, $i, 1;
+    if ($self->{gen_inventory}{''}[$i] >= 1) {
+      for my $phone (keys %{$self->{gen_inventory}}) {
+        splice @{$self->{gen_inventory}{$phone}}, $i, 1;
       }
-      splice @{$pd->{syllable_structure}}, $i, 1;
+      splice @{$self->{syllable_structure}}, $i, 1;
     }
   }
 
   # Now that we're done playing with it, record entropies in bits on the syllable structure.  
-  for my $i (0..@{$pd->{syllable_structure}}-1) {
+  for my $i (0..@{$self->{syllable_structure}}-1) {
     my $entropy = 0;
-    while (my ($phone, $v) = each %{$pd->{gen_inventory}}) {
+    while (my ($phone, $v) = each %{$self->{gen_inventory}}) {
       $entropy += $v->[$i] * log($v->[$i]) / log(0.5) if $v->[$i] > 0;
     }
-    $pd->{syllable_structure}[$i]{entropy} = $entropy; 
+    $self->{syllable_structure}[$i]{entropy} = $entropy; 
   }
 }
+
+package main;
 
 
 sub generate_form {
@@ -1944,15 +1989,8 @@ sub generate_form {
   $normal += rand(1/4.0) for 1..8; # std dev sqrt(2/3) eh
   my $entropy = $normal * $target_entropy; 
 
-  # This was the old way, which would now have problems with the 'U' value
-  # and the multiple probabilities on generator rules, and presumably other things.
-  #
-  #   my @syl;
-  #   @syl = (@syl, generate_syllable $syllable_structure) for (1..$num_syllables);
-  #   run_phonology \@syl, $phone_generator,generator => 1; # This is obsolete and has been removed.
-  #   run_phonology \@syl, $phonology, which_preconditions => (whatever);
-  #
-  # But the below is more direct, and the above is to be treated as unsupported.
+  # Form generation was once done by rules with probabilistic effects.  But that is long obsolete.
+  # TODO: remove this.  (It's marked OBSOLETE: above.)
   
   my @form;
   # The form of this loop will very much be changing when we start asking for
@@ -2077,6 +2115,32 @@ sub canonicalise_phonemic_form {
     } 
   }
   (\@current_word, \@canonical_word);
+}
+
+# TODO: this belongs in the describer class
+sub describe_inventory {
+  my ($pd, %args) = @_;
+  my $buffer = '';
+
+  if ($args{use_html}) {
+    $buffer .= CGI::h2('Phonemic inventory'), tabulate($pd);
+  } else {
+    my %things_named;
+    $buffer .= "phonemic inventory:\n"; 
+    for my $p (sort keys %{$pd->{gen_inventory}}) { 
+      my $n = join '', map name_phone($_), split / /, $p;
+      $buffer .= "/" . ($n !~ /\#\#/ ? $n : feature_string($p)) . "/\t@{$pd->{gen_inventory}{$p}}\n";
+      push @{$things_named{$n}}, $p if ($n !~ /\#\#/);
+    }
+    for my $name (keys %things_named) { # left in in case it crops up
+      if (@{$things_named{$name}} >= 2) {
+        warn "duplicate [$name]\n";
+        warn "$_\n" for @{$things_named{$name}};
+      }
+    }
+    # subtract 1 for the empty phone
+    $buffer .= "that's " . ((keys %{$pd->{gen_inventory}}) - 1) . " phonemes\n";
+  }
 }
 
 
@@ -2316,6 +2380,7 @@ sub tabulate_label {
 
 # Return an HTML table of the phonology.  
 
+# TODO: this belongs in the describer class
 sub tabulate {
   my ($pd, %args) = (shift, @_);
   my $str = defined $args{structure} ? $args{structure} : $phon_descr->{table_structure};
@@ -2559,7 +2624,6 @@ sub tabulate {
   }
   $table .= "</table>\n";
 }
-
 
 sub English_indefinite {
   my $a = shift;
@@ -3991,67 +4055,24 @@ if (defined $phone_to_interpret) {
 print STDERR "seed $seed\n" if $verbose; 
 srand $seed; 
 
-my $phonology_data;
+my $pd;
 
+# HERE and downwards: this is the main locus of current objecting.
 if (defined $infile) {
-  $phonology_data = YAML::Any::LoadFile($infile);
-} 
-
-else {
-  print STDERR "generating phonology...\n" if $verbose;
-  my ($start_sequences, $syllable_structure, $phone_generator, $phonology) = gen_phonology;
-  $phonology_data = {
-    syllable_structure => $syllable_structure,
-    phone_generator => $phone_generator, 
-    phonology => $phonology,
-    which_preconditions => which_preconditions($phonology),
-    start_sequences => $start_sequences,
-  };
-  print STDERR "computing inventory...\n" if $verbose;
-  $phonology_data->{gen_inventory} = inventory $phonology_data; # base inventory for generation
-  postprocess_inventory $phonology_data;
-  delete $phonology_data->{phone_generator}; # now this is needless
-  if ($debug < 1) {
-    trim_inactive $phonology_data; 
-  } else {
-    print STDERR "pruning of inactive rules skipped\n";
-  }
-  $phonology_data->{which_preconditions} = which_preconditions($phonology); # since the numbers are changed
-  for (@{$phonology_data->{phonology}}) {
-    strip_feed_annotation $_;
-  }
+  $pd = YAML::Any::LoadFile($infile);
+} else {
+  $pd = Phonology->generate;
 }
 
 $phon_descr = YAML::Any::LoadFile('phon_descr.yml');
 
 if ($show_inventory) {
-  if ($use_html) {
-    print CGI::h2('Phonemic inventory'),
-          tabulate $phonology_data;
-  } 
-  
-  else {
-    my %things_named;
-    print "phonemic inventory:\n"; 
-    for my $p (sort keys %{$phonology_data->{gen_inventory}}) { 
-      my $n = join '', map name_phone($_), split / /, $p;
-      print "/" . ($n !~ /\#\#/ ? $n : feature_string($p)) . "/\t@{$phonology_data->{gen_inventory}{$p}}\n";
-      push @{$things_named{$n}}, $p if ($n !~ /\#\#/);
-    }
-    for my $name (keys %things_named) { # left in in case it crops up
-      if (@{$things_named{$name}} >= 2) {
-        print "duplicate [$name]\n";
-        print "$_\n" for @{$things_named{$name}};
-      }
-    }
-    # subtract 1 for the empty phone
-    print "that's " . ((keys %{$phonology_data->{gen_inventory}}) - 1) . " phonemes\n";
-  }
+  print describe_inventory($pd, html => $use_html); 
 }
 
 if (defined $outfile) {
   if (defined $humane_output) {
-    for my $rule (@{$phonology_data->{phone_generator}}, @{$phonology_data->{phonology}}) {
+    for my $rule (@{$pd->{phone_generator}}, @{$pd->{phonology}}) {
       for my $displ (keys %{$rule->{precondition}}) {
         $rule->{precondition_humane}{$displ} = feature_string $rule->{precondition}{$displ}, 1;
       }
@@ -4059,14 +4080,14 @@ if (defined $outfile) {
         $rule->{effects_humane}{$displ} = feature_string $rule->{effects}{$displ}, 1;
       }
     }
-    $phonology_data->{phonology}[$_]{number} = $_ for 0..@{$phonology_data->{phonology}}-1;
+    $pd->{phonology}[$_]{number} = $_ for 0..@{$pd->{phonology}}-1;
   }
-  YAML::Any::DumpFile($outfile, $phonology_data);
+  YAML::Any::DumpFile($outfile, $pd);
 }
 
 if ($show_all) {
-  tabulate $phonology_data, annotate_only => 1;
-  my ($template, $elaborations) = describe_syllable_structure $phonology_data, html => $use_html;
+  tabulate($pd, annotate_only => 1); # TODO: could afford being given a name of its own
+  my ($template, $elaborations) = describe_syllable_structure $pd, html => $use_html;
   if ($use_html) { 
     print CGI::h2('Syllable structure'),
           CGI::p(join '', @$template),
@@ -4078,7 +4099,7 @@ if ($show_all) {
   }
 
   print STDERR "describing rules...\n" if $verbose;
-  my $rules = describe_rules $phonology_data;
+  my $rules = describe_rules $pd;
   if ($use_html) {
     print CGI::h2('Allophony'),
           CGI::ul(CGI::li($rules));
@@ -4095,16 +4116,16 @@ if ($use_html and $num_words > 0) {
 }
 
 for (1..$num_words) {
-  my $word = generate_form 12, $phonology_data; # magic entropy value
+  my $word = generate_form 12, $pd; # magic entropy value
   my $surface_word;
   my $generated_word = [@$word];
   if (defined $canonicalise) {
-    ($surface_word, $word) = canonicalise_phonemic_form $generated_word, $phonology_data;
+    ($surface_word, $word) = canonicalise_phonemic_form $generated_word, $pd;
   } else {
     $surface_word = [@$word];
-    run_phonology $surface_word, $phonology_data->{phonology}, 
-        which_preconditions => $phonology_data->{which_preconditions},
-        start => $phonology_data->{start_sequences}; 
+    run_phonology $surface_word, $pd->{phonology}, 
+        which_preconditions => $pd->{which_preconditions},
+        start => $pd->{start_sequences}; 
   }
 
   if ($use_html) {
