@@ -103,11 +103,9 @@ sub std_normal {
 }
 
 package FeatureSystem;
-# TODO: (proximal) put a reference to the feature system in the phonology.  But be certain not to
-# include it in phonologies saved to files!  That would inflate them ridiculously.
+# TODO: (proximal, with OOifying) put a reference to the feature system in the phonology.  
+# But be certain not to include it in phonologies saved to files!  That would inflate them ridiculously.
 
-# TODO: (ongoing!) (may as well, while this is happening) fix the calling conventions for this!
-# TODO: (proximal) rename to something leaner.
 # Uses dots for unspecified values, unless $args{undefined} is true when it uses 'u'.
 sub parse {
   my ($self, $fs, %args) = (shift, shift, @_);
@@ -198,9 +196,9 @@ sub compatible {
 
 sub add_requirements {
   my ($self, $reqd) = @_;
-  for my $i (0..length($_[0])-1) {
-    $reqd = overwrite($reqd, $self->parse($self->{features}[$i]{requires})) 
-        if substr($_[0], $i, 1) =~ /[01]/ and defined $self->{features}[$i]{requires};
+  for my $i (0..length($reqd)-1) {
+    $reqd = $self->overwrite($reqd, $self->parse($self->{features}[$i]{requires})) 
+        if substr($reqd, $i, 1) =~ /[01]/ and defined $self->{features}[$i]{requires};
   }
   $reqd;
 }
@@ -362,7 +360,7 @@ package Phonology;
 sub annotate_with_preconditions {
   my $self = shift; 
   my %which;
-  for my $i (0..@$self->{phonology}-1) {
+  for my $i (0..@{$self->{phonology}}-1) {
     my $rule = $self->{phonology}[$i];
     # Strippings need to be special-cased: the features they strip out shouldn't be allowed
     # to be turned on.
@@ -1165,7 +1163,6 @@ sub gen_one_rule {
       # For essentially historical reasons, {flip} and {related_weight} belong to the whole constraint,
       # not the resolution.  If entries in {flip} or keys in {related_weight} are followed by
       # a number, they apply only to the phone of that index, else they apply to all phones.
-      # TESTING
       elsif ($reskind eq 'free') {
         my $resolvend = $phones[$arg];
         my $reqd = $FS->add_requirements($resolvend);
@@ -1458,19 +1455,19 @@ package Phonology;
 sub generate {
   print STDERR "generating phonology...\n" if $verbose;
   my $pd = Phonology::generate_preliminary();
-  $pd->annotate_with_preconditions;
+  $pd->annotate_with_preconditions();
   print STDERR "computing inventory...\n" if $verbose;
-  $pd->compute_inventory; # base inventory for generation
-  $pd->postprocess_inventory;
+  $pd->compute_inventory(); # base inventory for generation
+  $pd->postprocess_inventory();
   delete $pd->{phone_generator}; # now this is needless
   if ($debug < 1) {
-    $pd->trim_inactive; 
+    $pd->trim_inactive(); 
   } else {
     print STDERR "pruning of inactive rules skipped\n";
   }
-  $pd->annotate_with_preconditions; # since the numbers are changed
+  $pd->annotate_with_preconditions(); # since the numbers are changed
   for (@{$pd->{phonology}}) {
-    strip_feed_annotation $_;
+    main::strip_feed_annotation $_;
   }
   return $pd;
 }
@@ -1911,7 +1908,7 @@ sub compute_inventory {
                   which_preconditions => $which_preconditions, 
                   end => $self->{start_sequences};
     my $outcome = join(' ', @word);
-    print STDERR "out: $outcome /" . (@word ? name_phone($word[0]) : '') . "/\n" if $debug >= 1;
+    print STDERR "out: $outcome /" . (@word ? main::name_phone($word[0]) : '') . "/\n" if $debug >= 1;
     $resolver{$phone} = $outcome;
     main::add_in \%prinv, $outcome, $inventory{$phone};
   }
@@ -1941,10 +1938,9 @@ sub compute_inventory {
   $self->{gen_inventory} = \%prinv;
 }
 
-package main;
-
 # Do some artificial thing meant to stop a lot of the frequency mass from being concentrated
 # in a few phones.  Fairly harsh.
+# Class method.
 sub bend_frequencies {
   my ($gi, $i, $threshold) = (shift, shift, shift);
   my $n = scalar keys %$gi;
@@ -1959,8 +1955,6 @@ sub bend_frequencies {
     $gi->{$phone}[$i] /= $sum;
   }
 }
-
-package Phonology;
 
 # Make some tweaks to the inventory of the sort that're problematic to do in initial generation.
 # There is some icky duplication in here.
@@ -2168,14 +2162,14 @@ sub describe_inventory {
   my ($pd, %args) = @_;
   my $buffer = '';
 
-  if ($args{use_html}) {
-    $buffer .= CGI::h2('Phonemic inventory'), tabulate($pd);
+  if ($args{html}) {
+    $buffer .= CGI::h2('Phonemic inventory') . tabulate($pd); # HERE
   } else {
     my %things_named;
     $buffer .= "phonemic inventory:\n"; 
     for my $p (sort keys %{$pd->{gen_inventory}}) { 
       my $n = join '', map name_phone($_), split / /, $p;
-      $buffer .= "/" . ($n !~ /\#\#/ ? $n : FS->feature_string($p)) . "/\t@{$pd->{gen_inventory}{$p}}\n";
+      $buffer .= "/" . ($n !~ /\#\#/ ? $n : $FS->feature_string($p)) . "/\t@{$pd->{gen_inventory}{$p}}\n";
       push @{$things_named{$n}}, $p if ($n !~ /\#\#/);
     }
     for my $name (keys %things_named) { # left in in case it crops up
@@ -4068,7 +4062,7 @@ for my $alphabet (values %phonetic_alphabets) {
 
 if (defined $phone_to_interpret) {
   $phone_to_interpret = $FS->parse($phone_to_interpret, undefined => 1) unless $phone_to_interpret =~ /^[.01u]*$/;
-  print '[' . name_phone($phone_to_interpret) . '] ' . FS->feature_string($phone_to_interpret);
+  print '[' . name_phone($phone_to_interpret) . '] ' . $FS->feature_string($phone_to_interpret);
   $phone_to_interpret =~ /[01]/g;
   print '   ' . (pos($phone_to_interpret) - 1) if defined pos($phone_to_interpret);
   print "\n";
@@ -4097,10 +4091,10 @@ if (defined $outfile) {
   if (defined $humane_output) {
     for my $rule (@{$pd->{phone_generator}}, @{$pd->{phonology}}) {
       for my $displ (keys %{$rule->{precondition}}) {
-        $rule->{precondition_humane}{$displ} = FS->feature_string($rule->{precondition}{$displ}, 1);
+        $rule->{precondition_humane}{$displ} = $FS->feature_string($rule->{precondition}{$displ}, 1);
       }
       for my $displ (keys %{$rule->{effects}}) {
-        $rule->{effects_humane}{$displ} = FS->feature_string($rule->{effects}{$displ}, 1);
+        $rule->{effects_humane}{$displ} = $FS->feature_string($rule->{effects}{$displ}, 1);
       }
     }
     $pd->{phonology}[$_]{number} = $_ for 0..@{$pd->{phonology}}-1;
@@ -4109,7 +4103,7 @@ if (defined $outfile) {
 }
 
 if ($show_all) {
-  tabulate($pd, annotate_only => 1); # TODO: could afford being given a name of its own
+  tabulate($pd, annotate_only => 1); # should this be given a name of its own?
   my ($template, $elaborations) = describe_syllable_structure $pd, html => $use_html;
   if ($use_html) { 
     print CGI::h2('Syllable structure'),
@@ -4167,7 +4161,7 @@ for (1..$num_words) {
     print "/" . spell_out($word) . "/\t[" . spell_out($surface_word) . "]\n";
     for my $phone (@$surface_word) {
       $_ = name_phone($phone);
-      print FS->feature_string($phone), "\n" if /\#\#/;
+      print $FS->feature_string($phone), "\n" if /\#\#/;
     }
   }
 }
