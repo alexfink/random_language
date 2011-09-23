@@ -7,9 +7,9 @@
 # (A greater proportion of the numbers are wholly fabricated, though!)
 
 # Proximal plan for cleanliness:
-# - Refactoring: make some classes, do some encapsulation, split files out.
+# - Refactoring: make some classes, perhaps do some encapsulation, split files out.
 # Short-term plan for features:
-# - Out of the first of the above will fall a framework for general constraints against sequences 
+# - Our new general sequence rules yield a framework for general constraints against sequences 
 #   (e.g. trapped resonant, /tl/, increasing sonority sequences in V_V, ...)
 # - Presence of certain contrasts influencing chances of certain assimilations.
 #   (I'm thinking of resonant voice assimilation, and V frontness assim to C.)
@@ -535,6 +535,8 @@ sub run_one_rule {
   $changed;
 }
 
+package Phonology;
+
 # Persistent rules implement so-called surface filters.  
 
 # Persistence is the default state of affairs for a non-generator rule.
@@ -565,8 +567,9 @@ sub run_one_rule {
 use constant STEPS_TO_LOOP => 10;
 use constant STEPS_TO_DIE => 30;
 
-sub run_phonology {
-  my ($word, $phonology, %args) = (shift, shift, @_);
+sub run {
+  my ($self, $word, %args) = (shift, shift, @_);
+  my $phonology = $self->{phonology};
 
   my $start = defined $args{start} ? $args{start} : 0;
   my $end = defined $args{end} ? $args{end} : @$phonology;
@@ -574,7 +577,7 @@ sub run_phonology {
   my $first_time = 1;
   @{$args{sources}} = 0..@$word-1 if (defined $args{sources} and !@{$args{sources}});
   my $track_expiry;
-  $track_expiry = INF if defined $args{track_expiry};
+  $track_expiry = main::INF if defined $args{track_expiry};
 
   my @loop_rules;
   my @loop_cessions;
@@ -594,9 +597,9 @@ sub run_phonology {
 
         my @changes;
         if (($first_time and defined $args{cleanup}) or
-            run_one_rule $word, $phonology->[$i], %args, changes => \@changes) {
+            main::run_one_rule $word, $phonology->[$i], %args, changes => \@changes) {
           if (keys %{$phonology->[$i]{precondition}} > 1) { # an optimization.  helpful?
-            1 while run_one_rule $word, $phonology->[$i], %args;
+            1 while main::run_one_rule $word, $phonology->[$i], %args;
           }
           print STDERR "@$word (after $i)\n" if $debug >= 1;
 
@@ -618,17 +621,17 @@ sub run_phonology {
             push @loop_rules, $i;
             push @loop_cessions, $phonology->[$i]{cede};
           }
-          if (defined $args{which_preconditions}) {
+          if (defined $self->{which_preconditions}) {
             # We might need to rerun the rules which have as a precondition a feature
             # this rule has newly acquired.
             my @new_agenda;
             for my $change (@changes) {
               if ($change =~ /^c (.*) (.*)$/) {
-                push @new_agenda, @{$args{which_preconditions}{$1}[$2]}
-                    if defined $args{which_preconditions}{$1}[$2];
+                push @new_agenda, @{$self->{which_preconditions}{$1}[$2]}
+                    if defined $self->{which_preconditions}{$1}[$2];
               }
               elsif ($change eq 'd') {
-                push @new_agenda, @{$args{which_preconditions}{seq}} if defined $args{which_preconditions}{seq};
+                push @new_agenda, @{$self->{which_preconditions}{seq}} if defined $self->{which_preconditions}{seq};
               }
             }
             %new_agenda = (%new_agenda, map(($_ => 1), @new_agenda));
@@ -649,6 +652,7 @@ sub run_phonology {
   $args{track_expiry}[0] = $track_expiry if defined $track_expiry;
 }
 
+package main;
 
 
 # Create two variants of this rule, one persistent, one not.  Weight appropriately.
@@ -1839,6 +1843,9 @@ sub spell_out_spaces {
   join "", map name_phone($_, %args), (split / /, $word);
 }
 
+package Phonology;
+
+# vectors, whee.
 sub add_in {
   my ($inventory, $x, $v) = @_;
   return unless grep $_, @$v;
@@ -1850,8 +1857,6 @@ sub add_in {
     $inventory->{$x} = $v; # shallow copy okay?
   }
 }
-
-package Phonology;
 
 # The inventory this returns is raw, and needs a post-processing stage.
 
@@ -1866,7 +1871,7 @@ sub compute_inventory {
 
   for my $i (0..@$syllable_structure-1) {
     for my $phone (keys %{$syllable_structure->[$i]{features}}) {
-      main::add_in \%inventory, $phone, 
+      add_in \%inventory, $phone, 
           [map(($_ == $i ? $syllable_structure->[$i]{features}{$phone} : 0), 
                (0..@$syllable_structure-1))];
     }
@@ -1880,10 +1885,10 @@ sub compute_inventory {
       my @word;
       @word = ($phone);
       main::run_one_rule \@word, $rule, rand_value => 0;
-      main::add_in \%inventory2, $word[0], [map $v[$_] * $rule->{prob}[$_], 0..@v-1];
+      add_in \%inventory2, $word[0], [map $v[$_] * $rule->{prob}[$_], 0..@v-1];
       @word = ($phone); 
       main::run_one_rule \@word, $rule, rand_value => 1;
-      main::add_in \%inventory2, $word[0], [map $v[$_] * (1 - $rule->{prob}[$_]), 0..@v-1];
+      add_in \%inventory2, $word[0], [map $v[$_] * (1 - $rule->{prob}[$_]), 0..@v-1];
     }
     %inventory = %inventory2;
   }
@@ -1893,7 +1898,7 @@ sub compute_inventory {
     my $stripped = $FS->add_entailments($phone);
     $stripped =~ s/U/u/g;
     if ($stripped ne $phone) {
-      main::add_in \%inventory, $stripped, $inventory{$phone};
+      add_in \%inventory, $stripped, $inventory{$phone};
       delete $inventory{$phone};
     }
   }
@@ -1904,13 +1909,11 @@ sub compute_inventory {
   for my $phone (keys %inventory) {
     my @word = ($phone);
     print STDERR "in:  $phone\n" if $debug >= 1; 
-    main::run_phonology \@word, $phonology, 
-                  which_preconditions => $which_preconditions, 
-                  end => $self->{start_sequences};
+    $self->run(\@word, end => $self->{start_sequences});
     my $outcome = join(' ', @word);
     print STDERR "out: $outcome /" . (@word ? main::name_phone($word[0]) : '') . "/\n" if $debug >= 1;
     $resolver{$phone} = $outcome;
-    main::add_in \%prinv, $outcome, $inventory{$phone};
+    add_in \%prinv, $outcome, $inventory{$phone};
   }
 
   # Handle zero specially: its likelihood should not be given by resolutions
@@ -2022,6 +2025,8 @@ sub postprocess_inventory {
 package main;
 
 
+# TODO: (next up) move this into class Phonology, and the one after it.
+
 sub generate_form {
   my ($target_entropy, $pd) = (shift, shift);
 
@@ -2076,11 +2081,10 @@ sub canonicalise_phonemic_form {
     my @old_word = @current_word;
     my (@prov_canonical_word, @prov_current_word);
     my $changed;
-    run_phonology \@current_word, $pd->{phonology}, 
-        which_preconditions => $pd->{which_preconditions},
-        start => $k,
-        end => $k+1,
-        sources => \@sources;
+    $pd->run(\@current_word, 
+             start => $k,
+             end => $k+1,
+             sources => \@sources);
 #    print "target [" . spell_out(\@current_word) . "]\n"; # debug
     
     { # block for redo
@@ -2092,10 +2096,9 @@ sub canonicalise_phonemic_form {
           @prov_canonical_word = @canonical_word;
           splice @prov_canonical_word, $source, 1;
           @prov_current_word = @prov_canonical_word;
-          run_phonology \@prov_current_word, $pd->{phonology}, 
-              which_preconditions => $pd->{which_preconditions},
-              start => $pd->{start_sequences},
-              end => $k+1;
+          $pd->run(\@prov_current_word, 
+                   start => $pd->{start_sequences},
+                   end => $k+1);
           if (scalar @prov_current_word == scalar @current_word and
               !grep $prov_current_word[$_] != $current_word[$_], 0..$#current_word) {
             $changed = 1;
@@ -2129,10 +2132,9 @@ sub canonicalise_phonemic_form {
           if (defined $pd->{gen_inventory}{$prov_canonical_word[$sources[$i]]}) {
 #          print "trying out " . name_phone($prov_canonical_word[$sources[$i]]) . " at $i\n"; # debug
             @prov_current_word = @prov_canonical_word;
-            run_phonology \@prov_current_word, $pd->{phonology}, 
-                which_preconditions => $pd->{which_preconditions},
-                start => $pd->{start_sequences},
-                end => $k+1;
+            $pd->run(\@prov_current_word, 
+                     start => $pd->{start_sequences},
+                     end => $k+1);
             if (scalar @prov_current_word == scalar @current_word and
                 !grep $prov_current_word[$_] != $current_word[$_], 0..$#current_word) {
               $changed = 1;
@@ -3304,12 +3306,11 @@ sub describe_rules {
         if (!defined $phone_resolutions{$changed}) {
           my $word = [$changed];
           my $expiry = [];
-          run_phonology $word, $pd->{phonology}, 
-              which_preconditions => $pd->{which_preconditions},
-              cleanup => $i, 
-              change_record => [change_record($phone, $changed)],
-              track_expiry => $expiry,
-              nopause => 1;
+          $pd->run($word,
+                   cleanup => $i, 
+                   change_record => [change_record($phone, $changed)],
+                   track_expiry => $expiry,
+                   nopause => 1);
           $phone_resolutions{$changed} = join ' ', @$word;
           push @{$resolution_expiries{$expiry->[0]}}, $changed if $expiry->[0] < INF;
           push @new_inventory, @$word; 
@@ -4074,7 +4075,6 @@ srand $seed;
 
 my $pd;
 
-# HERE and downwards: this is the main locus of current objecting.
 if (defined $infile) {
   $pd = YAML::Any::LoadFile($infile);
 } else {
@@ -4140,9 +4140,7 @@ for (1..$num_words) {
     ($surface_word, $word) = canonicalise_phonemic_form $generated_word, $pd;
   } else {
     $surface_word = [@$word];
-    run_phonology $surface_word, $pd->{phonology}, 
-        which_preconditions => $pd->{which_preconditions},
-        start => $pd->{start_sequences}; 
+    $pd->run($surface_word, start => $pd->{start_sequences}); 
   }
 
   if ($use_html) {
