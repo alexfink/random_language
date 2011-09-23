@@ -18,6 +18,7 @@
 # - Implement some of the assimilations we already have code support for.
 # - Do something to get rid of syllable structures where the coda can have two resonants 
 #   but never an obstruent (3327079296 presently).
+# - Do something so that [?_j] goes to [j_k] more, even though it's constrained against?
 # - Coronals shouldn't front vowels, nor labials round them, etc., unless more obvious sources do too.
 # - We can simplify ``a phone or word-initially''.
 # > 0.3.1.  
@@ -445,10 +446,8 @@ sub run_one_rule {
     for my $displ (keys %{$rule->{effects}}) {
       next if ($i + $displ < 0 or $i + $displ >= @$word);
       my $effects = $rule->{effects}{$displ};
-      if (defined $rule->{prob}) {
-        my $r = defined $args{rand_value} ? $args{rand_value} : rand;
-        $effects = $rule->{antieffects}{$displ}
-            if $r >= $rule->{prob}[$syllable_position]; # OBSOLETE: randomised rules do their opposite if the dice say no
+      if (defined $args{rand_value}) {
+        $effects =~ y/01/10/ if $args{rand_value};
       }
       
       # Handle the assimilation characters. 
@@ -1491,7 +1490,6 @@ sub gen_phonology {
         my %rule = (
           precondition => {0 => $precondition},
           effects => {0 => parse_feature_string($f->{name}, 1)}, # er, rework this
-          antieffects => {0 => parse_feature_string('-' . $f->{name}, 1)}, 
           prob => [map fuzz($sit->{prob}), @syllable_structure],
         );
         substr($rule{effects}{0}, $feature_indices{$f->{antithetical}}, 1) = '0' if (defined $f->{antithetical});
@@ -1522,7 +1520,9 @@ sub gen_phonology {
             delete $slot->{features}{$phone};
             if (defined $f->{slots}{$slot->{tag}}) {
               if ($r < $f->{slots}{$slot->{tag}}[0]) {
-                $phone = overwrite $phone, $rule{antieffects}{0};
+                my $antieffect = $rule{effects}{0};
+                $antieffect =~ y/01/10/;
+                $phone = overwrite $phone, $antieffect;
               } elsif ($r < $f->{slots}{$slot->{tag}}[0] + $f->{slots}{$slot->{tag}}[1]) {
                 $phone = overwrite $phone, $rule{effects}{0};
                 $phone = overwrite $phone, parse_feature_string($f->{slot_if_on}, 1)
@@ -1549,7 +1549,9 @@ sub gen_phonology {
             # Using $rule{prob}[0] here of course isn't especially correct, but it'll do.
             $family_inventories{$fam}{overwrite($phone, $rule{effects}{0})} += 
               $family_inventories{$fam}{$phone} * $rule{prob}[0] if ($rule{prob}[0] > 0);
-            $family_inventories{$fam}{overwrite($phone, $rule{antieffects}{0})} += 
+            my $antieffect = $rule{effects}{0};
+            $antieffect =~ y/01/10/;
+            $family_inventories{$fam}{overwrite($phone, $antieffect)} += 
               $family_inventories{$fam}{$phone} * (1 - $rule{prob}[0]) if ($rule{prob}[0] < 1);
             delete $family_inventories{$fam}{$phone}; 
           }
