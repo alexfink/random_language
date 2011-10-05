@@ -2022,13 +2022,8 @@ sub postprocess_inventory {
   }
 }
 
-package main;
-
-
-# TODO: (next up) move this into class Phonology, and the one after it.
-
 sub generate_form {
-  my ($target_entropy, $pd) = (shift, shift);
+  my ($self, $target_entropy) = (shift, shift);
 
   my $normal = 0;
   $normal += rand(1/4.0) for 1..8; # std dev sqrt(2/3) eh
@@ -2042,18 +2037,18 @@ sub generate_form {
   # forms that aren't made of whole syllables.
   my $total_entropy = 0;
   while ($total_entropy < $entropy) {
-    for my $i (0..@{$pd->{syllable_structure}}-1) {
-      # next if $pd->{syllable_structure}[$i]{nonzero_prob} == 0; # these cases are eliminated.
+    for my $i (0..@{$self->{syllable_structure}}-1) {
+      # next if $self->{syllable_structure}[$i]{nonzero_prob} == 0; # these cases are eliminated.
 
-      $total_entropy += $pd->{syllable_structure}[$i]{entropy};
-      next if rand() >= $pd->{syllable_structure}[$i]{prob};
+      $total_entropy += $self->{syllable_structure}[$i]{entropy};
+      next if rand() >= $self->{syllable_structure}[$i]{prob};
 
-      my $rand = rand (1 - $pd->{gen_inventory}{''}[$i]);
+      my $rand = rand (1 - $self->{gen_inventory}{''}[$i]);
       my $selected_phone;
       # only generate structural zeroes in a form, not resolvent zeroes 
       # (though we've corrected the probabilities anyhow)
-      for (keys %{$pd->{gen_inventory}}) {
-        $selected_phone = $_, last if $_ ne '' and ($rand -= $pd->{gen_inventory}{$_}[$i]) < 0;
+      for (keys %{$self->{gen_inventory}}) {
+        $selected_phone = $_, last if $_ ne '' and ($rand -= $self->{gen_inventory}{$_}[$i]) < 0;
       }
       push @form, split / /, $selected_phone;
     }
@@ -2070,20 +2065,20 @@ sub generate_form {
 # TODO: when morphology gets here, respect it.  Also new types of change?
 
 sub canonicalise_phonemic_form {
-  my ($word, $pd) = (shift, shift);
+  my ($self, $word) = (shift, shift);
   my @canonical_word = @$word; 
   my @current_word = @$word;
   my @sources = 0..@$word-1;
   
-  for my $k ($pd->{start_sequences}..@{$pd->{phonology}}-1) {
+  for my $k ($self->{start_sequences}..@{$self->{phonology}}-1) {
 #    print "before $k /" . spell_out(\@canonical_word) . "/ [" . spell_out(\@current_word) . "]\n"; # debug
     my @old_sources = @sources;
     my @old_word = @current_word;
     my (@prov_canonical_word, @prov_current_word);
     my $changed;
-    $pd->run(\@current_word, 
-             start => $k,
-             end => $k+1,
+    $self->run(\@current_word, 
+               start => $k,
+               end => $k+1,
              sources => \@sources);
 #    print "target [" . spell_out(\@current_word) . "]\n"; # debug
     
@@ -2096,9 +2091,9 @@ sub canonicalise_phonemic_form {
           @prov_canonical_word = @canonical_word;
           splice @prov_canonical_word, $source, 1;
           @prov_current_word = @prov_canonical_word;
-          $pd->run(\@prov_current_word, 
-                   start => $pd->{start_sequences},
-                   end => $k+1);
+          $self->run(\@prov_current_word, 
+                     start => $self->{start_sequences},
+                     end => $k+1);
           if (scalar @prov_current_word == scalar @current_word and
               !grep $prov_current_word[$_] != $current_word[$_], 0..$#current_word) {
             $changed = 1;
@@ -2129,12 +2124,12 @@ sub canonicalise_phonemic_form {
           @prov_canonical_word = @canonical_word;
           substr($prov_canonical_word[$sources[$i]], $_, 1) = substr($current_word[$i], $_, 1) 
               for @prov_varied_features;
-          if (defined $pd->{gen_inventory}{$prov_canonical_word[$sources[$i]]}) {
+          if (defined $self->{gen_inventory}{$prov_canonical_word[$sources[$i]]}) {
 #          print "trying out " . name_phone($prov_canonical_word[$sources[$i]]) . " at $i\n"; # debug
             @prov_current_word = @prov_canonical_word;
-            $pd->run(\@prov_current_word, 
-                     start => $pd->{start_sequences},
-                     end => $k+1);
+            $self->run(\@prov_current_word, 
+                       start => $self->{start_sequences},
+                       end => $k+1);
             if (scalar @prov_current_word == scalar @current_word and
                 !grep $prov_current_word[$_] != $current_word[$_], 0..$#current_word) {
               $changed = 1;
@@ -2158,6 +2153,8 @@ sub canonicalise_phonemic_form {
   }
   (\@current_word, \@canonical_word);
 }
+
+package main;
 
 # TODO: this belongs in the describer class
 sub describe_inventory {
@@ -4133,11 +4130,11 @@ if ($use_html and $num_words > 0) {
 }
 
 for (1..$num_words) {
-  my $word = generate_form 12, $pd; # magic entropy value
+  my $word = $pd->generate_form(12); # magic entropy value
   my $surface_word;
   my $generated_word = [@$word];
   if (defined $canonicalise) {
-    ($surface_word, $word) = canonicalise_phonemic_form $generated_word, $pd;
+    ($surface_word, $word) = $pd->canonicalise_phonemic_form($generated_word);
   } else {
     $surface_word = [@$word];
     $pd->run($surface_word, start => $pd->{start_sequences}); 
