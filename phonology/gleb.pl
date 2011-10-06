@@ -74,6 +74,7 @@ my $CGI;
 my $seed =  time ^ $$ ^ $$<<15; 
 
 # Choose randomly from a hash giving weight distribution.  (Not called everywhere it might be, yet.)
+#PROXIMAL: But called from a few places; where should it go?
 sub weighted_one_of {
   my $sum = 0; 
   $sum += $_[2*$_+1] for 0..@_/2-1;
@@ -217,8 +218,7 @@ sub add_entailments {
   $phone;
 }
 
-package main;
-
+package PhonologicalRule;
 
 
 # Each rule is a hash.  In the simplest case, it has hashes of _preconditions_
@@ -299,8 +299,8 @@ sub feeds {
       #}
       
       # this is costly enough that it's slightly worth putting it in here.
-      feed_annotate $ri if !defined $ri->{precondition_ar};
-      feed_annotate $rj if !defined $rj->{precondition_ar};
+      $ri->feed_annotate() if !defined $ri->{precondition_ar};
+      $rj->feed_annotate() if !defined $rj->{precondition_ar};
       next if !$FS->compatible($ri->{outcome}{$i_displ}, $rj->{precondition_ar}{$j_displ});
 
       # The wrinkle-free cases.
@@ -333,10 +333,10 @@ sub feeds {
 # Two rules conflict if they feed each other at the same displacement and their
 # outcomes are incompatible.
 
-sub conflict {
+sub conflicts_with {
   my ($ri, $rj) = (shift, shift);
   my (@pij, @pji);
-  return 0 unless feeds($ri, $rj, pairs => \@pij) and feeds($rj, $ri, pairs => \@pji);
+  return 0 unless $ri->feeds($rj, pairs => \@pij) and $rj->feeds($ri, pairs => \@pji);
   return 1 unless @pij and @pji; # since it's some priority ramification thing.  shouldn't arise
   for my $dij (@pij) {
     for my $dji (@pji) {
@@ -454,13 +454,15 @@ sub change_record {
   @changes;
 }
 
+package PhonologicalRule;
+
 # If %args includes a list {changes}, tags describing the particular changes caused
 # will be pushed.  These tags are:
 # "c $v $f" -- feature $f was changed to value $v
 # "d" -- a segment was deleted
 
-sub run_one_rule {
-  my ($word, $rule, %args) = (shift, shift, @_);
+sub run {
+  my ($rule, $word, %args) = (shift, shift, @_);
   my $changed = 0;
   my $syllable_position = defined $args{syllable_position} ? $args{syllable_position} : 0;
   
@@ -516,7 +518,7 @@ sub run_one_rule {
       
       if ($word->[$i+$displ] ne $newphone) {
         $changed = 1;
-        push @{$args{changes}}, change_record($word->[$i+$displ], $newphone) if defined $args{changes};
+        push @{$args{changes}}, main::change_record($word->[$i+$displ], $newphone) if defined $args{changes};
       }
       $word->[$i+$displ] = $newphone;
     }
@@ -597,9 +599,9 @@ sub run {
 
         my @changes;
         if (($first_time and defined $args{cleanup}) or
-            main::run_one_rule $word, $phonology->[$i], %args, changes => \@changes) {
+            $phonology->[$i]->run($word, %args, changes => \@changes)) {
           if (keys %{$phonology->[$i]{precondition}} > 1) { # an optimization.  helpful?
-            1 while main::run_one_rule $word, $phonology->[$i], %args;
+            1 while $phonology->[$i]->run($word, %args);
           }
           print STDERR "@$word (after $i)\n" if $debug >= 1;
 
@@ -652,19 +654,18 @@ sub run {
   $args{track_expiry}[0] = $track_expiry if defined $track_expiry;
 }
 
-package main;
-
+package PhonologicalRule;
 
 # Create two variants of this rule, one persistent, one not.  Weight appropriately.
 sub persistence_variants {
-  my ($phonology, $base, $persistence_weight, $no_persist, $generable_val) = 
+  my ($self, $base_weight, $pd, $persistence_weight, $no_persist, $generable_val) = 
       (shift, shift, shift, shift, shift);
-  my ($base_rule, $base_weight) = @$base;
+  my $phonology = $pd->{phonology};
   my @makings;
 
   for my $persistent (0..1) {
     next if $persistent and $no_persist;
-    my $rule = {%$base_rule};
+    my $rule = {%$self};
     $rule->{inactive} = scalar @$phonology if !$persistent;
 
     # Loopbreaks and the like.  Only a worry if you want to be persistent.
@@ -687,7 +688,7 @@ sub persistence_variants {
       @potential_conflicts = keys %pch; 
       for my $j (@potential_conflicts) {
         next if defined $phonology->[$j]{inactive} and $phonology->[$j]{inactive} < @$phonology;
-        if (conflict($rule, $phonology->[$j])) {
+        if ($rule->conflicts_with($phonology->[$j])) {
 #              print "$reqd > $effects and\n$jreqd > $phonology->[$j]{effects}{$displ} [$j] clash\n"; # debug
           push @{$rule->{inactivate}}, $j;
           # this is an ugly kluge, but few rules have more than one effect
@@ -708,35 +709,35 @@ sub persistence_variants {
   @makings;
 }
 
-# Generate an extra condition for a given rule.
+# Generate an extra condition for this rule.
 
 sub gen_extra_condition {
-  my ($rule, %args) = (shift, @_);
+  my ($self, %args) = (shift, @_);
   my (%resolution_keys, %resolutions);
   my $global_res_count = 0;
 
-  for my $locus (keys %{$rule->{or_pause}}) {
+  for my $locus (keys %{$self->{or_pause}}) {
     # Restriction to word-extremal, and away from it.
-    my %rule1 = %$rule;
-    $rule1{precondition} = { %{$rule->{precondition}} }; # deep copy this part
+    my %rule1 = %$self;
+    $rule1{precondition} = { %{$self->{precondition}} }; # deep copy this part
     substr($rule1{precondition}{$locus}, 0, 1) = 'x';
     $resolution_keys{$global_res_count} = 0.5; # magic weight
     $resolutions{$global_res_count++} = \%rule1;
     
-    my %rule2 = %$rule;
-    $rule2{or_pause} = { %{$rule->{or_pause}} }; # deep copy this part
+    my %rule2 = %$self;
+    $rule2{or_pause} = { %{$self->{or_pause}} }; # deep copy this part
     delete $rule2{or_pause}{$locus};
     $resolution_keys{$global_res_count} = 0.5; # magic weight
     $resolutions{$global_res_count++} = \%rule2;
   }
 
-  for my $locus (keys %{$rule->{effects}}) {
-    my $effect = $rule->{effects}{$locus};
+  for my $locus (keys %{$self->{effects}}) {
+    my $effect = $self->{effects}{$locus};
 
     # Conditions of the same family as the effects (which we don't have stored in a special structure).
     %_ = map(($_ => 1), map split(/ /, $FS->{features}[$_]{families}), 
         grep substr($effect, $_, 1) ne '.', 0..length($effect)-1);
-    my @families = grep $FS->compatible($FS->parse($FS->{families}{$_}), $rule->{precondition}{$locus}),
+    my @families = grep $FS->compatible($FS->parse($FS->{families}{$_}), $self->{precondition}{$locus}),
         grep $_, keys %_;
     my @family_features = grep {
       my $i = $_;
@@ -746,11 +747,11 @@ sub gen_extra_condition {
         0..length($effect)-1);
     # TODO: handle this when there's no generable_val.  also, a more uniform way of dropping ungenerables for the later types
     for my $f (@family_features) {
-      next if substr($rule->{precondition}{$locus}, $f, 1) ne '.';
+      next if substr($self->{precondition}{$locus}, $f, 1) ne '.';
       for my $v (0..1) {
         next if $v == 0 and $FS->{features}[$f]{univalent};
-        my %rule1 = %$rule;
-        $rule1{precondition} = { %{$rule->{precondition}} }; # deep copy this part
+        my %rule1 = %$self;
+        $rule1{precondition} = { %{$self->{precondition}} }; # deep copy this part
         substr($rule1{precondition}{$locus}, $f, 1) = $v;
         $resolution_keys{$global_res_count} = $FS->{features}[$f]{univalent} ? 1.0 : 0.5; # magic factor
           # equiprobable on features, aot on their values
@@ -759,19 +760,19 @@ sub gen_extra_condition {
     }
     
     # Conditions related to the outcome.
-    my $outcome = $FS->overwrite($rule->{precondition}{$locus}, $effect);
+    my $outcome = $FS->overwrite($self->{precondition}{$locus}, $effect);
     $outcome =~ s/[<>]/./;
     for my $rel (@{$FS->{relations}}) {
       next if $rel->{spread_only};
       $_ = $FS->parse($rel->{to});
       next unless $outcome =~ /^$_$/;
       
-      my %rule1 = %$rule;
-      $rule1{precondition} = { %{$rule->{precondition}} }; # deep copy this part
+      my %rule1 = %$self;
+      $rule1{precondition} = { %{$self->{precondition}} }; # deep copy this part
       my $extra = $FS->parse($rel->{from});
       next unless $FS->compatible($rule1{precondition}{$locus}, $extra);
       $rule1{precondition}{$locus} = $FS->overwrite($rule1{precondition}{$locus}, $extra);
-      next if $rule1{precondition}{$locus} == $rule->{precondition}{$locus};
+      next if $rule1{precondition}{$locus} == $self->{precondition}{$locus};
       $resolution_keys{$global_res_count} = $rel->{weight}; # magic factor
       $resolutions{$global_res_count++} = \%rule1;
     }
@@ -787,9 +788,9 @@ sub gen_extra_condition {
           my @condition = map $FS->parse($_), split /, */, $d->{condition}, -1;
           next unless $outcome =~ /^$condition[$d->{target}]$/;
 
-          my %rule1 = %$rule;
-          $rule1{precondition} = { %{$rule->{precondition}} }; # deep copy this part
-          $rule1{or_pause} = { %{$rule->{or_pause}} }; # deep copy this part
+          my %rule1 = %$self;
+          $rule1{precondition} = { %{$self->{precondition}} }; # deep copy this part
+          $rule1{or_pause} = { %{$self->{or_pause}} }; # deep copy this part
           for my $displ (0..$#condition) {
             my $l = $locus + $displ - $d->{target};
             if (!defined $rule1{precondition}{$l}) {
@@ -820,9 +821,9 @@ sub gen_extra_condition {
           my @condition = map $FS->parse($_), split /, */, $d->{condition}, -1;
           next unless $outcome =~ /^$condition[$d->{target}]$/;
 
-          my %rule1 = %$rule;
-          $rule1{precondition} = { %{$rule->{precondition}} }; # deep copy this part
-          $rule1{or_pause} = { %{$rule->{or_pause}} }; # deep copy this part
+          my %rule1 = %$self;
+          $rule1{precondition} = { %{$self->{precondition}} }; # deep copy this part
+          $rule1{or_pause} = { %{$self->{or_pause}} }; # deep copy this part
           for my $displ (0..$#condition) {
             my $l = $locus + $displ - $d->{target};
             if (!defined $rule1{precondition}{$l}) {
@@ -845,7 +846,7 @@ sub gen_extra_condition {
     }
 
     # Conditions that avoid a marked situation changed by a previous rule.
-    for my $old_rule (@{$args{phonology}}) {
+    for my $old_rule (@{$args{phonology}{phonology}}) {
       next if defined $old_rule->{inactive};
       next if keys %{$old_rule->{precondition}} >= 2 and $args{bar_sequences};
       for my $old_locus (keys %{$old_rule->{effects}}) {
@@ -865,9 +866,9 @@ sub gen_extra_condition {
 
         # We let how good this thing is as a condition to avoid depend on how many features have to be added.  
         # (We just perform this subtraction on the old precondition, direcly.)
-        my %rule1 = %$rule;
-        $rule1{precondition} = { %{$rule->{precondition}} }; # deep copy this part
-        $rule1{except} = { %{$rule->{except}} } if defined $rule->{except}; # deep copy this part
+        my %rule1 = %$self;
+        $rule1{precondition} = { %{$self->{precondition}} }; # deep copy this part
+        $rule1{except} = { %{$self->{except}} } if defined $self->{except}; # deep copy this part
 
         my $num_convergences = scalar grep substr($old_precondition, $_, 1) ne '.', 0..length($old_precondition)-1;
         for (0..length($old_precondition)-1) {
@@ -894,10 +895,9 @@ sub gen_extra_condition {
 
   # print STDERR YAML::Any::Dump(\%resolutions), "\n\n";
   if (keys %resolutions) {
-    my $i = weighted_one_of %resolution_keys;
+    my $i = main::weighted_one_of(%resolution_keys);
     return $resolutions{$i};
   }
-  return $rule;
 }
 
 # To expand a rule tag:
@@ -909,18 +909,11 @@ sub gen_extra_condition {
 
 # The format of rule tags is "$kind $list_index", where $kind is one of the values that
 # appear herein several times.
-sub gen_one_rule {
-  my ($phonology, $tag) = (shift, shift); 
-  my %args = @_;
-  my ($kind, $k, $rest) = split / /, $tag;
-  # print STDERR "[" . scalar @$phonology . "] tag is $tag\n"; # debug
 
-  if ($kind eq 'default' and !defined $rest) {
-    for my $i (0..@{$FS->{features}[$k]{default}}-1) {
-      gen_one_rule($phonology, "$tag $i", %args);
-    }
-    return;
-  }
+sub generate {
+  my ($tag, %args) = (shift, @_);
+  my ($kind, $k, $rest) = split / /, $tag;
+  # print STDERR "[" . scalar @{$args{phonology}{phonology}} . "] tag is $tag\n"; # debug
 
   # Not doing assimilation rules (or strippings) since they can't much come out differently.
   my $threshold = 1;
@@ -980,17 +973,19 @@ sub gen_one_rule {
     }
   } 
   
+  # this short-circuits a bunch of stuff.
   elsif ($kind eq 'stripping') {
     my $precondition = $FS->{strippings}[$k]{condition_parsed};
 
-    for my $s (@{$FS->{strippings}[$k]{substitute}}) {
+    if (defined $rest) {
+      my $s = $FS->{strippings}[$k]{substitute}[$rest];
       $s =~ /^(.*) *: *(.*)$/;
       my $rule = {
         precondition => {0 => $FS->overwrite($precondition, $FS->parse($1))},
         effects => {0 => $FS->parse($2)},
         recastability => 0,
       };
-      push @$phonology, $rule;
+      return bless $rule;
     }
 
     my $effects = $FS->parse($FS->{strippings}[$k]{strip});
@@ -1002,8 +997,7 @@ sub gen_one_rule {
       priority => $FS->{strippings}[$k]{priority},
       tag => $tag,
     };
-    push @$phonology, $rule;
-    return;
+    return bless $rule;
   } 
   
   elsif ($kind =~ /^assimilation/ or $kind =~ /^repair/) { # TESTING
@@ -1024,7 +1018,7 @@ sub gen_one_rule {
     # Recursive splits don't in fact work, as this is currently implemented.
     if (defined $d->{split}) {
       for my $i (0..$#{$d->{split}}) {
-        gen_one_rule($phonology, "${kind}_split $k $i", %args, dont_skip => 1) 
+        $args{phonology}->generate_new_rule("${kind}_split $k $i", %args, dont_skip => 1) 
             if rand() < $d->{split}[$i]{prob};
       }
     }
@@ -1059,7 +1053,7 @@ sub gen_one_rule {
     if (scalar @_ == 1) {
       $pause_phone = $FS->parse($d->{pause_phone}, undefined => 1);
     } elsif (scalar @_ > 1) {
-      $pause_phone = $FS->parse(weighted_one_of @_, undefined => 1);
+      $pause_phone = $FS->parse(main::weighted_one_of(@_), undefined => 1);
     }
     # As a corollary of the sort here, '-' assignments follow '+' ones.  TODO: make this saner?
     for my $e (sort keys %{$d->{extras}}) {
@@ -1095,7 +1089,9 @@ sub gen_one_rule {
       /^([^ ]*) +(.*)$/;
       my ($reskind, $arg) = ($1, $2);
 
-      my %rule = %base_rule; 
+      my %rule = %base_rule;
+      my $ruleobj = \%rule; 
+      bless $ruleobj;
       my @variants = (); # where to put the generated rules
 
       # resolve as specified
@@ -1152,8 +1148,8 @@ sub gen_one_rule {
         }
 
         $rule{effects} = \%effects;
-        push @variants, persistence_variants $phonology, [\%rule, 1], $threshold, 
-                                             0, $args{generable_val};
+        push @variants, $ruleobj->persistence_variants(1, $args{phonology}, $threshold, 
+                                             0, $args{generable_val});
       } #r
 
       elsif ($reskind eq 'delete') {
@@ -1179,6 +1175,8 @@ sub gen_one_rule {
           $no_persist = 1 if defined $d->{phonemic_only};
 
           %rule = %base_rule; 
+          $ruleobj = \%rule;
+          bless $ruleobj;
 
           if ($resolution_type == 0) {
             $i = 0, $resolution_type++, next if $i >= length($resolvend);
@@ -1243,8 +1241,8 @@ sub gen_one_rule {
           $rule{base_weight} = $base_weight; 
 
           my $persistence_weight = defined $d->{persist} ? $d->{persist} : $threshold;
-          push @variants, persistence_variants $phonology, [\%rule, $base_weight], $persistence_weight, 
-                                              $no_persist, $args{generable_val};
+          push @variants, $ruleobj->persistence_variants($base_weight, $args{phonology}, $persistence_weight, 
+                                              $no_persist, $args{generable_val});
           for (@variants) {
             push @resolutions, $_->[0];
             push @weights, $_->[1];
@@ -1294,9 +1292,11 @@ sub gen_one_rule {
     } # $displ
   } # RESOLVE
 
+  bless $selected_rule;
+
   # Adorn the rule with extra conditions, if we decided to before.
   if ($add_a_condition) {
-    $selected_rule = gen_extra_condition $selected_rule, phonology => $phonology, %args;
+    $selected_rule->gen_extra_condition(%args); # {phonology} is passed through
   }
 
   # If any of the preconditions of this rule are not generable by anything coming before,
@@ -1334,7 +1334,8 @@ sub gen_one_rule {
   }
 
   # Abandon this ruls if it does nothing now.
-  return unless keys %{$selected_rule->{effects}} or defined $selected_rule->{deletions}; # TODO: update as needed
+  # TODO: update these tests for rules that do nothing as needed
+  return unless keys %{$selected_rule->{effects}} or defined $selected_rule->{deletions}; 
 
   # Adding {except} conditions if this might newly set a feature which a stripping takes out
   # would be nice if it worked, but there are problems if the feature being set is a side effect;
@@ -1346,82 +1347,122 @@ sub gen_one_rule {
   # It's correct for extra condition rules to have no tag, so that they
   # just drop out when regenerated.
   $selected_rule->{tag} = $tag unless $add_a_condition;
+  $selected_rule->{run_again} = 1 if ($add_a_condition and !$skip_me);
   $selected_rule->{priority} = 0 if !defined $selected_rule->{priority};
   if (defined $selected_rule->{base_weight}) {
     $selected_rule->{recastability} = (1 - $selected_rule->{base_weight} / $total_base_weight);
     $selected_rule->{recastability} = 0 if $selected_rule->{recastability} < 0;
     delete $selected_rule->{base_weight};
   }
-  for (@{$selected_rule->{inactivate}}) {
-    $phonology->[$_]{inactive} = scalar @$phonology unless defined $phonology->[$_]{inactive}
-                                                    and $phonology->[$_]{inactive} < scalar @$phonology;
-  }
-  delete $selected_rule->{inactivate};
+  
+  $selected_rule;
+}
 
-  for my $displ (keys %{$selected_rule->{effects}}) {
-    for my $i (0..@{$FS->{features}}-1) {
-      if (substr($selected_rule->{effects}{$displ}, $i, 1) =~ /[01]/) {
-        push @{$args{generable_val}[substr($selected_rule->{effects}{$displ}, $i, 1)][$i]}, scalar @$phonology;
+package Phonology;
+
+# Generates a new rule with tag $tag, and 
+sub generate_new_rule {
+  my ($self, $tag, %args) = (shift, shift, @_); 
+  my $phonology = $self->{phonology};
+
+  # Strippings and defaults are clusters of rules to be generated all at once.
+  # Other tags, just generate once.
+  my @tag_suffixes = ('');
+  if ($tag =~ /^default /) {
+    my ($kind, $k) = split / /, $tag;
+    @tag_suffixes = map " $_", 0..@{$FS->{features}[$k]{default}}-1;
+  } elsif ($tag =~ /^stripping /) {
+    my ($kind, $k) = split / /, $tag;
+    @tag_suffixes = map " $_", 0..@{$FS->{strippings}[$k]{substitute}}-1;
+    push @tag_suffixes, '';
+  }
+
+  for my $tag_suffix (@tag_suffixes) {
+    my $rule = PhonologicalRule::generate($tag.$tag_suffix, %args, phonology => $self);
+    next unless $rule;
+
+    next if $tag =~ /^stripping /;
+
+    for (@{$rule->{inactivate}}) {
+      $phonology->[$_]{inactive} = scalar @$phonology unless defined $phonology->[$_]{inactive}
+                                                      and $phonology->[$_]{inactive} < scalar @$phonology;
+    }
+    delete $rule->{inactivate};
+
+    for my $displ (keys %{$rule->{effects}}) {
+      for my $i (0..@{$FS->{features}}-1) {
+        if (substr($rule->{effects}{$displ}, $i, 1) =~ /[01]/) {
+          push @{$args{generable_val}[substr($rule->{effects}{$displ}, $i, 1)][$i]}, scalar @$phonology;
+        }
       }
     }
-  }
 
-  # Since extra conditions added to this rule may have come out the same way, delete redundant ones,
-  # i.e. rules made since invoking this function whose conditions are narrower than 
-  # the one about to be inserted, and which have the same effect, unless they're persistent
-  # and we're not.  
-  # (If we cut a few too many things, though, not the end of the world.)
-  # Only do this to immediately preceding ones, since we might get A in a doubly-special case,
-  # B in a special case, A in the general case.
-  my $former_length = @$phonology;
-  DROP_REDUNDANT: while(1) {
-    my $rule = $phonology->[-1];
-    for my $displ (keys %{$selected_rule->{precondition}}) {
-      last DROP_REDUNDANT unless defined $rule->{precondition}{$displ}
-          and $rule->{precondition}{$displ} =~ /^$selected_rule->{precondition}{$displ}$/;
+    # Since extra conditions added to this rule may have come out the same way, delete redundant ones,
+    # i.e. rules made since invoking this function whose conditions are narrower than 
+    # the one about to be inserted, and which have the same effect, unless they're persistent
+    # and we're not.  
+    # (If we cut a few too many things, though, not the end of the world.)
+    # Only do this to immediately preceding ones, since we might get A in a doubly-special case,
+    # B in a special case, A in the general case.
+    my $former_length = @$phonology;
+    DROP_REDUNDANT: while(1) {
+      my $rule1 = $phonology->[-1];
+      for my $displ (keys %{$rule->{precondition}}) {
+        last DROP_REDUNDANT unless defined $rule1->{precondition}{$displ}
+            and $rule1->{precondition}{$displ} =~ /^$rule->{precondition}{$displ}$/;
+      }
+      last DROP_REDUNDANT unless keys %{$rule1->{effects}} == keys %{$rule->{effects}};
+      for my $displ (keys %{$rule->{effects}}) {
+        last DROP_REDUNDANT unless defined $rule1->{effects}{$displ}
+            and $rule1->{effects}{$displ} eq $rule->{effects}{$displ};
+      }
+      if (defined $rule1->{deletions}) {
+        last DROP_REDUNDANT if !defined $rule->{deletions};
+        last DROP_REDUNDANT unless scalar @{$rule1->{deletions}} == scalar @{$rule->{deletions}};
+        for my $displ (@{$rule1->{deletions}}) {
+          last DROP_REDUNDANTE unless grep $_ == $displ, @{$rule->{deletions}};
+        }
+      } else {
+        last DROP_REDUNDANT if defined $rule->{deletions};
+      }
+      last DROP_REDUNDANT if !defined $rule1->{inactive} and defined $rule->{inactive};
+      #print STDERR YAML::Any::Dump($rule1) . "redounds with\n" . YAML::Any::Dump($rule) . "\n"; # debug
+      pop @$phonology;
     }
-    last DROP_REDUNDANT unless keys %{$rule->{effects}} == keys %{$selected_rule->{effects}};
-    for my $displ (keys %{$selected_rule->{effects}}) {
-      last DROP_REDUNDANT unless defined $rule->{effects}{$displ}
-          and $rule->{effects}{$displ} eq $selected_rule->{effects}{$displ};
+    if (@$phonology < $former_length) {
+      for my $rule1 (@$phonology) {
+        $rule1->{inactive} = @$phonology if $rule1->{inactive} > @$phonology;
+      }
     }
-    last DROP_REDUNDANT if !defined $rule->{inactive} and defined $selected_rule->{inactive};
-    #print STDERR YAML::Any::Dump($rule) . "redounds with\n" . YAML::Any::Dump($selected_rule) . "\n"; # debug
-    pop @$phonology;
-  }
-  if (@$phonology < $former_length) {
-    for my $rule (@$phonology) {
-      $rule->{inactive} = @$phonology if $rule->{inactive} > @$phonology;
+
+    push @$phonology, $rule;
+
+    # Recurse to replace any other rule which we deactivated; make sure these don't resolve 
+    # the same as the bad rule.
+    # (Incidentally, we couldn't recurse before the push; it would break rule referencing by number.)
+    for my $bt (@{$rule->{broken_tags}}) {
+      $bt =~ /^(.*) ([01u.]*)$/;
+      my ($tag, $avoid) = ($1, $2);
+      my %otherargs = %args;
+      delete $otherargs{avoid};
+      delete $otherargs{dont_skip};
+  #    print "{\n"; # debug
+      $args{avoid} = [] if !defined $args{avoid};
+      $self->generate_new_rule($tag, avoid => [(split /\|/, $avoid), @{$args{avoid}}], %otherargs);
+  #    print "}\n"; # debug
     }
-  }
+    delete $rule->{broken_tags};
 
-  push @$phonology, $selected_rule;
-
-  # Recurse to replace any other rule which we deactivated; make sure these don't resolve 
-  # the same as the bad rule.
-  # (Incidentally, we couldn't recurse before the push; it would break rule referencing by number.)
-  for my $bt (@{$selected_rule->{broken_tags}}) {
-    $bt =~ /^(.*) ([01u.]*)$/;
-    my ($tag, $avoid) = ($1, $2);
-    my %otherargs = %args;
-    delete $otherargs{avoid};
-    delete $otherargs{dont_skip};
-#    print "{\n"; # debug
-    gen_one_rule($phonology, $tag, avoid => [(split /\|/, $avoid), @{$args{avoid}}], %otherargs);
-#    print "}\n"; # debug
-  }
-  delete $selected_rule->{broken_tags};
-
-  # If this is the added-condition version of a rule which we also wanted to generate unadorned,
-  # recurse to do the unadorned form.
-  if ($add_a_condition and !$skip_me) {
-    gen_one_rule($phonology, $tag, %args, dont_skip => 1);
+    # If this is the added-condition version of a rule which we also wanted to generate unadorned,
+    # recurse to do the unadorned form.
+    if (defined $rule->{run_again}) {
+      delete $rule->{run_again};
+      $self->generate_new_rule($tag, %args, dont_skip => 1);
+    }
   }
 }
 
 
-
-package Phonology;
 
 # A complete generated phonology has the following layers.
 #
@@ -1471,7 +1512,7 @@ sub generate {
   }
   $pd->annotate_with_preconditions(); # since the numbers are changed
   for (@{$pd->{phonology}}) {
-    main::strip_feed_annotation $_;
+    $_->strip_feed_annotation();
   }
   return $pd;
 }
@@ -1580,6 +1621,7 @@ sub generate_preliminary {
         } else {
           push @phone_generator, \%rule;
         }
+        bless $_, 'PhonologicalRule' for @phone_generator;
 
         $generable[$fi] = 1;
         $generable_val[0][$fi] = [];
@@ -1738,31 +1780,31 @@ sub generate_preliminary {
   push @rule_tags, '#'; # false tag for end of phoneme straightening-out
   push @rule_tags, @assim_tags;
 
-  my $start_sequences; # end of rules that pertain only to individual segments
-  for my $tag (@rule_tags) {
-    if ($tag eq '#') {
-      print STDERR "on to allophony...\n" if $verbose;
-      $start_sequences = @phonology; 
-      next;
-    } 
-    # We pass the generator as a way of specifying what contrasts are available.
-    # For sound change purposes we'll need an alternate way to pass this information.
-    main::gen_one_rule \@phonology, $tag, 
-        generator => \@phone_generator, 
-        generable_val => \@generable_val, 
-        initial => 1,
-        syllable_structure => \@syllable_structure, # used only by extra conditions, presently
-        bar_sequences => defined $start_sequences ? undef : 1,
-        forcibly_unmark => defined $start_sequences ? undef : \%forcibly_unmark; 
-  }
-    
   my $self = {
     syllable_structure => \@syllable_structure,
     phone_generator => \@phone_generator, 
     phonology => \@phonology,
-    start_sequences => $start_sequences,
   };
   bless $self;
+
+  for my $tag (@rule_tags) {
+    if ($tag eq '#') {
+      print STDERR "on to allophony...\n" if $verbose;
+      $self->{start_sequences} = @phonology; # end of rules that pertain only to individual segments
+      next;
+    } 
+    # We pass the generator as a way of specifying what contrasts are available.
+    # For sound change purposes we'll need an alternate way to pass this information.
+    $self->generate_new_rule($tag, 
+        generator => \@phone_generator, 
+        generable_val => \@generable_val, 
+        initial => 1,
+        syllable_structure => \@syllable_structure, # used only by extra conditions, presently
+        bar_sequences => defined $self->{start_sequences} ? undef : 1,
+        forcibly_unmark => defined $self->{start_sequences} ? undef : \%forcibly_unmark); 
+  }
+    
+  $self;
 }
 
 package main;
@@ -1884,10 +1926,10 @@ sub compute_inventory {
     my @v = @{$inventory{$phone}};
       my @word;
       @word = ($phone);
-      main::run_one_rule \@word, $rule, rand_value => 0;
+      $rule->run(\@word, rand_value => 0);
       add_in \%inventory2, $word[0], [map $v[$_] * $rule->{prob}[$_], 0..@v-1];
       @word = ($phone); 
-      main::run_one_rule \@word, $rule, rand_value => 1;
+      $rule->run(\@word, rand_value => 1);
       add_in \%inventory2, $word[0], [map $v[$_] * (1 - $rule->{prob}[$_]), 0..@v-1];
     }
     %inventory = %inventory2;
@@ -2162,7 +2204,7 @@ sub describe_inventory {
   my $buffer = '';
 
   if ($args{html}) {
-    $buffer .= CGI::h2('Phonemic inventory') . tabulate($pd); # HERE
+    $buffer .= CGI::h2('Phonemic inventory') . tabulate($pd); 
   } else {
     my %things_named;
     $buffer .= "phonemic inventory:\n"; 
@@ -4078,12 +4120,6 @@ if (defined $infile) {
   $pd = Phonology::generate;
 }
 
-$phon_descr = YAML::Any::LoadFile('phon_descr.yml');
-
-if ($show_inventory) {
-  print describe_inventory($pd, html => $use_html); 
-}
-
 if (defined $outfile) {
   if (defined $humane_output) {
     for my $rule (@{$pd->{phone_generator}}, @{$pd->{phonology}}) {
@@ -4097,6 +4133,12 @@ if (defined $outfile) {
     $pd->{phonology}[$_]{number} = $_ for 0..@{$pd->{phonology}}-1;
   }
   YAML::Any::DumpFile($outfile, $pd);
+}
+
+$phon_descr = YAML::Any::LoadFile('phon_descr.yml');
+
+if ($show_inventory) {
+  print describe_inventory($pd, html => $use_html); 
 }
 
 if ($show_all) {
