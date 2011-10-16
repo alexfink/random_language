@@ -64,7 +64,7 @@ my $credits = 'Gleb, a phonology generator, by Alex Fink' .
 
 my $FS; # what features there are, what they do
 my $phon_descr; # how to describe the features.  the thing that would need to be localised
-my %phonetic_alphabets;
+my $phonetic_alphabet; # a Transcription object.  # TODO: (proximal) put in the describer
 
 my $verbose;
 my $debug = 0;
@@ -1807,28 +1807,48 @@ sub generate_preliminary {
   $self;
 }
 
-package main;
+package Transcription;
 
+# Right now the only Transcription objects are the standard phonetic alphabets.
+# It's my intent to use this also for romanizations designed to fit a particular phonology,
+# once creating those is done.
 
+sub load_file {
+  my $filename = shift;
+  my $alphabet = YAML::Any::LoadFile($filename);
+
+  for my $type (qw/characters ligations/) {
+    for my $c (keys %{$alphabet->{$type}}) {
+      $alphabet->{$type}{$FS->parse($c)} = $alphabet->{$type}{$c};
+      delete $alphabet->{$type}{$c};
+    }
+  }
+  for my $c (keys %{$alphabet->{modifiers}}) {
+    my @fs = split / /, $c;
+    my $s = $FS->parse($c) . ' ' . $FS->parse($fs[0]);
+    $alphabet->{modifiers}{$s} = $alphabet->{modifiers}{$c};
+    delete $alphabet->{modifiers}{$c};
+  }
+  
+  bless $alphabet;
+}
 
 # In a modifier description, it's only the first phone that the modifier actually spells;
 # the rest are just conditions on its applicability.
 
 sub name_phone {
-  my ($phone, %args) = (shift, @_);
-  my $pa = defined $args{alphabet} ? $args{alphabet} : 
-           $use_html ? $phonetic_alphabets{IPA} : $phonetic_alphabets{CXS};
+  my ($self, $phone, %args) = (shift, @_);
   my %taken_care_of;
   my $s = '##';
   $s = "<abbr title=\"$phone\">$s</abbr>" if $use_html; # handy for debugging
   
-  for my $x (keys %{$pa->{ligations}}) {
+  for my $x (keys %{$self->{ligations}}) {
     next if $phone !~ /^$x$/;
-    my $phone0 = $FS->overwrite($phone, $FS->parse($pa->{ligations}{$x}[0]));
-    my $phone1 = $FS->overwrite($phone, $FS->parse($pa->{ligations}{$x}[1]));
-    my ($tc0, $s0) = name_phone($phone0, %args, no_modifiers => 1);
-    my ($tc1, $s1) = name_phone($phone1, %args, no_modifiers => 1);
-    $s = $pa->{ligations}{$x}[2];
+    my $phone0 = $FS->overwrite($phone, $FS->parse($self->{ligations}{$x}[0]));
+    my $phone1 = $FS->overwrite($phone, $FS->parse($self->{ligations}{$x}[1]));
+    my ($tc0, $s0) = $self->name_phone($phone0, %args, no_modifiers => 1);
+    my ($tc1, $s1) = $self->name_phone($phone1, %args, no_modifiers => 1);
+    $s = $self->{ligations}{$x}[2];
     $s =~ s/\[\]/$s0/;
     $s =~ s/\[\]/$s1/;
     %taken_care_of = (%$tc0, %$tc1, 
@@ -1837,9 +1857,9 @@ sub name_phone {
   }
 
   if ($s =~ /##/) {
-    for my $x (keys %{$pa->{characters}}) {
+    for my $x (keys %{$self->{characters}}) {
       next if $phone !~ /^$x$/;
-      $s = $pa->{characters}{$x};
+      $s = $self->{characters}{$x};
       %taken_care_of = map(($_ => 1), (grep substr($x, $_, 1) ne '.', 0..@{$FS->{features}}-1));
       last;
     }
@@ -1847,7 +1867,7 @@ sub name_phone {
 
   return (\%taken_care_of, $s) if $args{no_modifiers};
   
-  MODIFIER: for my $x (keys %{$pa->{modifiers}}) {
+  MODIFIER: for my $x (keys %{$self->{modifiers}}) {
     my ($x_all, $x_spells) = split / /, $x;
     next if $phone !~ /^$x_all$/;
     my $redundant = 1;
@@ -1855,7 +1875,7 @@ sub name_phone {
       $redundant = 0 if substr($x_spells, $_, 1) ne '.' and !defined $taken_care_of{$_};
     }
     next if $redundant;
-    my $t = $pa->{modifiers}{$x};    
+    my $t = $self->{modifiers}{$x};    
     $t =~ s/\[\]/$s/;
     $s = $t;
     %taken_care_of = (%taken_care_of, map(($_ => 1), (grep substr($x_spells, $_, 1) ne '.', 0..@{$FS->{features}}-1)));
@@ -1864,25 +1884,21 @@ sub name_phone {
   $s;
 }
 
-sub spell_out {
-  my ($word, %args) = (shift, @_);
+sub spell {
+  my ($self, $word, %args) = (shift, @_);
   if ($args{null} and !@$word) {
-    my $pa = defined $args{alphabet} ? $args{alphabet} : 
-             $use_html ? $phonetic_alphabets{IPA} : $phonetic_alphabets{CXS};
-    return $pa->{null};
+    return $self->{null};
   }
-  join "", map name_phone($_, %args), @$word;
+  join "", map $self->name_phone($_, %args), @$word;
 }
 
 # duplicated for efficiency :/
-sub spell_out_spaces {
-  my ($word, %args) = (shift, @_);
+sub spell_spaced_string {
+  my ($self, $word, %args) = (shift, @_);
   if ($args{null} and ($word eq '')) {
-    my $pa = defined $args{alphabet} ? $args{alphabet} : 
-             $use_html ? $phonetic_alphabets{IPA} : $phonetic_alphabets{CXS};
-    return $pa->{null};
+    return $self->{null};
   }
-  join "", map name_phone($_, %args), (split / /, $word);
+  join "", map $self->name_phone($_, %args), (split / /, $word);
 }
 
 package Phonology;
@@ -1953,7 +1969,7 @@ sub compute_inventory {
     print STDERR "in:  $phone\n" if $debug >= 1; 
     $self->run(\@word, end => $self->{start_sequences});
     my $outcome = join(' ', @word);
-    print STDERR "out: $outcome /" . (@word ? main::name_phone($word[0]) : '') . "/\n" if $debug >= 1;
+    print STDERR "out: $outcome /" . (@word ? $phonetic_alphabet->name_phone($word[0]) : '') . "/\n" if $debug >= 1;
     $resolver{$phone} = $outcome;
     add_in \%prinv, $outcome, $inventory{$phone};
   }
@@ -2113,7 +2129,7 @@ sub canonicalise_phonemic_form {
   my @sources = 0..@$word-1;
   
   for my $k ($self->{start_sequences}..@{$self->{phonology}}-1) {
-#    print "before $k /" . spell_out(\@canonical_word) . "/ [" . spell_out(\@current_word) . "]\n"; # debug
+#    print "before $k /" . $phonetic_alphabet->spell(\@canonical_word) . "/ [" . $phonetic_alphabet->spell(\@current_word) . "]\n"; # debug
     my @old_sources = @sources;
     my @old_word = @current_word;
     my (@prov_canonical_word, @prov_current_word);
@@ -2122,7 +2138,7 @@ sub canonicalise_phonemic_form {
                start => $k,
                end => $k+1,
              sources => \@sources);
-#    print "target [" . spell_out(\@current_word) . "]\n"; # debug
+#    print "target [" . $phonetic_alphabet->spell(\@current_word) . "]\n"; # debug
     
     { # block for redo
       $changed = 0;
@@ -2167,7 +2183,7 @@ sub canonicalise_phonemic_form {
           substr($prov_canonical_word[$sources[$i]], $_, 1) = substr($current_word[$i], $_, 1) 
               for @prov_varied_features;
           if (defined $self->{gen_inventory}{$prov_canonical_word[$sources[$i]]}) {
-#          print "trying out " . name_phone($prov_canonical_word[$sources[$i]]) . " at $i\n"; # debug
+#          print "trying out " . $phonetic_alphabet->name_phone($prov_canonical_word[$sources[$i]]) . " at $i\n"; # debug
             @prov_current_word = @prov_canonical_word;
             $self->run(\@prov_current_word, 
                        start => $self->{start_sequences},
@@ -2198,7 +2214,10 @@ sub canonicalise_phonemic_form {
 
 package main;
 
-# TODO: this belongs in the describer class
+
+
+####### Here genuine phonology code ends, and description-writing code begins.
+
 sub describe_inventory {
   my ($pd, %args) = @_;
   my $buffer = '';
@@ -2209,7 +2228,7 @@ sub describe_inventory {
     my %things_named;
     $buffer .= "phonemic inventory:\n"; 
     for my $p (sort keys %{$pd->{gen_inventory}}) { 
-      my $n = join '', map name_phone($_), split / /, $p;
+      my $n = join '', map $phonetic_alphabet->name_phone($_), split / /, $p;
       $buffer .= "/" . ($n !~ /\#\#/ ? $n : $FS->feature_string($p)) . "/\t@{$pd->{gen_inventory}{$p}}\n";
       push @{$things_named{$n}}, $p if ($n !~ /\#\#/);
     }
@@ -2223,10 +2242,6 @@ sub describe_inventory {
     $buffer .= "that's " . ((keys %{$pd->{gen_inventory}}) - 1) . " phonemes\n";
   }
 }
-
-
-
-####### Here genuine phonology code ends, and description-writing code begins.
 
 # Put in the false features which our model doesn't contain but which our descriptions do.
 # Assumes annotation.
@@ -2548,7 +2563,7 @@ sub tabulate {
   my (%table, %rows, %columns, %spots);
   for my $phone (keys %{$pd->{gen_inventory}}) {
     next unless $phone =~ /^$condition$/;
-    my $name = name_phone($phone, alphabet => $phonetic_alphabets{IPA});
+    my $name = $phonetic_alphabet->name_phone($phone);
     $table{table_sortkey $phone, $str} = $name;
   }
 
@@ -2883,8 +2898,8 @@ sub describe_set {
   my $extend = defined $args{extend};
   my $lb = $args{etic} ? '[' : '/';
   my $rb = $args{etic} ? ']' : '/';
-#print STDERR join(' ', map(name_phone($_,alphabet=>$phonetic_alphabets{CXS}), sort @$orig_phones)) . '  within  ' . 
-#             join(' ', map(name_phone($_,alphabet=>$phonetic_alphabets{CXS}), sort @$inventory)) . "\n";
+#print STDERR join(' ', map($phonetic_alphabet->name_phone($_,alphabet=>$phonetic_alphabets{CXS}), sort @$orig_phones)) . '  within  ' . 
+#             join(' ', map($phonetic_alphabet->name_phone($_,alphabet=>$phonetic_alphabets{CXS}), sort @$inventory)) . "\n";
   $args{get_str_pattern}->[0] = '.' x @{$FS->{features}} if defined $args{get_str_pattern}; # extra return hack
 
   my $pattern = defined $args{within} ? $args{within} : '.' x @{$FS->{features}};
@@ -2902,7 +2917,7 @@ sub describe_set {
   my $size = @$phones;
   unless ($extend) {
     return $morpho eq 'plural' ? 'no phones' : 'no phone' if ($size == 0);
-    return $lb . name_phone($phones->[0]) . $rb if ($size == 1);
+    return $lb . $phonetic_alphabet->name_phone($phones->[0]) . $rb if ($size == 1);
   }
 
   # add_false_features causes a few things, like [?\], to be named wrongly.  
@@ -2927,7 +2942,7 @@ sub describe_set {
   unless ($extend) {
     return name_natural_class($pattern, $inventory, str => $str, morpho => $morpho) if ($cosize == 0);
     return name_natural_class($pattern, $inventory, str => $str, morpho => $morpho) 
-        . " other than $lb" . name_phone($remove_false_features{$complement[0]}) . $rb if ($cosize == 1);
+        . " other than $lb" . $phonetic_alphabet->name_phone($remove_false_features{$complement[0]}) . $rb if ($cosize == 1);
   }
 
   # Try to describe the set as a natural class, or failing that by taking out single-feature
@@ -3022,12 +3037,12 @@ sub describe_set {
 
   if ($size <= $complexity) {
     return ($morpho eq 'plural' ? '' : 'one of ') . 
-        $lb . join(' ', map name_phone($remove_false_features{$_}), @$phones) . $rb;
+        $lb . join(' ', map $phonetic_alphabet->name_phone($remove_false_features{$_}), @$phones) . $rb;
   }
   if ($cosize <= $complexity) {
     return name_natural_class($str_pattern, $inventory, str => $str, morpho => $morpho) . 
         (@complement ? (" other than $lb" .
-          join(' ', map name_phone($remove_false_features{$_}), @complement) . $rb) : ''); 
+          join(' ', map $phonetic_alphabet->name_phone($remove_false_features{$_}), @complement) . $rb) : ''); 
   }
 
   # Special negation.  Currently just for sonorant.
@@ -3045,7 +3060,7 @@ sub describe_set {
   # a big list if there's too much detritus.  
   if (@detritus > @$phones / 4) { # magic linear function
     return ($morpho eq 'plural' ? '' : 'one of ') . 
-        $lb . join(' ', map name_phone($remove_false_features{$_}), @$phones) . $rb;
+        $lb . join(' ', map $phonetic_alphabet->name_phone($remove_false_features{$_}), @$phones) . $rb;
   }
 
   my $significant = $pattern;
@@ -3074,14 +3089,14 @@ sub describe_set {
     for my $i (0..$#antipatterns) {
       @{$antipatterns_caught[$i]} = grep /^$antipatterns[$i]$/, @pool;
       @pool = grep !/^$antipatterns[$i]$/, @pool;
-      $excluded_names[$i] .= " ($lb" . join(' ', map name_phone($remove_false_features{$_}), @{$antipatterns_caught[$i]}) . "$rb)";
+      $excluded_names[$i] .= " ($lb" . join(' ', map $phonetic_alphabet->name_phone($remove_false_features{$_}), @{$antipatterns_caught[$i]}) . "$rb)";
     }
     if (@base_caught) {
       $main_name .= (@detritus or @antipatterns_caught) ? " (i.e. not $lb" : 
           '; i.e. ' . 
           name_natural_class($str_pattern, $inventory, str => $str, morpho => $morpho) .
           " other than $lb";
-      $main_name .= join(' ', map name_phone($remove_false_features{$_}), @base_caught) . $rb;
+      $main_name .= join(' ', map $phonetic_alphabet->name_phone($remove_false_features{$_}), @base_caught) . $rb;
       $main_name .= ')' if (@detritus or @antipatterns_caught);
     }
     warn 'inconsistency in detritus in describe_set' if @pool != @detritus; 
@@ -3109,17 +3124,17 @@ sub describe_set {
       $detritus_name = '' if $detritus_name =~ /^[[\/]/ or $detritus_name =~ /other than/; # big kluge
     }
     if ($detritus_name) {
-      $detritus_name .= " ($lb" . join(' ', map name_phone($remove_false_features{$_}), @detritus) . "$rb)"
+      $detritus_name .= " ($lb" . join(' ', map $phonetic_alphabet->name_phone($remove_false_features{$_}), @detritus) . "$rb)"
           if (!$list_examples and $args{ie}); # duplicative
       $result .= $detritus_name;
     } else {
-      $result .= $lb . join(' ', map name_phone($remove_false_features{$_}), @detritus) . $rb;
+      $result .= $lb . join(' ', map $phonetic_alphabet->name_phone($remove_false_features{$_}), @detritus) . $rb;
     }
   }
 
   if ($list_examples and $args{ie}) {
     $result .= '; i.e. ' . ($morpho eq 'plural' ? '' : 'one of ') . 
-        $lb . join(' ', map name_phone($remove_false_features{$_}), @$phones) . $rb;
+        $lb . join(' ', map $phonetic_alphabet->name_phone($remove_false_features{$_}), @$phones) . $rb;
   } 
   $result;
 }
@@ -3170,7 +3185,7 @@ sub describe_syllable_structure {
     $template[$pos] = $label;
 
     if (@phones == 1) {
-      $template[$pos] = name_phone($phones[0]);
+      $template[$pos] = $phonetic_alphabet->name_phone($phones[0]);
     } else {
       $elaborations[$pos] = describe_set(\@phones, [keys %{$pd->{gen_inventory}}], ie => 1); 
     }
@@ -3650,7 +3665,7 @@ sub describe_rules {
             %appeared_in_a_list = (%appeared_in_a_list, map(($_ => 1), @deviants));
 
             if (grep $outcome{$frame_representative}{$_}, @deviants) {
-              $frame_text .= ' become [' . join(' ', map spell_out_spaces($outcome{$frame_representative}{$_}, null => 1), @deviants) . ']';
+              $frame_text .= ' become [' . join(' ', map $phonetic_alphabet->spell_spaced_string($outcome{$frame_representative}{$_}, null => 1), @deviants) . ']';
             } else {
               $frame_text .= ' are deleted';
             }
@@ -3757,7 +3772,7 @@ sub describe_rules {
       }
       my $braces = ($main_clause =~ /\]/);
       $main_clause .= ', i.e.' if $braces;
-      $main_clause .= ' [' . join(' ', map name_phone($_), @example_sounds)
+      $main_clause .= ' [' . join(' ', map $phonetic_alphabet->name_phone($_), @example_sounds)
           . "$example_ellipsis]";
       $main_clause .= ',' if $braces;
     }
@@ -3783,7 +3798,7 @@ sub describe_rules {
           # if the subject is a _short_ list, make the complement one too
           if ($subject_is_list and @susceptible <= 2 and scalar keys %outcome <= 1) { 
             $both_are_lists = 1;
-            $main_VP .= '[' . join(' ', map spell_out([split ' ', $outcome{$frame}{$_}], null => 1), @susceptible) . ']';
+            $main_VP .= '[' . join(' ', map $phonetic_alphabet->spell([split ' ', $outcome{$frame}{$_}], null => 1), @susceptible) . ']';
           } else {
             if ($main_VP =~ / and /) {
               $main_VP .= ' respectively'; 
@@ -3798,7 +3813,7 @@ sub describe_rules {
           }
           # examples
           if (keys %outcome <= 1 and !$subject_is_list) {
-            $main_VP .= ' [' . join(' ', map spell_out_spaces($outcome{$frame}{$_}, null => 1), @example_sounds)
+            $main_VP .= ' [' . join(' ', map $phonetic_alphabet->spell_spaced_string($outcome{$frame}{$_}, null => 1), @example_sounds)
                 . "$example_ellipsis]";
           }
         }
@@ -4083,26 +4098,17 @@ else {
 
 $FS = FeatureSystem::load_file('features.yml');
 
-$phonetic_alphabets{CXS} = YAML::Any::LoadFile('CXS.yml') if -f 'CXS.yml';
-$phonetic_alphabets{IPA} = YAML::Any::LoadFile('IPA_HTML.yml') if -f 'IPA_HTML.yml';
-for my $alphabet (values %phonetic_alphabets) {
-  for my $type (qw/characters ligations/) {
-    for my $c (keys %{$alphabet->{$type}}) {
-      $alphabet->{$type}{$FS->parse($c)} = $alphabet->{$type}{$c};
-      delete $alphabet->{$type}{$c};
-    }
-  }
-  for my $c (keys %{$alphabet->{modifiers}}) {
-    my @fs = split / /, $c;
-    my $s = $FS->parse($c) . ' ' . $FS->parse($fs[0]);
-    $alphabet->{modifiers}{$s} = $alphabet->{modifiers}{$c};
-    delete $alphabet->{modifiers}{$c};
-  }
+if ($use_html && -f 'IPA_HTML.yml') {
+  $phonetic_alphabet = Transcription::load_file('IPA_HTML.yml')
+} elsif (-f 'CXS.yml') {
+  $phonetic_alphabet = Transcription::load_file('CXS.yml')
+} else {
+  die 'no suitable phonetic alphabet found';
 }
 
 if (defined $phone_to_interpret) {
   $phone_to_interpret = $FS->parse($phone_to_interpret, undefined => 1) unless $phone_to_interpret =~ /^[.01u]*$/;
-  print '[' . name_phone($phone_to_interpret) . '] ' . $FS->feature_string($phone_to_interpret);
+  print '[' . $phonetic_alphabet->name_phone($phone_to_interpret) . '] ' . $FS->feature_string($phone_to_interpret);
   $phone_to_interpret =~ /[01]/g;
   print '   ' . (pos($phone_to_interpret) - 1) if defined pos($phone_to_interpret);
   print "\n";
@@ -4185,19 +4191,19 @@ for (1..$num_words) {
   if ($use_html) {
     print '<tr>';
     print "<td>//", 
-          spell_out($generated_word),
+          $phonetic_alphabet->spell($generated_word),
           "//</td>" 
         if defined $canonicalise;
     print "<td>/", 
-          spell_out($word), 
+          $phonetic_alphabet->spell($word), 
           "/</td><td>[",
-          spell_out($surface_word),
+          $phonetic_alphabet->spell($surface_word),
           "]</td></tr>\n";
   } else {
-    print "//" . spell_out($generated_word). "//\t" if defined $canonicalise;
-    print "/" . spell_out($word) . "/\t[" . spell_out($surface_word) . "]\n";
+    print "//" . $phonetic_alphabet->spell($generated_word). "//\t" if defined $canonicalise;
+    print "/" . $phonetic_alphabet->spell($word) . "/\t[" . $phonetic_alphabet->spell($surface_word) . "]\n";
     for my $phone (@$surface_word) {
-      $_ = name_phone($phone);
+      $_ = $phonetic_alphabet->name_phone($phone);
       print $FS->feature_string($phone), "\n" if /\#\#/;
     }
   }
