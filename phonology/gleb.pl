@@ -34,7 +34,6 @@
 use strict;
 use YAML::Any;
 use CGI;
-use constant INF => 9**9**9; # is there really nothing sensible better?
 use constant TWOPI => 6.28318530717958647688;
 
 my $version = '0.3.0b';
@@ -441,10 +440,9 @@ sub trim_inactive {
   $self->{start_sequences} -= $deleted;
 }
 
-package main;
+package FeatureSystem;
 
 # Record the changes between from $phone0 to $phone1, as described below.
-
 sub change_record {
   my ($phone0, $phone1) = (shift, shift);
   my @changes;
@@ -518,7 +516,7 @@ sub run {
       
       if ($word->[$i+$displ] ne $newphone) {
         $changed = 1;
-        push @{$args{changes}}, main::change_record($word->[$i+$displ], $newphone) if defined $args{changes};
+        push @{$args{changes}}, FeatureSystem::change_record($word->[$i+$displ], $newphone) if defined $args{changes};
       }
       $word->[$i+$displ] = $newphone;
     }
@@ -538,6 +536,8 @@ sub run {
 }
 
 package Phonology;
+
+use constant INF => 9**9**9; # is there really nothing sensible better?
 
 # Persistent rules implement so-called surface filters.  
 
@@ -579,7 +579,7 @@ sub run {
   my $first_time = 1;
   @{$args{sources}} = 0..@$word-1 if (defined $args{sources} and !@{$args{sources}});
   my $track_expiry;
-  $track_expiry = main::INF if defined $args{track_expiry};
+  $track_expiry = INF if defined $args{track_expiry};
 
   my @loop_rules;
   my @loop_cessions;
@@ -2212,11 +2212,11 @@ sub canonicalise_phonemic_form {
   (\@current_word, \@canonical_word);
 }
 
-package main;
+package PhonologyDescriber; ####### Here genuine phonology code ends, and description-writing code begins.
 
+# I currently see no reason to instantiate describers.  This package will have package methods.
 
-
-####### Here genuine phonology code ends, and description-writing code begins.
+use constant INF => 9**9**9; # is there really nothing sensible better?
 
 sub describe_inventory {
   my ($pd, %args) = @_;
@@ -2476,7 +2476,6 @@ sub tabulate_label {
 
 # Return an HTML table of the phonology.  
 
-# TODO: this belongs in the describer class
 sub tabulate {
   my ($pd, %args) = (shift, @_);
   my $str = defined $args{structure} ? $args{structure} : $phon_descr->{table_structure};
@@ -3362,7 +3361,7 @@ sub describe_rules {
           my $expiry = [];
           $pd->run($word,
                    cleanup => $i, 
-                   change_record => [change_record($phone, $changed)],
+                   change_record => [FeatureSystem::change_record($phone, $changed)],
                    track_expiry => $expiry,
                    nopause => 1);
           $phone_resolutions{$changed} = join ' ', @$word;
@@ -3969,6 +3968,8 @@ sub describe_rules {
 
 
 
+package main;
+
 
 
 
@@ -4088,13 +4089,11 @@ if ($use_html) {
 }
 END
   print CGI::start_html(-title => 'Random phonology', 
-                         -style => {-code => $style});
+                        -style => {-code => $style});
 } 
 else {
   $" = $, = ", ";
 }
-# David wanted a link to an IPA chart, but I hope that a humane rule description
-# would render that unnecessary.  We'll see.
 
 $FS = FeatureSystem::load_file('features.yml');
 
@@ -4144,12 +4143,12 @@ if (defined $outfile) {
 $phon_descr = YAML::Any::LoadFile('phon_descr.yml');
 
 if ($show_inventory) {
-  print describe_inventory($pd, html => $use_html); 
+  print PhonologyDescriber::describe_inventory($pd, html => $use_html); 
 }
 
 if ($show_all) {
-  tabulate($pd, annotate_only => 1); # should this be given a name of its own?
-  my ($template, $elaborations) = describe_syllable_structure $pd, html => $use_html;
+  PhonologyDescriber::tabulate($pd, annotate_only => 1); # should this be given a name of its own?
+  my ($template, $elaborations) = PhonologyDescriber::describe_syllable_structure($pd, html => $use_html);
   if ($use_html) { 
     print CGI::h2('Syllable structure'),
           CGI::p(join '', @$template),
@@ -4161,7 +4160,7 @@ if ($show_all) {
   }
 
   print STDERR "describing rules...\n" if $verbose;
-  my $rules = describe_rules $pd;
+  my $rules = PhonologyDescriber::describe_rules $pd;
   if ($use_html) {
     print CGI::h2('Allophony'),
           CGI::ul(CGI::li($rules));
