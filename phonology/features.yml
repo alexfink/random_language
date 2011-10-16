@@ -2003,6 +2003,7 @@ marked:
 
   # Nearly always, coloured radicals can be resurrected, always to resonants.
   # Deleting [j] and [w], then, is best done by _actual_ deletion.
+  # This used to not work, but honestly, now, I have no idea.
   #
   # Ultimately, what happens when a coarticulated C falls should depend
   # on dissimilation-type factors; the coarticulation should not be left

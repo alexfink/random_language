@@ -7,9 +7,9 @@
 # (A greater proportion of the numbers are wholly fabricated, though!)
 
 # Proximal plan for cleanliness:
-# - Refactoring: make some classes, do some encapsulation, split files out.
+# - Refactoring: make some classes, perhaps do some encapsulation, split files out.
 # Short-term plan for features:
-# - Out of the first of the above will fall a framework for general constraints against sequences 
+# - Our new general sequence rules yield a framework for general constraints against sequences 
 #   (e.g. trapped resonant, /tl/, increasing sonority sequences in V_V, ...)
 # - Presence of certain contrasts influencing chances of certain assimilations.
 #   (I'm thinking of resonant voice assimilation, and V frontness assim to C.)
@@ -35,10 +35,8 @@
 use strict;
 use YAML::Any;
 use CGI;
-use constant INF => 9**9**9; # is there really nothing sensible better?
-use constant TWOPI => 6.28318530717958647688;
 
-my $version = '0.3.0a';
+my $version = '0.3.0b';
 my $credits = 'Gleb, a phonology generator, by Alex Fink' . 
               (' ' x (29 - length($version))) . # for a total length of 78
               "version $version";
@@ -64,10 +62,7 @@ my $credits = 'Gleb, a phonology generator, by Alex Fink' .
 # TODO: this likely needs generalisation for e.g. tone.
 
 my $FS; # what features there are, what they do
-my $phon_descr; # how to describe the features.  the thing that would need to be localised
-my %phonetic_alphabets;
-my %feature_indices;
-my @features_requiring; # at [v][f] is the list of features which are only defined if feature f takes value v
+my $debug_alphabet; # used for printing phones for debugging only
 
 my $verbose;
 my $debug = 0;
@@ -75,6 +70,8 @@ my $debug2 = 0; # for the use of tracking things down with temporary diagnostic 
 my $use_html;
 my $CGI;
 my $seed =  time ^ $$ ^ $$<<15; 
+
+package PhonologicalRule;
 
 # Choose randomly from a hash giving weight distribution.  (Not called everywhere it might be, yet.)
 sub weighted_one_of {
@@ -87,6 +84,8 @@ sub weighted_one_of {
   }
 }
 
+package Phonology;
+
 # Go from a prototypical prob to an actual one.  Now twice as gentle!
 sub fuzz {
   my $p = shift;
@@ -97,21 +96,27 @@ sub fuzz {
 }
 
 # Box-Muller.  I wonder whether this is faster than sum of 12 uniforms.
+use constant TWOPI => 6.28318530717958647688;
 sub std_normal {
   return sqrt(-2*log rand(1)) * cos(rand(TWOPI));
 }
 
-# When passed a second argument, uses dots for unspecified values instead (esp. for use in regexes).
-sub parse_feature_string {
-  my $re = defined $_[1];
-  my $phone = ($re ? '.' : 'u') x @{$FS->{features}};
-  return $phone if !defined $_[0];
-  my @a = split / /, $_[0];
+package FeatureSystem;
+# TODO: (proximal, with OOifying) put a reference to the feature system in the phonology, and deglobalise it.  
+# But be certain not to include it in phonologies saved to files!  That would inflate them ridiculously.
+
+# Uses dots for unspecified values, unless $args{undefined} is true when it uses 'u'.
+sub parse {
+  my ($self, $fs, %args) = (shift, shift, @_);
+  my $re = !defined $args{undefined};
+  my $phone = ($re ? '.' : 'u') x @{$self->{features}};
+  return $phone if !defined $fs;
+  my @a = split / /, $fs;
   for my $f (@a) {
     if ($f =~ /^([^\w\s])(.*)/) {
-      substr($phone, $feature_indices{$2}, 1) = $1 eq '+' ? '1' : $1 eq '-' ? '0' : $1; 
+      substr($phone, $self->{feature_index}{$2}, 1) = $1 eq '+' ? '1' : $1 eq '-' ? '0' : $1; 
     } else {
-      substr($phone, $feature_indices{$f}, 1) = '1';
+      substr($phone, $self->{feature_index}{$f}, 1) = '1';
     }
   }
   $phone;
@@ -119,22 +124,59 @@ sub parse_feature_string {
 
 # Called with two args, displays undef things.
 sub feature_string {
+  my $self = shift;
   my $phone = shift; 
   my $fs = '';
   my $c;
   for my $i (0..(length $phone)-1) {
     $fs .= ($fs ? ' ' : '') . 
-           ($c eq '1' ? (defined $FS->{features}[$i]{univalent} ? '' : '+') : 
+           ($c eq '1' ? (defined $self->{features}[$i]{univalent} ? '' : '+') : 
            ($c eq 'u' ? '?' : ($c eq '0' ? '-' : $c))) . 
-           $FS->{features}[$i]{name} 
+           $self->{features}[$i]{name} 
         unless ($c = substr($phone, $i, 1)) eq '.' or ($c eq 'u' and !@_);
   }
   $fs;
 }
 
+sub load_file {
+  my $filename = shift;
+  my $FS = YAML::Any::LoadFile($filename);
+  bless $FS;
+
+  $FS->{feature_index}{$FS->{features}[$_]{name}} = $_ for (0..@{$FS->{features}}-1);
+  # {features_requiring}[v][f] is the list of features which are only defined if feature f takes value v
+  for my $i (0..@{$FS->{features}}-1) {
+    if (defined $FS->{features}[$i]{requires}) {
+      my $s = $FS->parse($FS->{features}[$i]{requires}, undefined => 1);
+      for (0..length($s)-1) {
+        push @{$FS->{features_requiring}[substr($s, $_, 1)][$_]}, $i if (substr($s, $_, 1) =~ /[01]/);
+      }
+    }
+  }
+  for my $str (@{$FS->{strippings}}) {
+    $str->{condition_parsed} = $FS->parse($str->{condition}, 1);
+  }
+  my @otherway_relations;
+  for my $rel (@{$FS->{relations}}) {
+    if (defined $rel->{twoway}) {
+      my %flipped = %$rel;
+      $flipped{from} = $rel->{to};
+      $flipped{to} = $rel->{from};
+      push @otherway_relations, \%flipped;
+    }
+  }
+  push @{$FS->{relations}}, @otherway_relations;
+  
+  return $FS;
+}
+
+# Phones ought to be objects themselves (then they could carry around their excepts and tiers &c), 
+# but as they're just strings right now this will be a large rewrite.  
+# So for now operations on phones, like the four below, will live in the feature system. 
+
 # Takes a phone and a phone with dots.  Replaces features in the first with non-dots in the second.
 sub overwrite {
-  my ($a, $b) = @_;
+  my ($self, $a, $b) = @_;
   for my $i (0..(length $b)-1) {
     substr($a, $i, 1) = substr($b, $i, 1) if substr($b, $i, 1) ne '.';
   }
@@ -142,7 +184,7 @@ sub overwrite {
 }
 
 sub compatible {
-  my ($a, $b) = @_;
+  my ($self, $a, $b) = @_;
   for my $i (0..(length $b)-1) {
     return undef unless substr($a, $i, 1) eq '.' or 
                         substr($b, $i, 1) eq '.' or
@@ -152,28 +194,29 @@ sub compatible {
 }
 
 sub add_requirements {
-  my $reqd = $_[0];
-  for my $i (0..length($_[0])-1) {
-    $reqd = overwrite($reqd, parse_feature_string($FS->{features}[$i]{requires}, 1)) 
-        if substr($_[0], $i, 1) =~ /[01]/ and defined $FS->{features}[$i]{requires};
+  my ($self, $reqd) = @_;
+  for my $i (0..length($reqd)-1) {
+    $reqd = $self->overwrite($reqd, $self->parse($self->{features}[$i]{requires})) 
+        if substr($reqd, $i, 1) =~ /[01]/ and defined $self->{features}[$i]{requires};
   }
   $reqd;
 }
 
 sub add_entailments {
-  my $phone = shift;
+  my ($self, $phone) = @_;
   for my $i (0..length($phone)-1) {
-    substr($phone, $feature_indices{$FS->{features}[$i]{antithetical}}, 1) = '0' 
-        if substr($phone, $i, 1) eq '1' and defined $FS->{features}[$i]{antithetical};
+    substr($phone, $self->{feature_index}{$self->{features}[$i]{antithetical}}, 1) = '0' 
+        if substr($phone, $i, 1) eq '1' and defined $self->{features}[$i]{antithetical};
   }
   for my $i (0..length($phone)-1) {
     if (substr($phone, $i, 1) =~ /[01]/) {
-      substr($phone, $_, 1) = 'u' for (@{$features_requiring[1 - substr($phone, $i, 1)][$i]});
+      substr($phone, $_, 1) = 'u' for (@{$self->{features_requiring}[1 - substr($phone, $i, 1)][$i]});
     }
   }
   $phone;
 }
 
+package PhonologicalRule;
 
 
 # Each rule is a hash.  In the simplest case, it has hashes of _preconditions_
@@ -189,9 +232,9 @@ sub add_entailments {
 sub feed_annotate {
   my $rule = shift;
   for my $displ (keys %{$rule->{precondition}}) {
-    $rule->{precondition_ar}{$displ} = add_requirements($rule->{precondition}{$displ});
+    $rule->{precondition_ar}{$displ} = $FS->add_requirements($rule->{precondition}{$displ});
     if (defined $rule->{effects}{$displ}) {
-      $rule->{outcome}{$displ} = overwrite add_requirements($rule->{precondition}{$displ}), $rule->{effects}{$displ};
+      $rule->{outcome}{$displ} = $FS->overwrite($FS->add_requirements($rule->{precondition}{$displ}), $rule->{effects}{$displ});
       $rule->{outcome}{$displ} =~ s/[<>]/./g;
     }
   }
@@ -246,17 +289,17 @@ sub feeds {
       #return 1 if (defined $ri->{priority} ? $ri->{priority} : 0) <
       #            (defined $rj->{priority} ? $rj->{priority} : 0) and
       #            defined $rj->{effects}{$j_displ} and
-      #            !compatible($ri->{effects}{$i_displ}, $rj->{effects}{$j_displ});
+      #            !$FS->compatible($ri->{effects}{$i_displ}, $rj->{effects}{$j_displ});
       # ramification (3)
       #for my $str (@{$FS->{strippings}}) {
-      #  return 1 if compatible($ri->{precondition}{$i_displ}, $str->{condition_parsed}) and
-      #             !compatible($ri->{effects}{$i_displ}, $str->{condition_parsed}); 
+      #  return 1 if $FS->compatible($ri->{precondition}{$i_displ}, $str->{condition_parsed}) and
+      #             !$FS->compatible($ri->{effects}{$i_displ}, $str->{condition_parsed}); 
       #}
       
       # this is costly enough that it's slightly worth putting it in here.
-      feed_annotate $ri if !defined $ri->{precondition_ar};
-      feed_annotate $rj if !defined $rj->{precondition_ar};
-      next if !compatible($ri->{outcome}{$i_displ}, $rj->{precondition_ar}{$j_displ});
+      $ri->feed_annotate() if !defined $ri->{precondition_ar};
+      $rj->feed_annotate() if !defined $rj->{precondition_ar};
+      next if !$FS->compatible($ri->{outcome}{$i_displ}, $rj->{precondition_ar}{$j_displ});
 
       # The wrinkle-free cases.
       # We might have rules which unnecessarily set features identically
@@ -288,31 +331,23 @@ sub feeds {
 # Two rules conflict if they feed each other at the same displacement and their
 # outcomes are incompatible.
 
-sub conflict {
+sub conflicts_with {
   my ($ri, $rj) = (shift, shift);
   my (@pij, @pji);
-  return 0 unless feeds($ri, $rj, pairs => \@pij) and feeds($rj, $ri, pairs => \@pji);
+  return 0 unless $ri->feeds($rj, pairs => \@pij) and $rj->feeds($ri, pairs => \@pji);
   return 1 unless @pij and @pji; # since it's some priority ramification thing.  shouldn't arise
   for my $dij (@pij) {
     for my $dji (@pji) {
       next unless $dij->[0] eq $dji->[1] and $dij->[1] eq $dji->[0];
-      return 1 if !compatible($ri->{effects}{$dji->[1]}, $rj->{effects}{$dij->[1]});
+      return 1 if !$FS->compatible($ri->{effects}{$dji->[1]}, $rj->{effects}{$dij->[1]});
     }
   }
   return 0;
 }
 
-=doc
-sub feedings {
-  my $phonology = shift;
-  my @fbs;
-  for my $i (0..@$phonology-1) {
-    my @fed = grep feeds($phonology->[$i], $phonology->[$_]), 0..@$phonology-1;
-    push @fbs, {map(($_ => 1), @fed)};
-  }
-  @fbs;
-}
-=cut
+
+
+package Phonology;
 
 # Return annotations regarding which rules have which preconditions or excepts.
 # Used to optimise which rules we consider rerunning in running the phonology.
@@ -320,11 +355,11 @@ sub feedings {
 # We also use {seq} for those rules whose preconditions include a sequence;
 # these are those which can be newly triggered after a deletion.
 
-sub which_preconditions {
-  my $phonology = shift;
+sub annotate_with_preconditions {
+  my $self = shift; 
   my %which;
-  for my $i (0..@$phonology-1) {
-    my $rule = $phonology->[$i];
+  for my $i (0..@{$self->{phonology}}-1) {
+    my $rule = $self->{phonology}[$i];
     # Strippings need to be special-cased: the features they strip out shouldn't be allowed
     # to be turned on.
     if (defined $rule->{tag} and $rule->{tag} =~ /^stripping/) {
@@ -375,37 +410,38 @@ sub which_preconditions {
     }
     push @{$which{seq}}, $i if keys %{$rule->{precondition}} >= 2;
   }
-  \%which;
+
+  $self->{which_preconditions} = \%which;
 }
 
 # Drop, from a completed phonology, rules that go inactive too early to ever run.
 
 sub trim_inactive {
-  my $pd = shift;
+  my $self = shift;
   my @new_indices;
   my $deleted = 0;
 
-  for (my $i = 0; $i < $pd->{start_sequences}-$deleted; $i++) {
-    if (defined $pd->{phonology}[$i]{inactive} and $pd->{phonology}[$i]{inactive} <= $pd->{start_sequences}) {
-      splice @{$pd->{phonology}}, $i, 1;
+  for (my $i = 0; $i < $self->{start_sequences}-$deleted; $i++) {
+    if (defined $self->{phonology}[$i]{inactive} and $self->{phonology}[$i]{inactive} <= $self->{start_sequences}) {
+      splice @{$self->{phonology}}, $i, 1;
       $i--;
       $deleted++;
     }
     push @new_indices, $i;
   }
   # I don't suppose it actually matters when a rule is inactivated if that time is before it runs.
-  for my $rule (@{$pd->{phonology}}) {
-    $rule->{inactive} = $rule->{inactive} >= $pd->{start_sequences} 
+  for my $rule (@{$self->{phonology}}) {
+    $rule->{inactive} = $rule->{inactive} >= $self->{start_sequences} 
                       ? $rule->{inactive} - $deleted 
                       : $new_indices[$rule->{inactive}]
         if defined $rule->{inactive};
   }
-  $pd->{start_sequences} -= $deleted;
+  $self->{start_sequences} -= $deleted;
 }
 
+package FeatureSystem;
 
 # Record the changes between from $phone0 to $phone1, as described below.
-
 sub change_record {
   my ($phone0, $phone1) = (shift, shift);
   my @changes;
@@ -415,13 +451,15 @@ sub change_record {
   @changes;
 }
 
+package PhonologicalRule;
+
 # If %args includes a list {changes}, tags describing the particular changes caused
 # will be pushed.  These tags are:
 # "c $v $f" -- feature $f was changed to value $v
 # "d" -- a segment was deleted
 
-sub run_one_rule {
-  my ($word, $rule, %args) = (shift, shift, @_);
+sub run {
+  my ($rule, $word, %args) = (shift, shift, @_);
   my $changed = 0;
   my $syllable_position = defined $args{syllable_position} ? $args{syllable_position} : 0;
   
@@ -469,13 +507,13 @@ sub run_one_rule {
         }
         # We must entail the effects, not just the overwritten phone, since otherwise
         # jumps over the middle point on an antithetical scale won't always work.
-        $effects = add_entailments $effects;
+        $effects = $FS->add_entailments($effects);
       }
-      my $newphone = overwrite $word->[$i+$displ], $effects;
+      my $newphone = $FS->overwrite($word->[$i+$displ], $effects);
       
       if ($word->[$i+$displ] ne $newphone) {
         $changed = 1;
-        push @{$args{changes}}, change_record($word->[$i+$displ], $newphone) if defined $args{changes};
+        push @{$args{changes}}, FeatureSystem::change_record($word->[$i+$displ], $newphone) if defined $args{changes};
       }
       $word->[$i+$displ] = $newphone;
     }
@@ -493,6 +531,10 @@ sub run_one_rule {
   
   $changed;
 }
+
+package Phonology;
+
+use constant INF => 9**9**9; # is there really nothing sensible better?
 
 # Persistent rules implement so-called surface filters.  
 
@@ -524,8 +566,9 @@ sub run_one_rule {
 use constant STEPS_TO_LOOP => 10;
 use constant STEPS_TO_DIE => 30;
 
-sub run_phonology {
-  my ($word, $phonology, %args) = (shift, shift, @_);
+sub run {
+  my ($self, $word, %args) = (shift, shift, @_);
+  my $phonology = $self->{phonology};
 
   my $start = defined $args{start} ? $args{start} : 0;
   my $end = defined $args{end} ? $args{end} : @$phonology;
@@ -553,9 +596,9 @@ sub run_phonology {
 
         my @changes;
         if (($first_time and defined $args{cleanup}) or
-            run_one_rule $word, $phonology->[$i], %args, changes => \@changes) {
+            $phonology->[$i]->run($word, %args, changes => \@changes)) {
           if (keys %{$phonology->[$i]{precondition}} > 1) { # an optimization.  helpful?
-            1 while run_one_rule $word, $phonology->[$i], %args;
+            1 while $phonology->[$i]->run($word, %args);
           }
           print STDERR "@$word (after $i)\n" if $debug >= 1;
 
@@ -577,17 +620,17 @@ sub run_phonology {
             push @loop_rules, $i;
             push @loop_cessions, $phonology->[$i]{cede};
           }
-          if (defined $args{which_preconditions}) {
+          if (defined $self->{which_preconditions}) {
             # We might need to rerun the rules which have as a precondition a feature
             # this rule has newly acquired.
             my @new_agenda;
             for my $change (@changes) {
               if ($change =~ /^c (.*) (.*)$/) {
-                push @new_agenda, @{$args{which_preconditions}{$1}[$2]}
-                    if defined $args{which_preconditions}{$1}[$2];
+                push @new_agenda, @{$self->{which_preconditions}{$1}[$2]}
+                    if defined $self->{which_preconditions}{$1}[$2];
               }
               elsif ($change eq 'd') {
-                push @new_agenda, @{$args{which_preconditions}{seq}} if defined $args{which_preconditions}{seq};
+                push @new_agenda, @{$self->{which_preconditions}{seq}} if defined $self->{which_preconditions}{seq};
               }
             }
             %new_agenda = (%new_agenda, map(($_ => 1), @new_agenda));
@@ -603,23 +646,23 @@ sub run_phonology {
   }
   
   if (defined $args{generator}) {
-    $_ = add_entailments($_) for @$word;
+    $_ = $FS->add_entailments($_) for @$word;
   }
   $args{track_expiry}[0] = $track_expiry if defined $track_expiry;
 }
 
-
+package PhonologicalRule;
 
 # Create two variants of this rule, one persistent, one not.  Weight appropriately.
 sub persistence_variants {
-  my ($phonology, $base, $persistence_weight, $no_persist, $generable_val) = 
+  my ($self, $base_weight, $pd, $persistence_weight, $no_persist, $generable_val) = 
       (shift, shift, shift, shift, shift);
-  my ($base_rule, $base_weight) = @$base;
+  my $phonology = $pd->{phonology};
   my @makings;
 
   for my $persistent (0..1) {
     next if $persistent and $no_persist;
-    my $rule = {%$base_rule};
+    my $rule = {%$self};
     $rule->{inactive} = scalar @$phonology if !$persistent;
 
     # Loopbreaks and the like.  Only a worry if you want to be persistent.
@@ -642,7 +685,7 @@ sub persistence_variants {
       @potential_conflicts = keys %pch; 
       for my $j (@potential_conflicts) {
         next if defined $phonology->[$j]{inactive} and $phonology->[$j]{inactive} < @$phonology;
-        if (conflict($rule, $phonology->[$j])) {
+        if ($rule->conflicts_with($phonology->[$j])) {
 #              print "$reqd > $effects and\n$jreqd > $phonology->[$j]{effects}{$displ} [$j] clash\n"; # debug
           push @{$rule->{inactivate}}, $j;
           # this is an ugly kluge, but few rules have more than one effect
@@ -663,35 +706,35 @@ sub persistence_variants {
   @makings;
 }
 
-# Generate an extra condition for a given rule.
+# Generate an extra condition for this rule.
 
 sub gen_extra_condition {
-  my ($rule, %args) = (shift, @_);
+  my ($self, %args) = (shift, @_);
   my (%resolution_keys, %resolutions);
   my $global_res_count = 0;
 
-  for my $locus (keys %{$rule->{or_pause}}) {
+  for my $locus (keys %{$self->{or_pause}}) {
     # Restriction to word-extremal, and away from it.
-    my %rule1 = %$rule;
-    $rule1{precondition} = { %{$rule->{precondition}} }; # deep copy this part
+    my %rule1 = %$self;
+    $rule1{precondition} = { %{$self->{precondition}} }; # deep copy this part
     substr($rule1{precondition}{$locus}, 0, 1) = 'x';
     $resolution_keys{$global_res_count} = 0.5; # magic weight
     $resolutions{$global_res_count++} = \%rule1;
     
-    my %rule2 = %$rule;
-    $rule2{or_pause} = { %{$rule->{or_pause}} }; # deep copy this part
+    my %rule2 = %$self;
+    $rule2{or_pause} = { %{$self->{or_pause}} }; # deep copy this part
     delete $rule2{or_pause}{$locus};
     $resolution_keys{$global_res_count} = 0.5; # magic weight
     $resolutions{$global_res_count++} = \%rule2;
   }
 
-  for my $locus (keys %{$rule->{effects}}) {
-    my $effect = $rule->{effects}{$locus};
+  for my $locus (keys %{$self->{effects}}) {
+    my $effect = $self->{effects}{$locus};
 
     # Conditions of the same family as the effects (which we don't have stored in a special structure).
     %_ = map(($_ => 1), map split(/ /, $FS->{features}[$_]{families}), 
         grep substr($effect, $_, 1) ne '.', 0..length($effect)-1);
-    my @families = grep compatible(parse_feature_string($FS->{families}{$_}, 1), $rule->{precondition}{$locus}),
+    my @families = grep $FS->compatible($FS->parse($FS->{families}{$_}), $self->{precondition}{$locus}),
         grep $_, keys %_;
     my @family_features = grep {
       my $i = $_;
@@ -701,11 +744,11 @@ sub gen_extra_condition {
         0..length($effect)-1);
     # TODO: handle this when there's no generable_val.  also, a more uniform way of dropping ungenerables for the later types
     for my $f (@family_features) {
-      next if substr($rule->{precondition}{$locus}, $f, 1) ne '.';
+      next if substr($self->{precondition}{$locus}, $f, 1) ne '.';
       for my $v (0..1) {
         next if $v == 0 and $FS->{features}[$f]{univalent};
-        my %rule1 = %$rule;
-        $rule1{precondition} = { %{$rule->{precondition}} }; # deep copy this part
+        my %rule1 = %$self;
+        $rule1{precondition} = { %{$self->{precondition}} }; # deep copy this part
         substr($rule1{precondition}{$locus}, $f, 1) = $v;
         $resolution_keys{$global_res_count} = $FS->{features}[$f]{univalent} ? 1.0 : 0.5; # magic factor
           # equiprobable on features, aot on their values
@@ -714,19 +757,19 @@ sub gen_extra_condition {
     }
     
     # Conditions related to the outcome.
-    my $outcome = overwrite $rule->{precondition}{$locus}, $effect;
+    my $outcome = $FS->overwrite($self->{precondition}{$locus}, $effect);
     $outcome =~ s/[<>]/./;
     for my $rel (@{$FS->{relations}}) {
       next if $rel->{spread_only};
-      $_ = parse_feature_string($rel->{to}, 1);
+      $_ = $FS->parse($rel->{to});
       next unless $outcome =~ /^$_$/;
       
-      my %rule1 = %$rule;
-      $rule1{precondition} = { %{$rule->{precondition}} }; # deep copy this part
-      my $extra = parse_feature_string($rel->{from}, 1);
-      next unless compatible($rule1{precondition}{$locus}, $extra);
-      $rule1{precondition}{$locus} = overwrite $rule1{precondition}{$locus}, $extra;
-      next if $rule1{precondition}{$locus} == $rule->{precondition}{$locus};
+      my %rule1 = %$self;
+      $rule1{precondition} = { %{$self->{precondition}} }; # deep copy this part
+      my $extra = $FS->parse($rel->{from});
+      next unless $FS->compatible($rule1{precondition}{$locus}, $extra);
+      $rule1{precondition}{$locus} = $FS->overwrite($rule1{precondition}{$locus}, $extra);
+      next if $rule1{precondition}{$locus} == $self->{precondition}{$locus};
       $resolution_keys{$global_res_count} = $rel->{weight}; # magic factor
       $resolutions{$global_res_count++} = \%rule1;
     }
@@ -739,27 +782,27 @@ sub gen_extra_condition {
         next if substr($effect, $f, 1) eq '.';
 
         EF_ASSIM: for my $d (@{$FS->{features}[$f]{assimilation}}) {
-          my @condition = map parse_feature_string($_, 1), split /, */, $d->{condition}, -1;
+          my @condition = map $FS->parse($_), split /, */, $d->{condition}, -1;
           next unless $outcome =~ /^$condition[$d->{target}]$/;
 
-          my %rule1 = %$rule;
-          $rule1{precondition} = { %{$rule->{precondition}} }; # deep copy this part
-          $rule1{or_pause} = { %{$rule->{or_pause}} }; # deep copy this part
+          my %rule1 = %$self;
+          $rule1{precondition} = { %{$self->{precondition}} }; # deep copy this part
+          $rule1{or_pause} = { %{$self->{or_pause}} }; # deep copy this part
           for my $displ (0..$#condition) {
             my $l = $locus + $displ - $d->{target};
             if (!defined $rule1{precondition}{$l}) {
-              $_ = parse_feature_string($FS->{generic_pause_phone}, 1);
+              $_ = $FS->parse($FS->{generic_pause_phone});
               $rule1{or_pause}{$l} = 1 if $_ =~ /^$condition[$displ]$/;
               $rule1{precondition}{$l} = '.' x length($effect);
             }
-            next EF_ASSIM unless compatible($rule1{precondition}{$l}, $condition[$displ]);
-            $rule1{precondition}{$l} = overwrite $rule1{precondition}{$l}, $condition[$displ];
+            next EF_ASSIM unless $FS->compatible($rule1{precondition}{$l}, $condition[$displ]);
+            $rule1{precondition}{$l} = $FS->overwrite($rule1{precondition}{$l}, $condition[$displ]);
           }
           $_ = '.'  x length($effect);
           substr($_, $f, 1) = substr($rule1{precondition}{$locus}, $f, 1); 
-          next unless compatible(substr($rule1{precondition}{$locus + 1 - 2*$d->{target}}, $f, 1), $_);
+          next unless $FS->compatible(substr($rule1{precondition}{$locus + 1 - 2*$d->{target}}, $f, 1), $_);
           substr($rule1{precondition}{$locus + 1 - 2*$d->{target}}, $f, 1) =
-              overwrite(substr($rule1{precondition}{$locus + 1 - 2*$d->{target}}, $f, 1), $_); # impose the actual assimilation
+              $FS->overwrite(substr($rule1{precondition}{$locus + 1 - 2*$d->{target}}, $f, 1), $_); # impose the actual assimilation
           
           $resolution_keys{$global_res_count} = ($d->{prob} >= 1/24.0 ? 1/24.0 : $d->{prob}) * 48; # magic factor
           $resolutions{$global_res_count++} = \%rule1;
@@ -768,30 +811,30 @@ sub gen_extra_condition {
 
       # pretty duplicative
       for my $r (@{$FS->{relations}}) {
-        $_ = parse_feature_string($r->{to}, 1);
+        $_ = $FS->parse($r->{to});
         next if $effect !~ /^$_$/;
 
         EF_ASSIMR: for my $d (@{$r->{assimilation}}) {
-          my @condition = map parse_feature_string($_, 1), split /, */, $d->{condition}, -1;
+          my @condition = map $FS->parse($_), split /, */, $d->{condition}, -1;
           next unless $outcome =~ /^$condition[$d->{target}]$/;
 
-          my %rule1 = %$rule;
-          $rule1{precondition} = { %{$rule->{precondition}} }; # deep copy this part
-          $rule1{or_pause} = { %{$rule->{or_pause}} }; # deep copy this part
+          my %rule1 = %$self;
+          $rule1{precondition} = { %{$self->{precondition}} }; # deep copy this part
+          $rule1{or_pause} = { %{$self->{or_pause}} }; # deep copy this part
           for my $displ (0..$#condition) {
             my $l = $locus + $displ - $d->{target};
             if (!defined $rule1{precondition}{$l}) {
-              $_ = parse_feature_string($FS->{generic_pause_phone}, 1);
+              $_ = $FS->parse($FS->{generic_pause_phone});
               $rule1{or_pause}{$l} = 1 if $_ =~ /^$condition[$displ]$/;
               $rule1{precondition}{$l} = '.' x length($effect);
             }
-            next EF_ASSIMR unless compatible($rule1{precondition}{$l}, $condition[$displ]);
-            $rule1{precondition}{$l} = overwrite $rule1{precondition}{$l}, $condition[$displ];
+            next EF_ASSIMR unless $FS->compatible($rule1{precondition}{$l}, $condition[$displ]);
+            $rule1{precondition}{$l} = $FS->overwrite($rule1{precondition}{$l}, $condition[$displ]);
           }
-          $_ = parse_feature_string($r->{from}, 1);
-          next unless compatible($rule1{precondition}{$locus + 1 - 2*$d->{target}}, $_);
+          $_ = $FS->parse($r->{from});
+          next unless $FS->compatible($rule1{precondition}{$locus + 1 - 2*$d->{target}}, $_);
           $rule1{precondition}{$locus + 1 - 2*$d->{target}} = 
-              overwrite($rule1{precondition}{$locus + 1 - 2*$d->{target}}, $_); # impose the actual assimilation
+              $FS->overwrite($rule1{precondition}{$locus + 1 - 2*$d->{target}}, $_); # impose the actual assimilation
           
           $resolution_keys{$global_res_count} = ($d->{prob} >= 1/24.0 ? 1/24.0 : $d->{prob}) * 48; # magic factor
           $resolutions{$global_res_count++} = \%rule1;
@@ -800,13 +843,13 @@ sub gen_extra_condition {
     }
 
     # Conditions that avoid a marked situation changed by a previous rule.
-    for my $old_rule (@{$args{phonology}}) {
+    for my $old_rule (@{$args{phonology}{phonology}}) {
       next if defined $old_rule->{inactive};
       next if keys %{$old_rule->{precondition}} >= 2 and $args{bar_sequences};
       for my $old_locus (keys %{$old_rule->{effects}}) {
         my $old_precondition = $old_rule->{precondition}{$old_locus};
         next if $old_precondition =~ /u/;
-        next unless compatible($old_precondition, $outcome);
+        next unless $FS->compatible($old_precondition, $outcome);
         my $old_effect = $old_rule->{effects}{$old_locus};
         # We take a rule to avoid markedness if its effect 
         # is incompatible with its precondition.
@@ -816,13 +859,13 @@ sub gen_extra_condition {
           substr($old_effect, $_, 1) = substr($old_rule->{effects}{$old_locus-1}, $_, 1)
             if substr($old_effect, $_, 1) eq '<';
         }
-        next if compatible($old_effect, $old_precondition);
+        next if $FS->compatible($old_effect, $old_precondition);
 
         # We let how good this thing is as a condition to avoid depend on how many features have to be added.  
         # (We just perform this subtraction on the old precondition, direcly.)
-        my %rule1 = %$rule;
-        $rule1{precondition} = { %{$rule->{precondition}} }; # deep copy this part
-        $rule1{except} = { %{$rule->{except}} } if defined $rule->{except}; # deep copy this part
+        my %rule1 = %$self;
+        $rule1{precondition} = { %{$self->{precondition}} }; # deep copy this part
+        $rule1{except} = { %{$self->{except}} } if defined $self->{except}; # deep copy this part
 
         my $num_convergences = scalar grep substr($old_precondition, $_, 1) ne '.', 0..length($old_precondition)-1;
         for (0..length($old_precondition)-1) {
@@ -835,7 +878,7 @@ sub gen_extra_condition {
           substr($rule1{precondition}{$locus}, 0, 1) = 'x'; # nothing is left to match!
         } elsif ($num_divergences <= 1) {
           $old_precondition =~ y/01/10/;
-          $rule1{precondition}{$locus} = overwrite $rule1{precondition}{$locus}, $old_precondition;
+          $rule1{precondition}{$locus} = $FS->overwrite($rule1{precondition}{$locus}, $old_precondition);
         } else {
           $rule1{except}{$locus} .= ' ' if defined $rule1{except}{$locus};
           $rule1{except}{$locus} .= $old_precondition;
@@ -849,10 +892,9 @@ sub gen_extra_condition {
 
   # print STDERR YAML::Any::Dump(\%resolutions), "\n\n";
   if (keys %resolutions) {
-    my $i = weighted_one_of %resolution_keys;
+    my $i = weighted_one_of(%resolution_keys);
     return $resolutions{$i};
   }
-  return $rule;
 }
 
 # To expand a rule tag:
@@ -864,18 +906,11 @@ sub gen_extra_condition {
 
 # The format of rule tags is "$kind $list_index", where $kind is one of the values that
 # appear herein several times.
-sub gen_one_rule {
-  my ($phonology, $tag) = (shift, shift); 
-  my %args = @_;
-  my ($kind, $k, $rest) = split / /, $tag;
-  # print STDERR "[" . scalar @$phonology . "] tag is $tag\n"; # debug
 
-  if ($kind eq 'default' and !defined $rest) {
-    for my $i (0..@{$FS->{features}[$k]{default}}-1) {
-      gen_one_rule($phonology, "$tag $i", %args);
-    }
-    return;
-  }
+sub generate {
+  my ($tag, %args) = (shift, @_);
+  my ($kind, $k, $rest) = split / /, $tag;
+  # print STDERR "[" . scalar @{$args{phonology}{phonology}} . "] tag is $tag\n"; # debug
 
   # Not doing assimilation rules (or strippings) since they can't much come out differently.
   my $threshold = 1;
@@ -907,8 +942,8 @@ sub gen_one_rule {
   my $total_base_weight = 0;
 
   if ($kind eq 'default') {
-    my $precondition = parse_feature_string($FS->{features}[$k]{default}[$rest]{condition}, 1);
-    $precondition = overwrite $precondition, parse_feature_string($FS->{features}[$k]{requires}, 1)
+    my $precondition = $FS->parse($FS->{features}[$k]{default}[$rest]{condition});
+    $precondition = $FS->overwrite($precondition, $FS->parse($FS->{features}[$k]{requires}))
         if defined $FS->{features}[$k]{requires};
     substr($precondition, $k, 1) = 'u';
 
@@ -926,7 +961,7 @@ sub gen_one_rule {
       # This could be made more general later.
       for (@{$FS->{strippings}}) {
         if ($_->{strip} =~ /(^| )$FS->{features}[$k]{name}( |$)/) {
-          $rule->{except} = {0 => parse_feature_string($_->{condition}, 1)};
+          $rule->{except} = {0 => $FS->parse($_->{condition})};
           last;
         }
       }
@@ -935,20 +970,22 @@ sub gen_one_rule {
     }
   } 
   
+  # this short-circuits a bunch of stuff.
   elsif ($kind eq 'stripping') {
     my $precondition = $FS->{strippings}[$k]{condition_parsed};
 
-    for my $s (@{$FS->{strippings}[$k]{substitute}}) {
+    if (defined $rest) {
+      my $s = $FS->{strippings}[$k]{substitute}[$rest];
       $s =~ /^(.*) *: *(.*)$/;
       my $rule = {
-        precondition => {0 => overwrite($precondition, parse_feature_string($1, 1))},
-        effects => {0 => parse_feature_string($2, 1)},
+        precondition => {0 => $FS->overwrite($precondition, $FS->parse($1))},
+        effects => {0 => $FS->parse($2)},
         recastability => 0,
       };
-      push @$phonology, $rule;
+      return bless $rule;
     }
 
-    my $effects = parse_feature_string($FS->{strippings}[$k]{strip}, 1);
+    my $effects = $FS->parse($FS->{strippings}[$k]{strip});
     $effects =~ s/1/u/g;
     my $rule = {
       precondition => {0 => $precondition},
@@ -957,8 +994,7 @@ sub gen_one_rule {
       priority => $FS->{strippings}[$k]{priority},
       tag => $tag,
     };
-    push @$phonology, $rule;
-    return;
+    return bless $rule;
   } 
   
   elsif ($kind =~ /^assimilation/ or $kind =~ /^repair/) { # TESTING
@@ -979,15 +1015,15 @@ sub gen_one_rule {
     # Recursive splits don't in fact work, as this is currently implemented.
     if (defined $d->{split}) {
       for my $i (0..$#{$d->{split}}) {
-        gen_one_rule($phonology, "${kind}_split $k $i", %args, dont_skip => 1) 
+        $args{phonology}->generate_new_rule("${kind}_split $k $i", %args, dont_skip => 1) 
             if rand() < $d->{split}[$i]{prob};
       }
     }
 
     # the condition on a split is further to the condition on the parent
-    my @unsplit_phones = map parse_feature_string($_, 1), split /, */, $unsplit_d->{condition}, -1;
-    my @phones = map parse_feature_string($_, 1), split /, */, $d->{condition}, -1;
-    $phones[$_] = overwrite $unsplit_phones[$_], $phones[$_] for 0..$#phones;
+    my @unsplit_phones = map $FS->parse($_), split /, */, $unsplit_d->{condition}, -1;
+    my @phones = map $FS->parse($_), split /, */, $d->{condition}, -1;
+    $phones[$_] = $FS->overwrite($unsplit_phones[$_], $phones[$_]) for 0..$#phones;
     my %base_rule = (
       precondition => {map(($_ => $phones[$_]), 0..$#phones)},
       recastability => 1 - $d->{prob},
@@ -998,17 +1034,23 @@ sub gen_one_rule {
     if (defined $d->{except}) {
       my %except = %{$d->{except}};
       for my $displ (keys %except) {
-        $except{$displ} = join ' ', map parse_feature_string($_, 1), split /, */, $d->{except}{$displ};
+        $except{$displ} = join ' ', map $FS->parse($_), split /, */, $d->{except}{$displ};
       }
       $base_rule{except} = {%except};
+    }
+    if ($kind =~ /_split$/ and defined $unsplit_d->{except}) {
+      for my $displ (keys %{$unsplit_d->{except}}) {
+        $base_rule{except}{$displ} .= ' ' if defined $base_rule{except}{$displ};
+        $base_rule{except}{$displ} .= join ' ', map $FS->parse($_), split /, */, $unsplit_d->{except}{$displ};
+      }
     }
 
     my $pause_phone;
     @_ = split / +([0-9.]+) */, $d->{pause_phone};
     if (scalar @_ == 1) {
-      $pause_phone = parse_feature_string($d->{pause_phone});
+      $pause_phone = $FS->parse($d->{pause_phone}, undefined => 1);
     } elsif (scalar @_ > 1) {
-      $pause_phone = parse_feature_string weighted_one_of @_;
+      $pause_phone = $FS->parse(weighted_one_of(@_), undefined => 1);
     }
     # As a corollary of the sort here, '-' assignments follow '+' ones.  TODO: make this saner?
     for my $e (sort keys %{$d->{extras}}) {
@@ -1024,9 +1066,9 @@ sub gen_one_rule {
           $base_rule{pause_phone} = $pause_phone;
         } elsif ($e0 =~ /^!/) {
           $base_rule{except}{$e1} .= ' ' if defined $base_rule{except}{$e1};
-          $base_rule{except}{$e1} .= parse_feature_string(substr($e0,1),1);
+          $base_rule{except}{$e1} .= $FS->parse(substr($e0,1));
         } else {
-          $base_rule{precondition}{$e1} = overwrite $base_rule{precondition}{$e1}, parse_feature_string($e0,1);
+          $base_rule{precondition}{$e1} = $FS->overwrite($base_rule{precondition}{$e1}, $FS->parse($e0));
         }
       }
     }
@@ -1044,7 +1086,9 @@ sub gen_one_rule {
       /^([^ ]*) +(.*)$/;
       my ($reskind, $arg) = ($1, $2);
 
-      my %rule = %base_rule; 
+      my %rule = %base_rule;
+      my $ruleobj = \%rule; 
+      bless $ruleobj;
       my @variants = (); # where to put the generated rules
 
       # resolve as specified
@@ -1054,7 +1098,7 @@ sub gen_one_rule {
         for (@effects_strings) {
           /^(.*) +([0-9]*)$/;
           my ($effect, $target) = ($1, $2);
-          my $parsed_effect = parse_feature_string($effect, 1);
+          my $parsed_effect = $FS->parse($effect);
 
           for (0..length($effects{$target})-1) {
             if (substr($parsed_effect, $_, 1) =~ /[{}]/) {
@@ -1071,16 +1115,16 @@ sub gen_one_rule {
           # unless assimilation in that feature as well assures that this is unnecessary.  
           for (0..length($parsed_effect)-1) {
             if (substr($parsed_effect, $_, 1) ne '.') {
-              my $requirements = parse_feature_string($FS->{features}[$_]{requires}, 1);
+              my $requirements = $FS->parse($FS->{features}[$_]{requires});
               for my $i (0..length($requirements)-1) {
                 substr($requirements, $i, 1) = '.'
                     if substr($parsed_effect, $_, 1) =~ /[<>]/ 
                     and substr($parsed_effect, $i, 1) eq substr($parsed_effect, $_, 1);
               }
-              $rule{precondition}{$target} = overwrite $rule{precondition}{$target}, $requirements;
+              $rule{precondition}{$target} = $FS->overwrite($rule{precondition}{$target}, $requirements);
               if (substr($parsed_effect, $_, 1) =~ /[<>]/) {
                 my $source = (substr($parsed_effect, $_, 1) eq '>') ? $target + 1 : $target - 1;
-                $rule{precondition}{$source} = overwrite $rule{precondition}{$source}, $requirements;
+                $rule{precondition}{$source} = $FS->overwrite($rule{precondition}{$source}, $requirements);
               }
             }
           }
@@ -1092,17 +1136,17 @@ sub gen_one_rule {
         for my $str (@{$FS->{strippings}}) {
           for my $displ (keys %{$rule{precondition}}) { 
             if ($rule{precondition}{$displ} =~ /^$str->{condition_parsed}$/) {
-              my $effect = parse_feature_string($str->{strip}, 1);
+              my $effect = $FS->parse($str->{strip});
               $effect =~ s/1/a/g; # temporary char
-              $rule{precondition}{$displ} = overwrite $rule{precondition}{$displ}, $effect;
+              $rule{precondition}{$displ} = $FS->overwrite($rule{precondition}{$displ}, $effect);
               $rule{precondition}{$displ} =~ s/a/./g;
             }
           }
         }
 
         $rule{effects} = \%effects;
-        push @variants, persistence_variants $phonology, [\%rule, 1], $threshold, 
-                                             0, $args{generable_val};
+        push @variants, $ruleobj->persistence_variants(1, $args{phonology}, $threshold, 
+                                             0, $args{generable_val});
       } #r
 
       elsif ($reskind eq 'delete') {
@@ -1116,10 +1160,9 @@ sub gen_one_rule {
       # For essentially historical reasons, {flip} and {related_weight} belong to the whole constraint,
       # not the resolution.  If entries in {flip} or keys in {related_weight} are followed by
       # a number, they apply only to the phone of that index, else they apply to all phones.
-      # TESTING
       elsif ($reskind eq 'free') {
         my $resolvend = $phones[$arg];
-        my $reqd = add_requirements $resolvend;
+        my $reqd = $FS->add_requirements($resolvend);
         my $i = 0;
         my $resolution_type = 0;
         RESOLUTION_TYPE: while ($resolution_type <= 1) {
@@ -1129,6 +1172,8 @@ sub gen_one_rule {
           $no_persist = 1 if defined $d->{phonemic_only};
 
           %rule = %base_rule; 
+          $ruleobj = \%rule;
+          bless $ruleobj;
 
           if ($resolution_type == 0) {
             $i = 0, $resolution_type++, next if $i >= length($resolvend);
@@ -1141,7 +1186,7 @@ sub gen_one_rule {
             # don't turn univalents on (unless specially allowed)
             if (substr($reqd, $i, 1) eq '0' and defined $FS->{features}[$i]{univalent}) {
               $i++, redo if !defined $d->{flip}{$FS->{features}[$i]{name}};
-              $effects = overwrite($effects, parse_feature_string($d->{univalent_addition}, 1));
+              $effects = $FS->overwrite($effects, $FS->parse($d->{univalent_addition}));
                   # this still needs to have multiple phones enabled on it
             }
             # Weights for flipping individual features: given in {flip}.
@@ -1161,15 +1206,15 @@ sub gen_one_rule {
 
             $i++, redo if defined $FS->{relations}[$i]{spread_only};
             
-            my $from = parse_feature_string($FS->{relations}[$i]{from}, 1);
+            my $from = $FS->parse($FS->{relations}[$i]{from});
             $i++, redo if $resolvend !~ /^$from$/;
-            $effects = add_requirements(parse_feature_string($FS->{relations}[$i]{to}, 1));
-            if (compatible(add_entailments($effects), $resolvend)) {
+            $effects = $FS->add_requirements($FS->parse($FS->{relations}[$i]{to}));
+            if ($FS->compatible($FS->add_entailments($effects), $resolvend)) {
               # This is the place where we get the first word.  That's problematic.
               $FS->{relations}[$i]{from} =~ /^([^ ]*)/;
-              $_ = parse_feature_string($1, 1);
+              $_ = $FS->parse($1);
               y/01/10/;
-              $effects = overwrite($effects, add_requirements($_));
+              $effects = $FS->overwrite($effects, $FS->add_requirements($_));
             }
             # Weights for doing any complicated feature change: given in {relate_weight},
             # which apply to anything they match.
@@ -1180,7 +1225,7 @@ sub gen_one_rule {
                   next unless $arg == $2;
                   $outcome = $1;
                 }
-                my $f = parse_feature_string($outcome, 1);
+                my $f = $FS->parse($outcome);
                 $base_weight *= $d->{related_weight}{$outcome} if $effects =~ /^$f$/;
               }
             }
@@ -1193,8 +1238,8 @@ sub gen_one_rule {
           $rule{base_weight} = $base_weight; 
 
           my $persistence_weight = defined $d->{persist} ? $d->{persist} : $threshold;
-          push @variants, persistence_variants $phonology, [\%rule, $base_weight], $persistence_weight, 
-                                              $no_persist, $args{generable_val};
+          push @variants, $ruleobj->persistence_variants($base_weight, $args{phonology}, $persistence_weight, 
+                                              $no_persist, $args{generable_val});
           for (@variants) {
             push @resolutions, $_->[0];
             push @weights, $_->[1];
@@ -1231,7 +1276,7 @@ sub gen_one_rule {
     # Decorate the selected resolution by clearing features that now lack their requirements.
     # Do antithetical features.
     for my $displ (keys %{$selected_rule->{effects}}) {
-      $selected_rule->{effects}{$displ} = add_entailments $selected_rule->{effects}{$displ};
+      $selected_rule->{effects}{$displ} = $FS->add_entailments($selected_rule->{effects}{$displ});
 
       # If this resolution is to be avoided, try again.
       for my $avoid (@{$args{avoid}}) {
@@ -1244,9 +1289,11 @@ sub gen_one_rule {
     } # $displ
   } # RESOLVE
 
+  bless $selected_rule;
+
   # Adorn the rule with extra conditions, if we decided to before.
   if ($add_a_condition) {
-    $selected_rule = gen_extra_condition $selected_rule, phonology => $phonology, %args;
+    $selected_rule->gen_extra_condition(%args); # {phonology} is passed through
   }
 
   # If any of the preconditions of this rule are not generable by anything coming before,
@@ -1284,7 +1331,8 @@ sub gen_one_rule {
   }
 
   # Abandon this ruls if it does nothing now.
-  return unless keys %{$selected_rule->{effects}} or defined $selected_rule->{deletions}; # TODO: update as needed
+  # TODO: update these tests for rules that do nothing as needed
+  return unless keys %{$selected_rule->{effects}} or defined $selected_rule->{deletions}; 
 
   # Adding {except} conditions if this might newly set a feature which a stripping takes out
   # would be nice if it worked, but there are problems if the feature being set is a side effect;
@@ -1296,76 +1344,118 @@ sub gen_one_rule {
   # It's correct for extra condition rules to have no tag, so that they
   # just drop out when regenerated.
   $selected_rule->{tag} = $tag unless $add_a_condition;
+  $selected_rule->{run_again} = 1 if ($add_a_condition and !$skip_me);
   $selected_rule->{priority} = 0 if !defined $selected_rule->{priority};
   if (defined $selected_rule->{base_weight}) {
     $selected_rule->{recastability} = (1 - $selected_rule->{base_weight} / $total_base_weight);
     $selected_rule->{recastability} = 0 if $selected_rule->{recastability} < 0;
     delete $selected_rule->{base_weight};
   }
-  for (@{$selected_rule->{inactivate}}) {
-    $phonology->[$_]{inactive} = scalar @$phonology unless defined $phonology->[$_]{inactive}
-                                                    and $phonology->[$_]{inactive} < scalar @$phonology;
-  }
-  delete $selected_rule->{inactivate};
+  
+  $selected_rule;
+}
 
-  for my $displ (keys %{$selected_rule->{effects}}) {
-    for my $i (0..@{$FS->{features}}-1) {
-      if (substr($selected_rule->{effects}{$displ}, $i, 1) =~ /[01]/) {
-        push @{$args{generable_val}[substr($selected_rule->{effects}{$displ}, $i, 1)][$i]}, scalar @$phonology;
+package Phonology;
+
+# Generates a new rule with tag $tag, and 
+sub generate_new_rule {
+  my ($self, $tag, %args) = (shift, shift, @_); 
+  my $phonology = $self->{phonology};
+
+  # Strippings and defaults are clusters of rules to be generated all at once.
+  # Other tags, just generate once.
+  my @tag_suffixes = ('');
+  if ($tag =~ /^default /) {
+    my ($kind, $k) = split / /, $tag;
+    @tag_suffixes = map " $_", 0..@{$FS->{features}[$k]{default}}-1;
+  } elsif ($tag =~ /^stripping /) {
+    my ($kind, $k) = split / /, $tag;
+    @tag_suffixes = map " $_", 0..@{$FS->{strippings}[$k]{substitute}}-1;
+    push @tag_suffixes, '';
+  }
+
+  for my $tag_suffix (@tag_suffixes) {
+    my $rule = PhonologicalRule::generate($tag.$tag_suffix, %args, phonology => $self);
+    next unless $rule;
+
+    next if $tag =~ /^stripping /;
+
+    for (@{$rule->{inactivate}}) {
+      $phonology->[$_]{inactive} = scalar @$phonology unless defined $phonology->[$_]{inactive}
+                                                      and $phonology->[$_]{inactive} < scalar @$phonology;
+    }
+    delete $rule->{inactivate};
+
+    for my $displ (keys %{$rule->{effects}}) {
+      for my $i (0..@{$FS->{features}}-1) {
+        if (substr($rule->{effects}{$displ}, $i, 1) =~ /[01]/) {
+          push @{$args{generable_val}[substr($rule->{effects}{$displ}, $i, 1)][$i]}, scalar @$phonology;
+        }
       }
     }
-  }
 
-  # Since extra conditions added to this rule may have come out the same way, delete redundant ones,
-  # i.e. rules made since invoking this function whose conditions are narrower than 
-  # the one about to be inserted, and which have the same effect, unless they're persistent
-  # and we're not.  
-  # (If we cut a few too many things, though, not the end of the world.)
-  # Only do this to immediately preceding ones, since we might get A in a doubly-special case,
-  # B in a special case, A in the general case.
-  my $former_length = @$phonology;
-  DROP_REDUNDANT: while(1) {
-    my $rule = $phonology->[-1];
-    for my $displ (keys %{$selected_rule->{precondition}}) {
-      last DROP_REDUNDANT unless defined $rule->{precondition}{$displ}
-          and $rule->{precondition}{$displ} =~ /^$selected_rule->{precondition}{$displ}$/;
+    # Since extra conditions added to this rule may have come out the same way, delete redundant ones,
+    # i.e. rules made since invoking this function whose conditions are narrower than 
+    # the one about to be inserted, and which have the same effect, unless they're persistent
+    # and we're not.  
+    # (If we cut a few too many things, though, not the end of the world.)
+    # Only do this to immediately preceding ones, since we might get A in a doubly-special case,
+    # B in a special case, A in the general case.
+    my $former_length = @$phonology;
+    DROP_REDUNDANT: while(1) {
+      my $rule1 = $phonology->[-1];
+      for my $displ (keys %{$rule->{precondition}}) {
+        last DROP_REDUNDANT unless defined $rule1->{precondition}{$displ}
+            and $rule1->{precondition}{$displ} =~ /^$rule->{precondition}{$displ}$/;
+      }
+      last DROP_REDUNDANT unless keys %{$rule1->{effects}} == keys %{$rule->{effects}};
+      for my $displ (keys %{$rule->{effects}}) {
+        last DROP_REDUNDANT unless defined $rule1->{effects}{$displ}
+            and $rule1->{effects}{$displ} eq $rule->{effects}{$displ};
+      }
+      if (defined $rule1->{deletions}) {
+        last DROP_REDUNDANT if !defined $rule->{deletions};
+        last DROP_REDUNDANT unless scalar @{$rule1->{deletions}} == scalar @{$rule->{deletions}};
+        for my $displ (@{$rule1->{deletions}}) {
+          last DROP_REDUNDANTE unless grep $_ == $displ, @{$rule->{deletions}};
+        }
+      } else {
+        last DROP_REDUNDANT if defined $rule->{deletions};
+      }
+      last DROP_REDUNDANT if !defined $rule1->{inactive} and defined $rule->{inactive};
+      #print STDERR YAML::Any::Dump($rule1) . "redounds with\n" . YAML::Any::Dump($rule) . "\n"; # debug
+      pop @$phonology;
     }
-    last DROP_REDUNDANT unless keys %{$rule->{effects}} == keys %{$selected_rule->{effects}};
-    for my $displ (keys %{$selected_rule->{effects}}) {
-      last DROP_REDUNDANT unless defined $rule->{effects}{$displ}
-          and $rule->{effects}{$displ} eq $selected_rule->{effects}{$displ};
+    if (@$phonology < $former_length) {
+      for my $rule1 (@$phonology) {
+        $rule1->{inactive} = @$phonology if $rule1->{inactive} > @$phonology;
+      }
     }
-    last DROP_REDUNDANT if !defined $rule->{inactive} and defined $selected_rule->{inactive};
-    #print STDERR YAML::Any::Dump($rule) . "redounds with\n" . YAML::Any::Dump($selected_rule) . "\n"; # debug
-    pop @$phonology;
-  }
-  if (@$phonology < $former_length) {
-    for my $rule (@$phonology) {
-      $rule->{inactive} = @$phonology if $rule->{inactive} > @$phonology;
+
+    push @$phonology, $rule;
+
+    # Recurse to replace any other rule which we deactivated; make sure these don't resolve 
+    # the same as the bad rule.
+    # (Incidentally, we couldn't recurse before the push; it would break rule referencing by number.)
+    for my $bt (@{$rule->{broken_tags}}) {
+      $bt =~ /^(.*) ([01u.]*)$/;
+      my ($tag, $avoid) = ($1, $2);
+      my %otherargs = %args;
+      delete $otherargs{avoid};
+      delete $otherargs{dont_skip};
+  #    print "{\n"; # debug
+      $args{avoid} = [] if !defined $args{avoid};
+      $self->generate_new_rule($tag, avoid => [(split /\|/, $avoid), @{$args{avoid}}], %otherargs);
+  #    print "}\n"; # debug
     }
-  }
+    delete $rule->{broken_tags};
 
-  push @$phonology, $selected_rule;
-
-  # Recurse to replace any other rule which we deactivated; make sure these don't resolve 
-  # the same as the bad rule.
-  # (Incidentally, we couldn't recurse before the push; it would break rule referencing by number.)
-  for my $bt (@{$selected_rule->{broken_tags}}) {
-    $bt =~ /^(.*) ([01u.]*)$/;
-    my ($tag, $avoid) = ($1, $2);
-    my %otherargs = %args;
-    delete $otherargs{avoid};
-    delete $otherargs{dont_skip};
-#    print "{\n"; # debug
-    gen_one_rule($phonology, $tag, avoid => [(split /\|/, $avoid), @{$args{avoid}}], %otherargs);
-#    print "}\n"; # debug
-  }
-  delete $selected_rule->{broken_tags};
-
-  # If this is the added-condition version of a rule which we also wanted to generate unadorned,
-  # recurse to do the unadorned form.
-  if ($add_a_condition and !$skip_me) {
-    gen_one_rule($phonology, $tag, %args, dont_skip => 1);
+    # If this is the added-condition version of a rule which we also wanted to generate unadorned,
+    # recurse to do the unadorned form.
+    if (defined $rule->{run_again}) {
+      delete $rule->{run_again};
+      $self->generate_new_rule($tag, %args, dont_skip => 1);
+    }
   }
 }
 
@@ -1387,7 +1477,6 @@ sub gen_one_rule {
 # different contexts alone.  Instead, we'll eventually generate a thing for them:
 # perhaps a table with several small dimensions, and for each value of each dimension
 # one (or a few?) feature-values from among the contrastive features,
-# probably using related features to generate values of the same contrast as we might.  
 #
 # Things, vowels included, have to be able to alternate with zero!
 # In allophony mode (sound change mode is different)
@@ -1401,8 +1490,31 @@ sub gen_one_rule {
 # as normal and overstamp them with the feature values from the alternation somehow.
 # This still needs some thought on what to do about features in an alternation
 # that don't fulfill their requisites for generation (think also about sound change).  
+#
+# To make good deeper alternations probably requires using related features and stuff
+# to retcon some extra history.  But that seems hard.
 
-sub gen_phonology {
+sub generate {
+  print STDERR "generating phonology...\n" if $verbose;
+  my $pd = Phonology::generate_preliminary();
+  $pd->annotate_with_preconditions();
+  print STDERR "computing inventory...\n" if $verbose;
+  $pd->compute_inventory(); # base inventory for generation
+  $pd->postprocess_inventory();
+  delete $pd->{phone_generator}; # now this is needless
+  if ($debug < 1) {
+    $pd->trim_inactive(); 
+  } else {
+    print STDERR "pruning of inactive rules skipped\n";
+  }
+  $pd->annotate_with_preconditions(); # since the numbers are changed
+  for (@{$pd->{phonology}}) {
+    $_->strip_feed_annotation();
+  }
+  return $pd;
+}
+
+sub generate_preliminary {
   my (@phone_generator, @phonology);
   my @syllable_structure;
 
@@ -1420,7 +1532,7 @@ sub gen_phonology {
       my $remaining_weight = 1; # pre-fuzz weight
       my $fuzzed_weight = 0; # post-fuzz weight
       while (@featureses) {
-        my $phone = parse_feature_string shift @featureses;
+        my $phone = $FS->parse(shift @featureses, undefined => 1);
         $remaining_weight -= @featureses[0] if @featureses;
         $_ = (@featureses ? shift @featureses : $remaining_weight) * (rand() + rand());
         $fuzzed_weight += $_;
@@ -1437,7 +1549,7 @@ sub gen_phonology {
       $rslot->{reprune} = 1 if defined $slot->{reprune} and rand() < $slot->{reprune};
       if (defined $slot->{except}) {
         while (my ($k, $v) = each %{$slot->{except}}) {
-          push @{$rslot->{except}}, parse_feature_string($k,1) if rand() < $v;
+          push @{$rslot->{except}}, $FS->parse($k) if rand() < $v;
         }
       }
       push @syllable_structure, $rslot;
@@ -1448,7 +1560,7 @@ sub gen_phonology {
   my @generable_val; # defined($generable_val[$v][$f]) iff the $f-th feature can take value $v \in 0,1.
                      # If it's an empty list, that's ok; that just means the feature can only come up in phone generation.
   my %family_inventories;
-  $family_inventories{$_} = { parse_feature_string($FS->{families}{$_}, 1) => 1 }
+  $family_inventories{$_} = { $FS->parse($FS->{families}{$_}) => 1 }
       for (keys %{$FS->{families}});
   my %special_filling; # which features we're using a U in the syllable structure in
   my %prevent_marked; # when we look through the markeds, which ones we don't do
@@ -1459,12 +1571,12 @@ sub gen_phonology {
     for my $sit (@{$f->{generated}}) {
       if (rand() < $sit->{contrast}) {
         my $requires;
-        $requires = parse_feature_string($f->{requires}, 1) if defined $f->{requires};
+        $requires = $FS->parse($f->{requires}) if defined $f->{requires};
 
         my @by_families;
         if (defined $sit->{by_family} and rand() < $sit->{by_family_prob}) {
           for my $phone (keys %{$family_inventories{$sit->{by_family}}}) {
-            next if defined $requires and !compatible($phone, $requires);
+            next if defined $requires and !$FS->compatible($phone, $requires);
             push @by_families, $phone if rand() < $sit->{each_family_prob} * 
                 sqrt($family_inventories{$sit->{by_family}}{$phone});
           }
@@ -1484,19 +1596,19 @@ sub gen_phonology {
           }
         }
 
-        my $precondition = parse_feature_string($sit->{condition}, 1);
-        substr($precondition, $feature_indices{$f->{name}}, 1) = 'u';
-        $precondition = overwrite $precondition, $requires if defined $f->{requires};
+        my $precondition = $FS->parse($sit->{condition});
+        substr($precondition, $FS->{feature_index}{$f->{name}}, 1) = 'u';
+        $precondition = $FS->overwrite($precondition, $requires) if defined $f->{requires};
         my %rule = (
           precondition => {0 => $precondition},
-          effects => {0 => parse_feature_string($f->{name}, 1)}, # er, rework this
+          effects => {0 => $FS->parse($f->{name})}, # er, rework this
           prob => [map fuzz($sit->{prob}), @syllable_structure],
         );
-        substr($rule{effects}{0}, $feature_indices{$f->{antithetical}}, 1) = '0' if (defined $f->{antithetical});
+        substr($rule{effects}{0}, $FS->{feature_index}{$f->{antithetical}}, 1) = '0' if (defined $f->{antithetical});
         if (@by_families) {
           for (@by_families) {
             my %rule1 = %rule; 
-            $rule1{precondition}{0} = overwrite($precondition, $_);
+            $rule1{precondition}{0} = $FS->overwrite($precondition, $_);
             # Don't allow a rule inserting f in families to be sensitive to f.
             # (It confuses the inventory-taker.)
             next if index($rule1{precondition}{0}, 'u') == -1;
@@ -1505,6 +1617,7 @@ sub gen_phonology {
         } else {
           push @phone_generator, \%rule;
         }
+        bless $_, 'PhonologicalRule' for @phone_generator;
 
         $generable[$fi] = 1;
         $generable_val[0][$fi] = [];
@@ -1515,21 +1628,19 @@ sub gen_phonology {
           while (my ($phone, $weight) = each %{$slot->{features}}) {
             $_ = $phone;
             s/u/./g;
-            next unless compatible $_, $precondition;
+            next unless $FS->compatible($_, $precondition);
 
             delete $slot->{features}{$phone};
             if (defined $f->{slots}{$slot->{tag}}) {
               if ($r < $f->{slots}{$slot->{tag}}[0]) {
-                my $antieffect = $rule{effects}{0};
-                $antieffect =~ y/01/10/;
-                $phone = overwrite $phone, $antieffect;
+                $phone = $FS->overwrite($phone, $rule{antieffects}{0});
               } elsif ($r < $f->{slots}{$slot->{tag}}[0] + $f->{slots}{$slot->{tag}}[1]) {
-                $phone = overwrite $phone, $rule{effects}{0};
-                $phone = overwrite $phone, parse_feature_string($f->{slot_if_on}, 1)
+                $phone = $FS->overwrite($phone, $rule{effects}{0});
+                $phone = $FS->overwrite($phone, $FS->parse($f->{slot_if_on}))
                     if defined $f->{slot_if_on};
               } elsif ($r < $f->{slots}{$slot->{tag}}[0] + $f->{slots}{$slot->{tag}}[1] +  $f->{slots}{$slot->{tag}}[2]) {
-                substr($phone, $feature_indices{$f->{name}}, 1) = 'U';
-                $special_filling{$feature_indices{$f->{name}}} = 1;
+                substr($phone, $FS->{feature_index}{$f->{name}}, 1) = 'U';
+                $special_filling{$FS->{feature_index}{$f->{name}}} = 1;
               }
             }
             if (defined $slot->{features}{$phone}) {
@@ -1547,11 +1658,9 @@ sub gen_phonology {
             $s =~ s/u/./g;
             next if $phone !~ /^$s$/;
             # Using $rule{prob}[0] here of course isn't especially correct, but it'll do.
-            $family_inventories{$fam}{overwrite($phone, $rule{effects}{0})} += 
+            $family_inventories{$fam}{$FS->overwrite($phone, $rule{effects}{0})} += 
               $family_inventories{$fam}{$phone} * $rule{prob}[0] if ($rule{prob}[0] > 0);
-            my $antieffect = $rule{effects}{0};
-            $antieffect =~ y/01/10/;
-            $family_inventories{$fam}{overwrite($phone, $antieffect)} += 
+            $family_inventories{$fam}{$FS->overwrite($phone, $rule{antieffects}{0})} += 
               $family_inventories{$fam}{$phone} * (1 - $rule{prob}[0]) if ($rule{prob}[0] < 1);
             delete $family_inventories{$fam}{$phone}; 
           }
@@ -1580,16 +1689,16 @@ sub gen_phonology {
                         and rand() < $FS->{features}[$i]{forcibly_unmark}) {
       my @l = ();
       for my $default (@{$FS->{features}[$i]{default}}) {
-        my $phone = parse_feature_string($default->{condition}, 1);
+        my $phone = $FS->parse($default->{condition});
         for (0..@{$FS->{features}}-1) {
           push @l, $_ if substr($phone, $_, 1) ne '.';
         }
       }
       FUSTRIP: for my $stripping (@{$FS->{strippings}}) {
-        my $trigger = parse_feature_string($stripping->{strip}, 1);
+        my $trigger = $FS->parse($stripping->{strip});
         for my $i (@l) {
           if (substr($trigger, $i, 1) ne '.') {
-              my $phone = parse_feature_string($stripping->{condition}, 1);
+              my $phone = $FS->parse($stripping->{condition});
               for (0..@{$FS->{features}}-1) {
                 push @l, $_ if substr($phone, $_, 1) ne '.';
               }            
@@ -1635,9 +1744,9 @@ sub gen_phonology {
 
   my @repair_rule_tags;
   for my $k (@single_repair_indices) {
-  # How should {prevented_by} be generalised?
+    # How should {prevented_by} be generalised?
     next if defined $FS->{marked}[$k]{prevented_by} and $prevent_marked{$FS->{marked}[$k]{prevented_by}};
-    my $f = parse_feature_string $FS->{marked}[$k]{condition};
+    my $f = $FS->parse($FS->{marked}[$k]{condition}, undefined => 1);
     my $when = 0;
     for (0..length($f)-1) {
       $when = $position_of_feature[$_]
@@ -1667,46 +1776,75 @@ sub gen_phonology {
   push @rule_tags, '#'; # false tag for end of phoneme straightening-out
   push @rule_tags, @assim_tags;
 
-  my $start_sequences; # end of rules that pertain only to individual segments
+  my $self = {
+    syllable_structure => \@syllable_structure,
+    phone_generator => \@phone_generator, 
+    phonology => \@phonology,
+  };
+  bless $self;
+
   for my $tag (@rule_tags) {
     if ($tag eq '#') {
       print STDERR "on to allophony...\n" if $verbose;
-      $start_sequences = @phonology; 
+      $self->{start_sequences} = @phonology; # end of rules that pertain only to individual segments
       next;
     } 
     # We pass the generator as a way of specifying what contrasts are available.
     # For sound change purposes we'll need an alternate way to pass this information.
-    gen_one_rule \@phonology, $tag, 
+    $self->generate_new_rule($tag, 
         generator => \@phone_generator, 
         generable_val => \@generable_val, 
         initial => 1,
         syllable_structure => \@syllable_structure, # used only by extra conditions, presently
-        bar_sequences => defined $start_sequences ? undef : 1,
-        forcibly_unmark => defined $start_sequences ? undef : \%forcibly_unmark; 
+        bar_sequences => defined $self->{start_sequences} ? undef : 1,
+        forcibly_unmark => defined $self->{start_sequences} ? undef : \%forcibly_unmark); 
   }
     
-  ($start_sequences, \@syllable_structure, \@phone_generator, \@phonology);
+  $self;
 }
 
+package Transcription;
+
+# Right now the only Transcription objects are the standard phonetic alphabets.
+# It's my intent to use this also for romanizations designed to fit a particular phonology,
+# once creating those is done.
+
+sub load_file {
+  my $filename = shift;
+  my $alphabet = YAML::Any::LoadFile($filename);
+
+  for my $type (qw/characters ligations/) {
+    for my $c (keys %{$alphabet->{$type}}) {
+      $alphabet->{$type}{$FS->parse($c)} = $alphabet->{$type}{$c};
+      delete $alphabet->{$type}{$c};
+    }
+  }
+  for my $c (keys %{$alphabet->{modifiers}}) {
+    my @fs = split / /, $c;
+    my $s = $FS->parse($c) . ' ' . $FS->parse($fs[0]);
+    $alphabet->{modifiers}{$s} = $alphabet->{modifiers}{$c};
+    delete $alphabet->{modifiers}{$c};
+  }
+  
+  bless $alphabet;
+}
 
 # In a modifier description, it's only the first phone that the modifier actually spells;
 # the rest are just conditions on its applicability.
 
 sub name_phone {
-  my ($phone, %args) = (shift, @_);
-  my $pa = defined $args{alphabet} ? $args{alphabet} : 
-           $use_html ? $phonetic_alphabets{IPA} : $phonetic_alphabets{CXS};
+  my ($self, $phone, %args) = (shift, @_);
   my %taken_care_of;
   my $s = '##';
   $s = "<abbr title=\"$phone\">$s</abbr>" if $use_html; # handy for debugging
   
-  for my $x (keys %{$pa->{ligations}}) {
+  for my $x (keys %{$self->{ligations}}) {
     next if $phone !~ /^$x$/;
-    my $phone0 = overwrite $phone, parse_feature_string($pa->{ligations}{$x}[0], 1);
-    my $phone1 = overwrite $phone, parse_feature_string($pa->{ligations}{$x}[1], 1);
-    my ($tc0, $s0) = name_phone($phone0, %args, no_modifiers => 1);
-    my ($tc1, $s1) = name_phone($phone1, %args, no_modifiers => 1);
-    $s = $pa->{ligations}{$x}[2];
+    my $phone0 = $FS->overwrite($phone, $FS->parse($self->{ligations}{$x}[0]));
+    my $phone1 = $FS->overwrite($phone, $FS->parse($self->{ligations}{$x}[1]));
+    my ($tc0, $s0) = $self->name_phone($phone0, %args, no_modifiers => 1);
+    my ($tc1, $s1) = $self->name_phone($phone1, %args, no_modifiers => 1);
+    $s = $self->{ligations}{$x}[2];
     $s =~ s/\[\]/$s0/;
     $s =~ s/\[\]/$s1/;
     %taken_care_of = (%$tc0, %$tc1, 
@@ -1715,9 +1853,9 @@ sub name_phone {
   }
 
   if ($s =~ /##/) {
-    for my $x (keys %{$pa->{characters}}) {
+    for my $x (keys %{$self->{characters}}) {
       next if $phone !~ /^$x$/;
-      $s = $pa->{characters}{$x};
+      $s = $self->{characters}{$x};
       %taken_care_of = map(($_ => 1), (grep substr($x, $_, 1) ne '.', 0..@{$FS->{features}}-1));
       last;
     }
@@ -1725,7 +1863,7 @@ sub name_phone {
 
   return (\%taken_care_of, $s) if $args{no_modifiers};
   
-  MODIFIER: for my $x (keys %{$pa->{modifiers}}) {
+  MODIFIER: for my $x (keys %{$self->{modifiers}}) {
     my ($x_all, $x_spells) = split / /, $x;
     next if $phone !~ /^$x_all$/;
     my $redundant = 1;
@@ -1733,7 +1871,7 @@ sub name_phone {
       $redundant = 0 if substr($x_spells, $_, 1) ne '.' and !defined $taken_care_of{$_};
     }
     next if $redundant;
-    my $t = $pa->{modifiers}{$x};    
+    my $t = $self->{modifiers}{$x};    
     $t =~ s/\[\]/$s/;
     $s = $t;
     %taken_care_of = (%taken_care_of, map(($_ => 1), (grep substr($x_spells, $_, 1) ne '.', 0..@{$FS->{features}}-1)));
@@ -1742,27 +1880,26 @@ sub name_phone {
   $s;
 }
 
-sub spell_out {
-  my ($word, %args) = (shift, @_);
+sub spell {
+  my ($self, $word, %args) = (shift, @_);
   if ($args{null} and !@$word) {
-    my $pa = defined $args{alphabet} ? $args{alphabet} : 
-             $use_html ? $phonetic_alphabets{IPA} : $phonetic_alphabets{CXS};
-    return $pa->{null};
+    return $self->{null};
   }
-  join "", map name_phone($_, %args), @$word;
+  join "", map $self->name_phone($_, %args), @$word;
 }
 
 # duplicated for efficiency :/
-sub spell_out_spaces {
-  my ($word, %args) = (shift, @_);
+sub spell_spaced_string {
+  my ($self, $word, %args) = (shift, @_);
   if ($args{null} and ($word eq '')) {
-    my $pa = defined $args{alphabet} ? $args{alphabet} : 
-             $use_html ? $phonetic_alphabets{IPA} : $phonetic_alphabets{CXS};
-    return $pa->{null};
+    return $self->{null};
   }
-  join "", map name_phone($_, %args), (split / /, $word);
+  join "", map $self->name_phone($_, %args), (split / /, $word);
 }
 
+package Phonology;
+
+# vectors, whee.
 sub add_in {
   my ($inventory, $x, $v) = @_;
   return unless grep $_, @$v;
@@ -1775,10 +1912,12 @@ sub add_in {
   }
 }
 
-sub inventory {
-  my $phonology_data = shift;
+# The inventory this returns is raw, and needs a post-processing stage.
+
+sub compute_inventory {
+  my $self = shift;
   my ($syllable_structure, $phone_generator, $phonology, $which_preconditions) = 
-      @$phonology_data{qw/syllable_structure phone_generator phonology which_preconditions/};
+      @$self{qw/syllable_structure phone_generator phonology which_preconditions/};
   # This is a hash from phones to lists of probabilities in the various syllable positions.  
   # We use these for generation and to calculate the entropy.  However, we don't take any interactions
   # between phones into account for these numbers, so they're kind of crude.
@@ -1799,10 +1938,10 @@ sub inventory {
     my @v = @{$inventory{$phone}};
       my @word;
       @word = ($phone);
-      run_one_rule \@word, $rule, rand_value => 0;
+      $rule->run(\@word, rand_value => 0);
       add_in \%inventory2, $word[0], [map $v[$_] * $rule->{prob}[$_], 0..@v-1];
       @word = ($phone); 
-      run_one_rule \@word, $rule, rand_value => 1;
+      $rule->run(\@word, rand_value => 1);
       add_in \%inventory2, $word[0], [map $v[$_] * (1 - $rule->{prob}[$_]), 0..@v-1];
     }
     %inventory = %inventory2;
@@ -1810,7 +1949,7 @@ sub inventory {
   
   # Strip unsupported features at the end, in case the syllable structure put them in.
   for my $phone (keys %inventory) {
-    my $stripped = add_entailments $phone;
+    my $stripped = $FS->add_entailments($phone);
     $stripped =~ s/U/u/g;
     if ($stripped ne $phone) {
       add_in \%inventory, $stripped, $inventory{$phone};
@@ -1824,11 +1963,9 @@ sub inventory {
   for my $phone (keys %inventory) {
     my @word = ($phone);
     print STDERR "in:  $phone\n" if $debug >= 1; 
-    run_phonology \@word, $phonology, 
-                  which_preconditions => $which_preconditions, 
-                  end => $phonology_data->{start_sequences};
+    $self->run(\@word, end => $self->{start_sequences});
     my $outcome = join(' ', @word);
-    print STDERR "out: $outcome /" . (@word ? name_phone($word[0]) : '') . "/\n" if $debug >= 1;
+    print STDERR "out: $outcome /" . (@word ? $debug_alphabet->name_phone($word[0]) : '') . "/\n" if $debug >= 1;
     $resolver{$phone} = $outcome;
     add_in \%prinv, $outcome, $inventory{$phone};
   }
@@ -1855,11 +1992,12 @@ sub inventory {
 
   # We will need to use the resolver when it comes to generating alternations.  
   # It's not necessary to for ordinary stem generation, though; for that the inventory suffices.
-  \%prinv;
+  $self->{gen_inventory} = \%prinv;
 }
 
 # Do some artificial thing meant to stop a lot of the frequency mass from being concentrated
 # in a few phones.  Fairly harsh.
+# Class method.
 sub bend_frequencies {
   my ($gi, $i, $threshold) = (shift, shift, shift);
   my $n = scalar keys %$gi;
@@ -1878,101 +2016,93 @@ sub bend_frequencies {
 # Make some tweaks to the inventory of the sort that're problematic to do in initial generation.
 # There is some icky duplication in here.
 sub postprocess_inventory {
-  my $pd = shift;
+  my $self = shift;
 
-  for (my $i = $#{$pd->{syllable_structure}}; $i >= 0; --$i) {
+  for (my $i = $#{$self->{syllable_structure}}; $i >= 0; --$i) {
     # bend frequencies
-    if (defined $pd->{syllable_structure}[$i]{bend}) {
-      bend_frequencies $pd->{gen_inventory}, $i, $pd->{syllable_structure}[$i]{bend};
-      delete $pd->{syllable_structure}[$i]{bend};
+    if (defined $self->{syllable_structure}[$i]{bend}) {
+      bend_frequencies $self->{gen_inventory}, $i, $self->{syllable_structure}[$i]{bend};
+      delete $self->{syllable_structure}[$i]{bend};
     }
 
     # drop nonmatches if we want to force matches
-    if (defined $pd->{syllable_structure}[$i]{reprune}) {
+    if (defined $self->{syllable_structure}[$i]{reprune}) {
       my $sum = 0;
-      for my $phone (keys %{$pd->{gen_inventory}}) {
-        $pd->{gen_inventory}{$phone}[$i] = 0 if $phone and !grep {s/u/./; $phone =~ /^$_$/;} keys %{$pd->{syllable_structure}[$i]{features}};
-        $sum += $pd->{gen_inventory}{$phone}[$i];
-        unless (grep $_ > 0, @{$pd->{gen_inventory}{$phone}}) {
-          delete $pd->{gen_inventory}{$phone};
+      for my $phone (keys %{$self->{gen_inventory}}) {
+        $self->{gen_inventory}{$phone}[$i] = 0 if $phone and !grep {s/u/./; $phone =~ /^$_$/;} keys %{$self->{syllable_structure}[$i]{features}};
+        $sum += $self->{gen_inventory}{$phone}[$i];
+        unless (grep $_ > 0, @{$self->{gen_inventory}{$phone}}) {
+          delete $self->{gen_inventory}{$phone};
         }
       }
-      for my $phone (keys %{$pd->{gen_inventory}}) {
-        $pd->{gen_inventory}{$phone}[$i] /= $sum;
+      for my $phone (keys %{$self->{gen_inventory}}) {
+        $self->{gen_inventory}{$phone}[$i] /= $sum;
       }
-      delete $pd->{syllable_structure}[$i]{reprune};
+      delete $self->{syllable_structure}[$i]{reprune};
     }
 
     # drop excepted things
-    if (defined $pd->{syllable_structure}[$i]{except}) {
+    if (defined $self->{syllable_structure}[$i]{except}) {
       my $sum = 0;
-      for my $phone (keys %{$pd->{gen_inventory}}) {
-        $pd->{gen_inventory}{$phone}[$i] = 0 if grep $phone =~ /^$_$/, @{$pd->{syllable_structure}[$i]{except}};        
-        $sum += $pd->{gen_inventory}{$phone}[$i];
-        unless (grep $_ > 0, @{$pd->{gen_inventory}{$phone}}) {
-          delete $pd->{gen_inventory}{$phone};
+      for my $phone (keys %{$self->{gen_inventory}}) {
+        $self->{gen_inventory}{$phone}[$i] = 0 if grep $phone =~ /^$_$/, @{$self->{syllable_structure}[$i]{except}};        
+        $sum += $self->{gen_inventory}{$phone}[$i];
+        unless (grep $_ > 0, @{$self->{gen_inventory}{$phone}}) {
+          delete $self->{gen_inventory}{$phone};
         }
       }
-      for my $phone (keys %{$pd->{gen_inventory}}) {
-        $pd->{gen_inventory}{$phone}[$i] /= $sum;
+      for my $phone (keys %{$self->{gen_inventory}}) {
+        $self->{gen_inventory}{$phone}[$i] /= $sum;
       }
-      delete $pd->{syllable_structure}[$i]{except};
+      delete $self->{syllable_structure}[$i]{except};
     }
 
     # eliminate positions with nothing in them
-    if ($pd->{gen_inventory}{''}[$i] >= 1) {
-      for my $phone (keys %{$pd->{gen_inventory}}) {
-        splice @{$pd->{gen_inventory}{$phone}}, $i, 1;
+    if ($self->{gen_inventory}{''}[$i] >= 1) {
+      for my $phone (keys %{$self->{gen_inventory}}) {
+        splice @{$self->{gen_inventory}{$phone}}, $i, 1;
       }
-      splice @{$pd->{syllable_structure}}, $i, 1;
+      splice @{$self->{syllable_structure}}, $i, 1;
     }
   }
 
   # Now that we're done playing with it, record entropies in bits on the syllable structure.  
-  for my $i (0..@{$pd->{syllable_structure}}-1) {
+  for my $i (0..@{$self->{syllable_structure}}-1) {
     my $entropy = 0;
-    while (my ($phone, $v) = each %{$pd->{gen_inventory}}) {
+    while (my ($phone, $v) = each %{$self->{gen_inventory}}) {
       $entropy += $v->[$i] * log($v->[$i]) / log(0.5) if $v->[$i] > 0;
     }
-    $pd->{syllable_structure}[$i]{entropy} = $entropy; 
+    $self->{syllable_structure}[$i]{entropy} = $entropy; 
   }
 }
 
-
 sub generate_form {
-  my ($target_entropy, $pd) = (shift, shift);
+  my ($self, $target_entropy) = (shift, shift);
 
   my $normal = 0;
   $normal += rand(1/4.0) for 1..8; # std dev sqrt(2/3) eh
   my $entropy = $normal * $target_entropy; 
 
-  # This was the old way, which would now have problems with the 'U' value
-  # and the multiple probabilities on generator rules, and presumably other things.
-  #
-  #   my @syl;
-  #   @syl = (@syl, generate_syllable $syllable_structure) for (1..$num_syllables);
-  #   run_phonology \@syl, $phone_generator,generator => 1; # This is obsolete and has been removed.
-  #   run_phonology \@syl, $phonology, which_preconditions => (whatever);
-  #
-  # But the below is more direct, and the above is to be treated as unsupported.
+  # Form generation was once done by rules with probabilistic effects.  But that is long obsolete.
+  # TODO: remove this.  (It's marked OBSOLETE: above.)  I think {antieffects} is eliminable too.
   
   my @form;
   # The form of this loop will very much be changing when we start asking for
   # forms that aren't made of whole syllables.
   my $total_entropy = 0;
   while ($total_entropy < $entropy) {
-    for my $i (0..@{$pd->{syllable_structure}}-1) {
-      # next if $pd->{syllable_structure}[$i]{nonzero_prob} == 0; # these cases are eliminated.
+    for my $i (0..@{$self->{syllable_structure}}-1) {
+      # next if $self->{syllable_structure}[$i]{nonzero_prob} == 0; # these cases are eliminated.
 
-      $total_entropy += $pd->{syllable_structure}[$i]{entropy};
-      next if rand() >= $pd->{syllable_structure}[$i]{prob};
+      $total_entropy += $self->{syllable_structure}[$i]{entropy};
+      next if rand() >= $self->{syllable_structure}[$i]{prob};
 
-      my $rand = rand (1 - $pd->{gen_inventory}{''}[$i]);
+      my $rand = rand (1 - $self->{gen_inventory}{''}[$i]);
       my $selected_phone;
       # only generate structural zeroes in a form, not resolvent zeroes 
       # (though we've corrected the probabilities anyhow)
-      for (keys %{$pd->{gen_inventory}}) {
-        $selected_phone = $_, last if $_ ne '' and ($rand -= $pd->{gen_inventory}{$_}[$i]) < 0;
+      for (keys %{$self->{gen_inventory}}) {
+        $selected_phone = $_, last if $_ ne '' and ($rand -= $self->{gen_inventory}{$_}[$i]) < 0;
       }
       push @form, split / /, $selected_phone;
     }
@@ -1989,23 +2119,22 @@ sub generate_form {
 # TODO: when morphology gets here, respect it.  Also new types of change?
 
 sub canonicalise_phonemic_form {
-  my ($word, $pd) = (shift, shift);
+  my ($self, $word) = (shift, shift);
   my @canonical_word = @$word; 
   my @current_word = @$word;
   my @sources = 0..@$word-1;
   
-  for my $k ($pd->{start_sequences}..@{$pd->{phonology}}-1) {
-#    print "before $k /" . spell_out(\@canonical_word) . "/ [" . spell_out(\@current_word) . "]\n"; # debug
+  for my $k ($self->{start_sequences}..@{$self->{phonology}}-1) {
+#    print "before $k /" . $debug_alphabet->spell(\@canonical_word) . "/ [" . $debug_alphabet->spell(\@current_word) . "]\n"; # debug
     my @old_sources = @sources;
     my @old_word = @current_word;
     my (@prov_canonical_word, @prov_current_word);
     my $changed;
-    run_phonology \@current_word, $pd->{phonology}, 
-        which_preconditions => $pd->{which_preconditions},
-        start => $k,
-        end => $k+1,
-        sources => \@sources;
-#    print "target [" . spell_out(\@current_word) . "]\n"; # debug
+    $self->run(\@current_word, 
+               start => $k,
+               end => $k+1,
+             sources => \@sources);
+#    print "target [" . $debug_alphabet->spell(\@current_word) . "]\n"; # debug
     
     { # block for redo
       $changed = 0;
@@ -2016,10 +2145,9 @@ sub canonicalise_phonemic_form {
           @prov_canonical_word = @canonical_word;
           splice @prov_canonical_word, $source, 1;
           @prov_current_word = @prov_canonical_word;
-          run_phonology \@prov_current_word, $pd->{phonology}, 
-              which_preconditions => $pd->{which_preconditions},
-              start => $pd->{start_sequences},
-              end => $k+1;
+          $self->run(\@prov_current_word, 
+                     start => $self->{start_sequences},
+                     end => $k+1);
           if (scalar @prov_current_word == scalar @current_word and
               !grep $prov_current_word[$_] != $current_word[$_], 0..$#current_word) {
             $changed = 1;
@@ -2050,13 +2178,12 @@ sub canonicalise_phonemic_form {
           @prov_canonical_word = @canonical_word;
           substr($prov_canonical_word[$sources[$i]], $_, 1) = substr($current_word[$i], $_, 1) 
               for @prov_varied_features;
-          if (defined $pd->{gen_inventory}{$prov_canonical_word[$sources[$i]]}) {
-#          print "trying out " . name_phone($prov_canonical_word[$sources[$i]]) . " at $i\n"; # debug
+          if (defined $self->{gen_inventory}{$prov_canonical_word[$sources[$i]]}) {
+#          print "trying out " . $debug_alphabet->name_phone($prov_canonical_word[$sources[$i]]) . " at $i\n"; # debug
             @prov_current_word = @prov_canonical_word;
-            run_phonology \@prov_current_word, $pd->{phonology}, 
-                which_preconditions => $pd->{which_preconditions},
-                start => $pd->{start_sequences},
-                end => $k+1;
+            $self->run(\@prov_current_word, 
+                       start => $self->{start_sequences},
+                       end => $k+1);
             if (scalar @prov_current_word == scalar @current_word and
                 !grep $prov_current_word[$_] != $current_word[$_], 0..$#current_word) {
               $changed = 1;
@@ -2081,37 +2208,70 @@ sub canonicalise_phonemic_form {
   (\@current_word, \@canonical_word);
 }
 
+package PhonologyDescriber; ####### Here genuine phonology code ends, and description-writing code begins.
 
+use constant INF => 9**9**9; # is there really nothing sensible better?
 
-####### Here genuine phonology code ends, and description-writing code begins.
+# The only reason I currently see to instantiate describers is to hold references to
+# the phonetic alphabet and the phone-class naming data.
+# (The latter defines words like "stop", "uvular", etc.; it is the file that would need localisation.)
+sub new {
+  my $pdes = {phonetic_alphabet => shift, classes => shift};
+  bless $pdes;
+}
+
+sub describe_inventory {
+  my ($self, $pd, %args) = @_;
+  my $buffer = '';
+
+  if ($args{html}) {
+    $buffer .= CGI::h2('Phonemic inventory') . $self->tabulate($pd); 
+  } else {
+    my %things_named;
+    $buffer .= "phonemic inventory:\n"; 
+    for my $p (sort keys %{$pd->{gen_inventory}}) { 
+      my $n = join '', map $self->{phonetic_alphabet}->name_phone($_), split / /, $p;
+      $buffer .= "/" . ($n !~ /\#\#/ ? $n : $FS->feature_string($p)) . "/\t@{$pd->{gen_inventory}{$p}}\n";
+      push @{$things_named{$n}}, $p if ($n !~ /\#\#/);
+    }
+    for my $name (keys %things_named) { # left in in case it crops up
+      if (@{$things_named{$name}} >= 2) {
+        warn "duplicate [$name]\n";
+        warn "$_\n" for @{$things_named{$name}};
+      }
+    }
+    # subtract 1 for the empty phone
+    $buffer .= "that's " . ((keys %{$pd->{gen_inventory}}) - 1) . " phonemes\n";
+  }
+}
 
 # Put in the false features which our model doesn't contain but which our descriptions do.
 # Assumes annotation.
 sub add_false_features {
-  my ($phone, $str) = (shift, shift);
+  my ($self, $phone, $str) = (shift, shift);
   while (defined $str->{subtables}) {
-    my $subtable = substr($phone, $feature_indices{$str->{subtables}}, 1);
+    my $subtable = substr($phone, $FS->{feature_index}{$str->{subtables}}, 1);
     $str = $str->{$subtable};
   }
   while (my ($k, $v) = each %{$str->{undef_p}}) {
-    $phone = overwrite $phone, $v if $phone =~ /^$k$/;
+    $phone = $FS->overwrite($phone, $v) if $phone =~ /^$k$/;
   }
   $phone;
 }
 
 # Munge a phoneme in the usual order into its table-keyed form.  
 sub table_sortkey {
-  my ($phone, $str) = (shift, shift);
+  my ($self, $phone, $str) = (shift, shift, shift);
 
   # Although tabulate itself doesn't need this, it's handy if we want to use this
   # as an ordering in other places.
   if (defined $str->{subtables}) {
-    my $subtable = substr($phone, $feature_indices{$str->{subtables}}, 1);
-    return $subtable . table_sortkey($phone, $str->{$subtable});
+    my $subtable = substr($phone, $FS->{feature_index}{$str->{subtables}}, 1);
+    return $subtable . $self->table_sortkey($phone, $str->{$subtable});
   }
   
   while (my ($k, $v) = each %{$str->{undef_p}}) {
-    $phone = overwrite $phone, $v if $phone =~ /^$k$/;
+    $phone = $FS->overwrite($phone, $v) if $phone =~ /^$k$/;
   }
   $phone =~ s/u/0/g;
   my $position = join '', map(substr($phone, $str->{order_i}[$_], 1) =~ /[01]/ ? 
@@ -2149,10 +2309,10 @@ sub enrich {
 # This code is duplicated in several places, with various side-effects :/
 # REFACTOR: have a structure to hold this
 sub get_str {
-  my $enriched = shift;
-  my $str = $phon_descr->{table_structure};
+  my ($self, $enriched) = (shift, shift);
+  my $str = $self->{classes}{table_structure};
   while (defined $str->{subtables}) {
-    my $subtable = substr($enriched, $feature_indices{$str->{subtables}}, 1);
+    my $subtable = substr($enriched, $FS->{feature_index}{$str->{subtables}}, 1);
     last if $subtable eq '.';
     $str = $str->{$subtable};
   }
@@ -2161,11 +2321,11 @@ sub get_str {
 
 # The features of a phone determining what table it's in.
 sub str_part {
-  my $phone = shift;
+  my ($self, $phone) = (shift, shift);
   my $skeleton = '.' x @{$FS->{features}};
-  my $str = $phon_descr->{table_structure};
+  my $str = $self->{classes}{table_structure};
   while (defined $str->{subtables}) {
-    my $i = $feature_indices{$str->{subtables}};
+    my $i = $FS->{feature_index}{$str->{subtables}};
     my $subtable = substr($phone, $i, 1);
     last if $subtable eq '.';
     substr($skeleton, $i, 1) = substr($phone, $i, 1);
@@ -2184,7 +2344,7 @@ sub str_part {
 # the features that were really taken care of (not just blotted out by $args{significant}).
 
 sub tabulate_label {
-  my ($enriched, $p, $pmod, $l, $lmod, %args) = @_;
+  my ($self, $enriched, $p, $pmod, $l, $lmod, %args) = @_;
   my $label = '';
   $l = [] if !defined $l;
   $lmod = [] if !defined $lmod;
@@ -2261,10 +2421,10 @@ sub tabulate_label {
     # Spell out even features which take the value not normally given a word.
     # The value of $args{nons} should be the inventory. 
     my %dont_spell;
-    my $str = $phon_descr->{table_structure};
+    my $str = $self->{classes}{table_structure};
     while (defined $str->{subtables}) {
-      $dont_spell{$feature_indices{$str->{subtables}}} = 1;
-      my $subtable = substr($enriched, $feature_indices{$str->{subtables}}, 1);
+      $dont_spell{$FS->{feature_index}{$str->{subtables}}} = 1;
+      my $subtable = substr($enriched, $FS->{feature_index}{$str->{subtables}}, 1);
       last if $subtable eq '.';
       $str = $str->{$subtable};
     }
@@ -2276,8 +2436,8 @@ sub tabulate_label {
       next if $args{respect_univalent} and substr($enriched, $i, 1) eq '0' and $FS->{features}[$i]{univalent};
       my $non = '.' x length($enriched); 
       substr($non, $i, 1) = 1 - substr($enriched, $i, 1);
-      my $enriched_non = enrich overwrite(str_part($enriched), $non), $args{non_inventory}; 
-      my $non_label = tabulate_label($enriched_non, $p, $pmod, $l, $lmod, %args, 
+      my $enriched_non = enrich($FS->overwrite($self->str_part($enriched), $non), $args{non_inventory}); 
+      my $non_label = $self->tabulate_label($enriched_non, $p, $pmod, $l, $lmod, %args, 
                                      nons => undef, significant => $non, nobase => 1);
       chop $non_label while $non_label =~ / $/; # for nobase
       $non_label = substr($non_label, 1) while $non_label =~ /^ /;
@@ -2289,7 +2449,7 @@ sub tabulate_label {
         }
         my $ae = '.' x length($enriched);
         substr($ae, $i, 1) = substr($enriched, $i, 1);
-        $ae = add_entailments $ae; # deh, could use the table directly for speed but this is more contained
+        $ae = $FS->add_entailments($ae);
         for (0..length($enriched)-1) {
           $taken_care_of[$_] = 1 if substr($ae, $_, 1) ne '.';
         }
@@ -2319,8 +2479,8 @@ sub tabulate_label {
 # Return an HTML table of the phonology.  
 
 sub tabulate {
-  my ($pd, %args) = (shift, @_);
-  my $str = defined $args{structure} ? $args{structure} : $phon_descr->{table_structure};
+  my ($self, $pd, %args) = (shift, @_);
+  my $str = defined $args{structure} ? $args{structure} : $self->{classes}{table_structure};
   my $condition = defined $args{condition} ? $args{condition} : '.' x @{$FS->{features}};
 
   if (defined $str->{subtables}) {
@@ -2330,12 +2490,12 @@ sub tabulate {
       $split_feature = substr($split_feature, 1);
       $first = 1;
     }
-    my $t0 = tabulate($pd, %args, 
+    my $t0 = $self->tabulate($pd, %args, 
                            structure => $str->{0}, 
-                           condition => overwrite($condition, parse_feature_string("-$split_feature", 1)));
-    my $t1 = tabulate($pd, %args, 
+                           condition => $FS->overwrite($condition, $FS->parse("-$split_feature")));
+    my $t1 = $self->tabulate($pd, %args, 
                            structure => $str->{1}, 
-                           condition => overwrite($condition, parse_feature_string("+$split_feature", 1)));
+                           condition => $FS->overwrite($condition, $FS->parse("+$split_feature")));
     return $first ?
         $t1 . "<br />\n" . $t0 :
         $t0 . "<br />\n" . $t1;
@@ -2349,32 +2509,32 @@ sub tabulate {
     for (0..$#fs) {
       $fs[$_] =~ /^(!?)(.*)$/;
       $str->{order_r}[$_] = $1 ? 1 : 0;
-      $str->{order_i}[$_] = $feature_indices{$2};
+      $str->{order_i}[$_] = $FS->{feature_index}{$2};
     }
 
     while (my ($k, $v) = each %{$str->{undefineds}}) {
-      $str->{undef_p}{parse_feature_string($k, 1)} = parse_feature_string($v, 1); # p for 'parsed'
+      $str->{undef_p}{$FS->parse($k)} = $FS->parse($v); # p for 'parsed'
     }
     
     while (my ($k, $v) = each %{$str->{flips}}) {
-      my @which = grep $str->{order_i}[$_] == $feature_indices{$v}, 0..@{$str->{order_i}}-1;
-      $str->{flips_p}{parse_feature_string($k, 1)} = $which[0];
+      my @which = grep $str->{order_i}[$_] == $FS->{feature_index}{$v}, 0..@{$str->{order_i}}-1;
+      $str->{flips_p}{$FS->parse($k)} = $which[0];
     }
     
     @fs = split / /, $str->{collapse};
     for my $f (@fs) {
       if (defined $str->{named_collapses}{$f}) {
         push @{$str->{collapse_i}}, $f;
-        my $ae = add_entailments parse_feature_string($str->{named_collapses}{$f}{to}, 1);
+        my $ae = $FS->add_entailments($FS->parse($str->{named_collapses}{$f}{to}));
         my %undefinenda = map(($_ => 1), grep substr($ae, $_, 1) eq 'u', 0..length($ae)-1);
         %{$str->{named_collapses_p}{$f}} = (
-            from => table_sortkey(parse_feature_string($str->{named_collapses}{$f}{from}, 1), $str),
-            to => table_sortkey(parse_feature_string($str->{named_collapses}{$f}{to}, 1), $str),
+            from => $self->table_sortkey($FS->parse($str->{named_collapses}{$f}{from}), $str),
+            to => $self->table_sortkey($FS->parse($str->{named_collapses}{$f}{to}), $str),
             undefine => [grep $undefinenda{$str->{order_i}[$_]}, 0..@{$str->{order_i}}-1],
-            avoid_unless => table_sortkey(parse_feature_string($str->{named_collapses}{$f}{avoid_unless}, 1), $str),
+            avoid_unless => $self->table_sortkey($FS->parse($str->{named_collapses}{$f}{avoid_unless}), $str),
         );
       } else {
-        my @which = grep $str->{order_i}[$_] == $feature_indices{$f}, 0..@{$str->{order_i}}-1;
+        my @which = grep $str->{order_i}[$_] == $FS->{feature_index}{$f}, 0..@{$str->{order_i}}-1;
         push @{$str->{collapse_i}}, $which[0];
       }
     }
@@ -2391,7 +2551,7 @@ sub tabulate {
   for my $thing (qw/rows columns rows_mod columns_mod/) {
     for (@{$str->{labels}{$thing}}) {
       my ($phone, $label) = split /: */;
-      my $position = table_sortkey parse_feature_string($phone, 1), $str, 1;
+      my $position = $self->table_sortkey($FS->parse($phone), $str, 1);
       push @{$labels{$thing}}, $label;
       if ($thing =~ /^rows/) {
         push @{$label_phones{$thing}}, substr($position, 0, $str->{lengths}[0]);
@@ -2404,8 +2564,8 @@ sub tabulate {
   my (%table, %rows, %columns, %spots);
   for my $phone (keys %{$pd->{gen_inventory}}) {
     next unless $phone =~ /^$condition$/;
-    my $name = name_phone($phone, alphabet => $phonetic_alphabets{IPA});
-    $table{table_sortkey $phone, $str} = $name;
+    my $name = $self->{phonetic_alphabet}->name_phone($phone);
+    $table{$self->table_sortkey($phone, $str)} = $name;
   }
 
   my @modified_phones = sort keys %table;
@@ -2431,14 +2591,14 @@ sub tabulate {
       for my $position (keys %table) { # can't use each, there's a keys inside
         my $v = $table{$position};
         if ($position =~ /^$str->{named_collapses_p}{$collapse}{from}$/) {
-          $position = overwrite $position, $str->{named_collapses_p}{$collapse}{to};
+          $position = $FS->overwrite($position, $str->{named_collapses_p}{$collapse}{to});
           my $template = $position;
           next COLLAPSE if defined $table{$position}; # (b)
 
           for my $i (0..length($str->{named_collapses_p}{$collapse}{from})-1) {
             next unless substr($str->{named_collapses_p}{$collapse}{from}, $i, 1) ne '.'
                     and substr($str->{named_collapses_p}{$collapse}{to}, $i, 1) eq 1 - substr($str->{named_collapses_p}{$collapse}{from}, $i, 1);
-            for my $jf (@{$features_requiring[substr($str->{named_collapses_p}{$collapse}{from}, $i, 1) ^ $str->{order_r}[$i]]
+            for my $jf (@{$FS->{features_requiring}[substr($str->{named_collapses_p}{$collapse}{from}, $i, 1) ^ $str->{order_r}[$i]]
                                              [$str->{order_i}[$i]]}) {
               for my $j (0..$#{$str->{order_i}}) {
                 substr($template, $j, 1) = '.', last if $str->{order_i}[$j] == $jf;
@@ -2452,7 +2612,7 @@ sub tabulate {
 
       @modified_phones = map {
         if (/^$str->{named_collapses_p}{$collapse}{from}$/) {          
-          my $a = overwrite $_, $str->{named_collapses_p}{$collapse}{to};
+          my $a = $FS->overwrite($_, $str->{named_collapses_p}{$collapse}{to});
           my $b = $_;
           for my $i (0..length($b)-1) {
             substr($b, $i, 1) = '.' if substr($str->{named_collapses_p}{$collapse}{to}, $i, 1) eq '.';
@@ -2479,11 +2639,11 @@ sub tabulate {
   my (%genuine_rows, %genuine_columns);
   for my $row (keys %rows) {
     $genuine_rows{$row} = scalar grep $_ =~ /^$condition$/ && 
-        substr(table_sortkey($_, $str), 0, $str->{lengths}[0]) =~ /^$row$/, keys %{$pd->{gen_inventory}};
+        substr($self->table_sortkey($_, $str), 0, $str->{lengths}[0]) =~ /^$row$/, keys %{$pd->{gen_inventory}};
   }
   for my $column (keys %columns) {
     $genuine_columns{$column} = scalar grep $_ =~ /^$condition$/ &&
-        substr(table_sortkey($_, $str), $str->{lengths}[0], $str->{lengths}[1]) =~ /^$column$/, keys %{$pd->{gen_inventory}};
+        substr($self->table_sortkey($_, $str), $str->{lengths}[0], $str->{lengths}[1]) =~ /^$column$/, keys %{$pd->{gen_inventory}};
   }
 
   # Now reinsert digits where we can, so we can use the most appropriate label.
@@ -2499,7 +2659,7 @@ sub tabulate {
     $table .= '<td></td>'; # empty cells for separation, yeah
     $base_enrichment = enrich($column, \@extant_columns);
     my $label = '';
-    $label = tabulate_label($base_enrichment, 
+    $label = $self->tabulate_label($base_enrichment, 
                             $label_phones{columns}, $label_phones{columns_mod},
                             $labels{columns}, $labels{columns_mod},
                             header => 1,
@@ -2509,7 +2669,7 @@ sub tabulate {
     while (my ($k, $v) = each %column_moves) {
       if ($k =~ /^$column$/ and !$moves_stated{$v}) {
         $label .= '&nbsp;/ ' if $label; 
-        $label .= tabulate_label(overwrite($base_enrichment, $v),
+        $label .= $self->tabulate_label($FS->overwrite($base_enrichment, $v),
                                  $label_phones{columns}, $label_phones{columns_mod},
                                  $labels{columns}, $labels{columns_mod},
                                  header => 1,
@@ -2529,7 +2689,7 @@ sub tabulate {
     $table .= '<tr>';
     $base_enrichment = enrich($row, \@extant_rows);
     my $label = '';
-    $label = tabulate_label($base_enrichment, 
+    $label = $self->tabulate_label($base_enrichment, 
                             $label_phones{rows}, $label_phones{rows_mod},
                             $labels{rows}, $labels{rows_mod},
                             repeat_base => $str->{labels}{repeat_rows})
@@ -2538,7 +2698,7 @@ sub tabulate {
     while (my ($k, $v) = each %row_moves) {
       if ($k =~ /^$row$/ and !$moves_stated{$v}) {
         $label .= '&nbsp;/ ' if $label;
-        $label .= tabulate_label(overwrite($base_enrichment, $v),
+        $label .= $self->tabulate_label($FS->overwrite($base_enrichment, $v),
                                  $label_phones{rows}, $label_phones{rows_mod},
                                  $labels{rows}, $labels{rows_mod},
                                  repeat_base => $str->{labels}{repeat_rows});
@@ -2562,7 +2722,6 @@ sub tabulate {
   $table .= "</table>\n";
 }
 
-
 sub English_indefinite {
   my $a = shift;
   return ($a =~ /^[aeiou]/ ? 'an ' : 'a ') . $a;
@@ -2575,7 +2734,7 @@ sub English_plural {
 }
 
 sub name_natural_class {
-  my ($phone, $inventory, %args) = (shift, shift, @_);
+  my ($self, $phone, $inventory, %args) = (shift, shift, @_);
 
   unless ($args{accept_nothing}) {
     return $args{no_nothing} ? '' : ($args{morpho} eq 'plural' ? 'no phones' : 'no phone') 
@@ -2588,9 +2747,9 @@ sub name_natural_class {
   my $str = $args{str};
   my $subtable_index;
   if (!defined $str) {
-    $str = $phon_descr->{table_structure};
+    $str = $self->{classes}{table_structure};
     while (defined $str->{subtables}) {
-      $subtable_index = $feature_indices{$str->{subtables}}; 
+      $subtable_index = $FS->{feature_index}{$str->{subtables}}; 
       my $subtable = substr($enriched, $subtable_index, 1);
       if ($subtable eq '.') {
         last unless $args{use_dominant_str};
@@ -2599,7 +2758,7 @@ sub name_natural_class {
       $str = $str->{$subtable};
     }
   }
-  $enriched = add_false_features $enriched, $str;
+  $enriched = $self->add_false_features($enriched, $str);
 
   if (defined $str->{subtables}) {
     # We prevent enriching again since it makes the names produces for e.g. classes of 
@@ -2607,10 +2766,10 @@ sub name_natural_class {
     # yielding a more specific and thus different name.
     my $phone0 = $enriched;
     substr($phone0, $subtable_index, 1) = '0';
-    my $name0 = name_natural_class($phone0, $inventory, %args, str => $str->{0}, no_nothing => 1, no_enrich => 1, significant => $phone);
+    my $name0 = $self->name_natural_class($phone0, $inventory, %args, str => $str->{0}, no_nothing => 1, no_enrich => 1, significant => $phone);
     my $phone1 = $enriched;
     substr($phone1, $subtable_index, 1) = '1';
-    my $name1 = name_natural_class($phone1, $inventory, %args, str => $str->{1}, no_nothing => 1, no_enrich => 1, significant => $phone);
+    my $name1 = $self->name_natural_class($phone1, $inventory, %args, str => $str->{1}, no_nothing => 1, no_enrich => 1, significant => $phone);
 
     return $name0 unless $name1;
     return $name1 unless $name0;
@@ -2654,20 +2813,20 @@ sub name_natural_class {
       $str->{$scheme}{name_classes}{repeat_mod}{$thing} = $str->{$scheme}{'repeat_' . $thing} if $str->{$scheme}{'repeat_' . $thing};
       for (@{$str->{$scheme}{$thing}}) {
         my ($phone, $label) = split /: */;
-        $phone = parse_feature_string $phone, 1;
+        $phone = $FS->parse($phone);
         $label .= " [$thing]" if $modificate{$thing};
         if ($label =~ /\[.*\]/) {
           push @pmod, $phone;
-          push @entailed_pmod, add_entailments $phone;
+          push @entailed_pmod, $FS->add_entailments($phone);
           push @lmod, $label;
         } else {
           push @p, $phone;
-          push @entailed_p, add_entailments $phone;
+          push @entailed_p, $FS->add_entailments($phone);
           push @l, $label;
         }
       }
     }
-    $_ = parse_feature_string('', 1);
+    $_ = $FS->parse('');
     push @p, $_;
     push @entailed_p, $_;
     push @l, $str->{name}; 
@@ -2678,8 +2837,8 @@ sub name_natural_class {
     $str->{$scheme}{name_classes}{l} = \@l;
     $str->{$scheme}{name_classes}{lmod} = \@lmod;
     while (my ($k, $v) = each %{$str->{$scheme}{eliminate}}) {
-      $str->{$scheme}{name_classes}{eliminate}{parse_feature_string($k, 1)} = 
-          parse_feature_string($v, 1);
+      $str->{$scheme}{name_classes}{eliminate}{$FS->parse($k)} = 
+          $FS->parse($v);
     }
   }
 
@@ -2690,7 +2849,7 @@ sub name_natural_class {
   my $significant = defined $args{significant} ? $args{significant} : $phone;
   $significant =~ s/u/./g; # undefineds are not significant
   # REFACTOR: there should probably be a single data structure to hold this all.
-  my $name = tabulate_label $enriched,
+  my $name = $self->tabulate_label($enriched,
                             $str->{$scheme}{name_classes}{p}, $str->{$scheme}{name_classes}{pmod},
                                                         \@l , $str->{$scheme}{name_classes}{lmod},
                             %args,
@@ -2701,7 +2860,7 @@ sub name_natural_class {
                             non_inventory => ($args{bar_nons} ? undef : $inventory),
                             negate => $str->{$scheme}{negate},
                             repeat_mod => $str->{$scheme}{name_classes}{repeat_mod},
-                            eliminate => $str->{$scheme}{name_classes}{eliminate}; 
+                            eliminate => $str->{$scheme}{name_classes}{eliminate}); 
   $name = English_indefinite $name if ($args{morpho} eq 'indef');
 
   if ($args{morpho} eq 'plural' and $name !~ / $/) {
@@ -2734,24 +2893,24 @@ sub name_natural_class {
 # It's far from perfect at this: it will ignore exceptions.
 
 sub describe_set {
-  my ($orig_phones, $inventory, %args) = (shift, shift, @_);
+  my ($self, $orig_phones, $inventory, %args) = (shift, shift, @_);
   my $phones = $orig_phones;
   my $morpho = defined $args{morpho} ? $args{morpho} : 'indef';
   my $extend = defined $args{extend};
   my $lb = $args{etic} ? '[' : '/';
   my $rb = $args{etic} ? ']' : '/';
-#print STDERR join(' ', map(name_phone($_,alphabet=>$phonetic_alphabets{CXS}), sort @$orig_phones)) . '  within  ' . 
-#             join(' ', map(name_phone($_,alphabet=>$phonetic_alphabets{CXS}), sort @$inventory)) . "\n";
+#print STDERR join(' ', map($debug_alphabet->name_phone($_), sort @$orig_phones)) . '  within  ' . 
+#             join(' ', map($debug_alphabet->name_phone($_), sort @$inventory)) . "\n";
   $args{get_str_pattern}->[0] = '.' x @{$FS->{features}} if defined $args{get_str_pattern}; # extra return hack
 
   my $pattern = defined $args{within} ? $args{within} : '.' x @{$FS->{features}};
-  my $str = $phon_descr->{table_structure}; 
+  my $str = $self->{classes}{table_structure}; 
   while (defined $str->{subtables}) {
     my $subtable;
-    $subtable = 1 if !grep substr($_, $feature_indices{$str->{subtables}}, 1) eq '0', @$phones;
-    $subtable = 0 if !grep substr($_, $feature_indices{$str->{subtables}}, 1) eq '1', @$phones;
+    $subtable = 1 if !grep substr($_, $FS->{feature_index}{$str->{subtables}}, 1) eq '0', @$phones;
+    $subtable = 0 if !grep substr($_, $FS->{feature_index}{$str->{subtables}}, 1) eq '1', @$phones;
     last unless defined $subtable;
-    substr($pattern, $feature_indices{$str->{subtables}}, 1) = $subtable;
+    substr($pattern, $FS->{feature_index}{$str->{subtables}}, 1) = $subtable;
     $str = $str->{$subtable};
   }
   $args{get_str_pattern}->[0] = $pattern if defined $args{get_str_pattern};
@@ -2759,20 +2918,20 @@ sub describe_set {
   my $size = @$phones;
   unless ($extend) {
     return $morpho eq 'plural' ? 'no phones' : 'no phone' if ($size == 0);
-    return $lb . name_phone($phones->[0]) . $rb if ($size == 1);
+    return $lb . $self->{phonetic_alphabet}->name_phone($phones->[0]) . $rb if ($size == 1);
   }
 
   # add_false_features causes a few things, like [?\], to be named wrongly.  
-  my %remove_false_features = map((add_false_features($_, $str) => $_), @$inventory);
+  my %remove_false_features = map(($self->add_false_features($_, $str) => $_), @$inventory);
 
-  $phones = [map add_false_features($_, $str), @$phones];
-  $inventory = [map add_false_features($_, $str), @$inventory];
-  my %sortkey = map(($_ => table_sortkey($_, $phon_descr->{table_structure})), 
+  $phones = [map $self->add_false_features($_, $str), @$phones];
+  $inventory = [map $self->add_false_features($_, $str), @$inventory];
+  my %sortkey = map(($_ => $self->table_sortkey($_, $self->{classes}{table_structure})), 
       grep $_, @$inventory);
   @$phones = sort {$sortkey{$a} cmp $sortkey{$b}} @$phones;
   @$inventory = sort {$sortkey{$a} cmp $sortkey{$b}} @$inventory;
   if ($args{sort_phones}) {
-    @$orig_phones = sort {$sortkey{add_false_features($a, $str)} cmp $sortkey{add_false_features($b, $str)}} @$orig_phones;
+    @$orig_phones = sort {$sortkey{$self->add_false_features($a, $str)} cmp $sortkey{$self->add_false_features($b, $str)}} @$orig_phones;
   }
 
   my @comparanda = grep /^$pattern$/, @$inventory;
@@ -2782,9 +2941,9 @@ sub describe_set {
   my @complement = grep !defined $phones{$_}, @comparanda;
   my $cosize = @comparanda - @$phones;
   unless ($extend) {
-    return name_natural_class($pattern, $inventory, str => $str, morpho => $morpho) if ($cosize == 0);
-    return name_natural_class($pattern, $inventory, str => $str, morpho => $morpho) 
-        . " other than $lb" . name_phone($remove_false_features{$complement[0]}) . $rb if ($cosize == 1);
+    return $self->name_natural_class($pattern, $inventory, str => $str, morpho => $morpho) if ($cosize == 0);
+    return $self->name_natural_class($pattern, $inventory, str => $str, morpho => $morpho) 
+        . " other than $lb" . $self->{phonetic_alphabet}->name_phone($remove_false_features{$complement[0]}) . $rb if ($cosize == 1);
   }
 
   # Try to describe the set as a natural class, or failing that by taking out single-feature
@@ -2799,8 +2958,8 @@ sub describe_set {
     $usable_positively{$f} = 1 if !grep substr($_, $f, 1) eq 'u', @$phones;
   }
   my (@usable_extra_classes, @antiusable_extra_classes);
-  for (@{$phon_descr->{extra_natural_classes}}) {
-    my $extra = parse_feature_string($_, 1);
+  for (@{$self->{classes}{extra_natural_classes}}) {
+    my $extra = $FS->parse($_);
     push @usable_extra_classes, $extra if !grep !/^$extra$/, @$phones;
     push @antiusable_extra_classes, $extra if !grep /^$extra$/, @$phones;
   }
@@ -2813,7 +2972,7 @@ sub describe_set {
     $most_trimmed = 0;
     for my $extra (@usable_extra_classes) {
       next if $pattern =~ /^$extra$/;
-      my $new_pattern = overwrite $pattern, $extra; 
+      my $new_pattern = $FS->overwrite($pattern, $extra); 
       my $trimmed = @comparanda - grep /^$new_pattern$/, @comparanda;
       if ($trimmed > $most_trimmed) {
         ($most_trimmed, $best_pattern, $best_antipattern) = ($trimmed, $new_pattern, undef);
@@ -2867,7 +3026,7 @@ sub describe_set {
 
   if ($extend) {
     my @l = grep {
-          my $a = add_false_features($_, $str);
+          my $a = $self->add_false_features($_, $str);
           my $f = 0;
           for my $ap (@antipatterns) {
             $f = 1, last if $a =~ /^$ap$/;
@@ -2879,12 +3038,12 @@ sub describe_set {
 
   if ($size <= $complexity) {
     return ($morpho eq 'plural' ? '' : 'one of ') . 
-        $lb . join(' ', map name_phone($remove_false_features{$_}), @$phones) . $rb;
+        $lb . join(' ', map $self->{phonetic_alphabet}->name_phone($remove_false_features{$_}), @$phones) . $rb;
   }
   if ($cosize <= $complexity) {
-    return name_natural_class($str_pattern, $inventory, str => $str, morpho => $morpho) . 
+    return $self->name_natural_class($str_pattern, $inventory, str => $str, morpho => $morpho) . 
         (@complement ? (" other than $lb" .
-          join(' ', map name_phone($remove_false_features{$_}), @complement) . $rb) : ''); 
+          join(' ', map $self->{phonetic_alphabet}->name_phone($remove_false_features{$_}), @complement) . $rb) : ''); 
   }
 
   # Special negation.  Currently just for sonorant.
@@ -2892,7 +3051,7 @@ sub describe_set {
   my $base_antipattern;
   while (my ($phone, $neg) = each %{$str->{labels}{special_negate}}) {
     for (@antipatterns) {
-      ($base, $base_antipattern) = ($neg, $_) if $_ eq parse_feature_string($phone, 1);
+      ($base, $base_antipattern) = ($neg, $_) if $_ eq $FS->parse($phone);
     }
   }
 
@@ -2902,7 +3061,7 @@ sub describe_set {
   # a big list if there's too much detritus.  
   if (@detritus > @$phones / 4) { # magic linear function
     return ($morpho eq 'plural' ? '' : 'one of ') . 
-        $lb . join(' ', map name_phone($remove_false_features{$_}), @$phones) . $rb;
+        $lb . join(' ', map $self->{phonetic_alphabet}->name_phone($remove_false_features{$_}), @$phones) . $rb;
   }
 
   my $significant = $pattern;
@@ -2912,13 +3071,13 @@ sub describe_set {
     }
   }
 
-  my $main_name = name_natural_class($pattern, $inventory, str => $str, morpho => $morpho, 
+  my $main_name = $self->name_natural_class($pattern, $inventory, str => $str, morpho => $morpho, 
       base => $base, significant => $significant);
   # Get rid of the antipattern in question if it made it in as the base.
   @antipatterns = grep $_ != $base_antipattern, @antipatterns if $base and $main_name =~ /\b$base/; # kluge!
 
   @_ = grep $pattern, @$inventory; # name antipatterns within matches to the pattern
-  my @excluded_names = map name_natural_class($_, \@_, str => $str, morpho => $morpho), @antipatterns;
+  my @excluded_names = map $self->name_natural_class($_, \@_, str => $str, morpho => $morpho), @antipatterns;
 
   # If not suppressed,
   # list either the examples or the nonexamples, depending on which there are more of.
@@ -2931,14 +3090,14 @@ sub describe_set {
     for my $i (0..$#antipatterns) {
       @{$antipatterns_caught[$i]} = grep /^$antipatterns[$i]$/, @pool;
       @pool = grep !/^$antipatterns[$i]$/, @pool;
-      $excluded_names[$i] .= " ($lb" . join(' ', map name_phone($remove_false_features{$_}), @{$antipatterns_caught[$i]}) . "$rb)";
+      $excluded_names[$i] .= " ($lb" . join(' ', map $self->{phonetic_alphabet}->name_phone($remove_false_features{$_}), @{$antipatterns_caught[$i]}) . "$rb)";
     }
     if (@base_caught) {
       $main_name .= (@detritus or @antipatterns_caught) ? " (i.e. not $lb" : 
           '; i.e. ' . 
-          name_natural_class($str_pattern, $inventory, str => $str, morpho => $morpho) .
+          $self->name_natural_class($str_pattern, $inventory, str => $str, morpho => $morpho) .
           " other than $lb";
-      $main_name .= join(' ', map name_phone($remove_false_features{$_}), @base_caught) . $rb;
+      $main_name .= join(' ', map $self->{phonetic_alphabet}->name_phone($remove_false_features{$_}), @base_caught) . $rb;
       $main_name .= ')' if (@detritus or @antipatterns_caught);
     }
     warn 'inconsistency in detritus in describe_set' if @pool != @detritus; 
@@ -2960,23 +3119,23 @@ sub describe_set {
   if (@detritus) {
     my $detritus_name = '';
     if (@detritus > 2 and !$args{bottom_out}) {
-      $detritus_name = describe_set([map $remove_false_features{$_}, @detritus], $inventory, %args, 
+      $detritus_name = $self->describe_set([map $remove_false_features{$_}, @detritus], $inventory, %args, 
           get_str_pattern => undef, insignificant => $pattern, bottom_out => 1,
           morpho => ($args{morpho} eq 'bare' ? 'indef' : $args{morpho}), ie => undef);
       $detritus_name = '' if $detritus_name =~ /^[[\/]/ or $detritus_name =~ /other than/; # big kluge
     }
     if ($detritus_name) {
-      $detritus_name .= " ($lb" . join(' ', map name_phone($remove_false_features{$_}), @detritus) . "$rb)"
+      $detritus_name .= " ($lb" . join(' ', map $self->{phonetic_alphabet}->name_phone($remove_false_features{$_}), @detritus) . "$rb)"
           if (!$list_examples and $args{ie}); # duplicative
       $result .= $detritus_name;
     } else {
-      $result .= $lb . join(' ', map name_phone($remove_false_features{$_}), @detritus) . $rb;
+      $result .= $lb . join(' ', map $self->{phonetic_alphabet}->name_phone($remove_false_features{$_}), @detritus) . $rb;
     }
   }
 
   if ($list_examples and $args{ie}) {
     $result .= '; i.e. ' . ($morpho eq 'plural' ? '' : 'one of ') . 
-        $lb . join(' ', map name_phone($remove_false_features{$_}), @$phones) . $rb;
+        $lb . join(' ', map $self->{phonetic_alphabet}->name_phone($remove_false_features{$_}), @$phones) . $rb;
   } 
   $result;
 }
@@ -2987,7 +3146,7 @@ sub describe_set {
 # By the time we call this, gen_syllable contains all the important information
 # about the syllable structure, whereas some of what's in syllable_structure is inaccurate.
 sub describe_syllable_structure {
-  my ($pd, %args) = (shift, @_);
+  my ($self, $pd, %args) = (shift, @_);
   my @template;
   my @elaborations;
   
@@ -2995,10 +3154,10 @@ sub describe_syllable_structure {
   for my $pos (0..@{$pd->{syllable_structure}}-1) {
     my @phones = grep(($_ and $pd->{gen_inventory}{$_}[$pos]), keys %{$pd->{gen_inventory}});
     my $label;
-    for my $slot (@{$phon_descr->{syllable_slots}}) {
+    for my $slot (@{$self->{classes}{syllable_slots}}) {
       my $phone; 
       ($phone, $label) = split /: */, $slot;
-      $phone = '(' . join(')|(', map(parse_feature_string($_, 1), split(/\|/, $phone))) . ')';
+      $phone = '(' . join(')|(', map($FS->parse($_), split(/\|/, $phone))) . ')';
       my $mismatch = 0;
       for (@phones) {
         $mismatch = 1 unless /^$phone$/;
@@ -3027,9 +3186,9 @@ sub describe_syllable_structure {
     $template[$pos] = $label;
 
     if (@phones == 1) {
-      $template[$pos] = name_phone($phones[0]);
+      $template[$pos] = $self->{phonetic_alphabet}->name_phone($phones[0]);
     } else {
-      $elaborations[$pos] = describe_set(\@phones, [keys %{$pd->{gen_inventory}}], ie => 1); 
+      $elaborations[$pos] = $self->describe_set(\@phones, [keys %{$pd->{gen_inventory}}], ie => 1); 
     }
   }
   
@@ -3063,7 +3222,7 @@ sub describe_syllable_structure {
 # - In 634146154, nasality spreads across high V but doesn't latch on.  Describe that when it happens?
 
 sub describe_rules {
-  my ($pd, %args) = (shift, @_);
+  my ($self, $pd, %args) = (shift, @_);
   my %descriptions;
   my %to_be_numbered;
 
@@ -3085,7 +3244,7 @@ sub describe_rules {
   @inventory = grep $_, @inventory;
   %phone_resolutions = (map(($_ => $_), @inventory));
 
-  my %sortkey = map(($_ => table_sortkey($_, $phon_descr->{table_structure})), @inventory);
+  my %sortkey = map(($_ => $self->table_sortkey($_, $self->{classes}{table_structure})), @inventory);
 
   RULE: for my $i ($args{start}..$args{end}-1) {
     my $rule = $pd->{phonology}[$i];
@@ -3179,7 +3338,7 @@ sub describe_rules {
     # FIXME: this way about it has a great flaw: there may be persistent sequence rules
     # that *always* run after a given rule, but this won't notice them at all.
     my @new_inventory = @inventory;
-    my $entailed_effect = add_entailments($effect);
+    my $entailed_effect = $FS->add_entailments($effect);
     my %outcome;
     my $pointless = 1;
     my %frames_examined;
@@ -3198,20 +3357,19 @@ sub describe_rules {
       $frames_examined{$frame} = 1;
  
       for my $phone (@{$matcheds{$locus}}) {
-        my $changed = add_entailments overwrite($phone, $frame);
+        my $changed = $FS->add_entailments($FS->overwrite($phone, $frame));
         if (!defined $phone_resolutions{$changed}) {
           my $word = [$changed];
           my $expiry = [];
-          run_phonology $word, $pd->{phonology}, 
-              which_preconditions => $pd->{which_preconditions},
-              cleanup => $i, 
-              change_record => [change_record($phone, $changed)],
-              track_expiry => $expiry,
-              nopause => 1;
+          $pd->run($word,
+                   cleanup => $i, 
+                   change_record => [FeatureSystem::change_record($phone, $changed)],
+                   track_expiry => $expiry,
+                   nopause => 1);
           $phone_resolutions{$changed} = join ' ', @$word;
           push @{$resolution_expiries{$expiry->[0]}}, $changed if $expiry->[0] < INF;
           push @new_inventory, @$word; 
-          $sortkey{$_} = table_sortkey($_, $phon_descr->{table_structure}) for @$word;
+          $sortkey{$_} = $self->table_sortkey($_, $self->{classes}{table_structure}) for @$word;
         }
         my $outcome = $phone_resolutions{$changed};
         $pointless = 0 unless ($phone eq $outcome and $phone !~ /^$effect$/);
@@ -3241,7 +3399,7 @@ sub describe_rules {
       }
     }
 
-    # Exceptionality describing time!  We are comparing to add_entailments overwrite($phone, $frame).
+    # Exceptionality describing time!  We are comparing to $FS->add_entailments $FS->overwrite($phone, $frame).
     # Note that this doesn't have any particular handling of 
     # "foos do A, except for bar foos, which do B instead".
 
@@ -3260,7 +3418,7 @@ sub describe_rules {
         if ($outcome =~ / /) { 
           warn "multiple sound outcome in finding deviations!"; # FIXME: multiple sound outcomes
         }
-        my $changed = add_entailments overwrite($phone, $frame); # duplicative :-/
+        my $changed = $FS->add_entailments($FS->overwrite($phone, $frame)); # duplicative :-/
         if (length($outcome)) { # one phone
           # Just filling in undefineds isn't good enough here, since it's not good enough below.
           for (0..length($outcome)-1) {
@@ -3306,7 +3464,7 @@ sub describe_rules {
           }
 
           my %extension = map(($_ => 1), 
-              describe_set $deviations{$dev}, \@downset, extend => $matcheds{$locus});
+              $self->describe_set($deviations{$dev}, \@downset, extend => $matcheds{$locus}));
           
           my @covered;
           for my $dev2 (keys %deviations) { # a member of the up-set of D
@@ -3393,8 +3551,8 @@ sub describe_rules {
     # But I leave them, just so that there isn't another thing to revise when persistence happens.
     my $simple_effect = $effect;
     $simple_effect =~ y/<>/../;
-    my $modified = add_entailments (overwrite $precondition, $simple_effect); 
-    # add_entailments there seems necessary to wipe out things that are forced undefined 
+    my $modified = $FS->add_entailments($FS->overwrite($precondition, $simple_effect)); 
+    # $FS->add_entailments there seems necessary to wipe out things that are forced undefined 
     # when deviations allow them to be defined again.  I hope it doesn't break anything else.
 
     my $text = '';
@@ -3427,7 +3585,7 @@ sub describe_rules {
         if (@{$kept_deviations{$frame}} <= 1) {
           my $dev = $kept_deviations{$frame}[0];
           if ($dev ne '') { # deviation can be deletion
-            $modified = overwrite $modified, $dev;
+            $modified = $FS->overwrite($modified, $dev);
           } else {
             $modified = '';
           }
@@ -3459,7 +3617,7 @@ sub describe_rules {
         for (0..length($phone)-1) {
           substr($phone, $_, 1) = '.' unless substr($effect, $_, 1) =~ /[<>]/;
         }
-        my $phone = overwrite(($effect !~ />/ ? $old_pre : 
+        my $phone = $FS->overwrite(($effect !~ />/ ? $old_pre : 
                         ($effect !~ /</ ? $old_post : '.' x @{$FS->{features}})), $phone);
         @_ = grep /^$phone$/, @inventory;
         my @exceptions;
@@ -3468,7 +3626,7 @@ sub describe_rules {
         for my $phone (@exceptions) {
             @_ = grep $_ !~ /^$phone$/, @_;
         }
-        $frame_text .= describe_set(\@_, \@inventory, morpho => 'indef', bar_nons => 1, etic => 1); 
+        $frame_text .= $self->describe_set(\@_, \@inventory, morpho => 'indef', bar_nons => 1, etic => 1); 
             # disallowing nons isn't right, but it makes the thing readable
         # okay, so just defined($rule->{pause_phone}) isn't what I look for elsewhere, but it should hackwork
         $frame_text .= ' or pause' if defined $rule->{pause_phone} and $rule->{pause_phone} =~ /^$frame$/;
@@ -3485,13 +3643,13 @@ sub describe_rules {
         my @undescribed_deviants = grep !defined $appeared_in_a_list{$_}, @deviants;
         next DEVIATION unless @undescribed_deviants;
 
-        my $subject = describe_set(\@deviants, $no_main_VP ? \@inventory : \@susceptible,
+        my $subject = $self->describe_set(\@deviants, $no_main_VP ? \@inventory : \@susceptible,
             morpho => 'plural', etic => 1, sort_phones => 1, get_str_pattern => \@get_str_pattern);
         # if the subject is a list, redo, dropping things that have already appeared in some list
         my $subject_is_list = ($subject =~ /^\[.*\]$/); # klugy
         if ($subject_is_list) { 
           @deviants = @undescribed_deviants;
-          $subject = describe_set(\@deviants, $no_main_VP ? \@inventory : \@susceptible,
+          $subject = $self->describe_set(\@deviants, $no_main_VP ? \@inventory : \@susceptible,
               morpho => 'plural', etic => 1, sort_phones => 1, get_str_pattern => \@get_str_pattern);
               # duplicated code, ick
         }
@@ -3499,7 +3657,7 @@ sub describe_rules {
 
         if (length($deviation) > 0) {
           # Check whether some assimilation is left, because frames have been merged.
-          my $framed_effect = overwrite $effect, $frame;
+          my $framed_effect = $FS->overwrite($effect, $frame);
           my $assimilation_left = ($framed_effect =~ /[<>]/);
 
           # If the subject is a list, make the object one too, unless it's entirely deletions.
@@ -3508,7 +3666,7 @@ sub describe_rules {
             %appeared_in_a_list = (%appeared_in_a_list, map(($_ => 1), @deviants));
 
             if (grep $outcome{$frame_representative}{$_}, @deviants) {
-              $frame_text .= ' become [' . join(' ', map spell_out_spaces($outcome{$frame_representative}{$_}, null => 1), @deviants) . ']';
+              $frame_text .= ' become [' . join(' ', map $self->{phonetic_alphabet}->spell_spaced_string($outcome{$frame_representative}{$_}, null => 1), @deviants) . ']';
             } else {
               $frame_text .= ' are deleted';
             }
@@ -3522,8 +3680,8 @@ sub describe_rules {
               my $significant = $framed_effect;
               $significant =~ y/01u<>/...11/;              
               $assimilation_text = ' and assimilate in ' .
-                  name_natural_class($_, undef, scheme => 'nominalised', nobase => 1, 
-                      str => get_str($get_str_pattern[0]),
+                  $self->name_natural_class($_, undef, scheme => 'nominalised', nobase => 1, 
+                      str => $self->get_str($get_str_pattern[0]),
                       significant => $significant, taken_care_of => \@taken_care_of); 
 
               # This in particular rids $framed_effect of all <>s.
@@ -3542,28 +3700,28 @@ sub describe_rules {
                 my $a = $_;
                 !grep $_ eq $a, @{$dev_distilled{$frame}{$deviation2}}
               } @deviants) {
-                $necessary_deviations = overwrite($necessary_deviations, $deviation2);
+                $necessary_deviations = $FS->overwrite($necessary_deviations, $deviation2);
               }
             }
             
             # We need accept_nothing => 1 so that weird things in the frame don't make the
             # namer think impossible things are going on.  
-            my $phone = overwrite(overwrite(overwrite($precondition, $framed_effect), 
+            my $phone = $FS->overwrite($FS->overwrite($FS->overwrite($precondition, $framed_effect), 
                 $get_str_pattern[0]), $necessary_deviations);
 
             # Constant features of the frame which came from assimilations in the effect are still insignificant.
             my $significant;
             if ($no_main_VP) {
-              $significant = overwrite($precondition, $framed_effect);
+              $significant = $FS->overwrite($precondition, $framed_effect);
               for (0..length($significant)-1) {
                 substr($significant, $_, 1) = '.' if substr($effect, $_, 1) =~ /[<>]/;
               }
-              $significant = overwrite(overwrite($significant, $get_str_pattern[0]), $necessary_deviations);
+              $significant = $FS->overwrite($FS->overwrite($significant, $get_str_pattern[0]), $necessary_deviations);
             } else {
               $significant = $deviation;
             }
 
-            $_ = name_natural_class($phone, \@new_inventory,
+            $_ = $self->name_natural_class($phone, \@new_inventory,
                 significant => $significant,
                 morpho => 'plural', nobase => 1, accept_nothing => 1, use_dominant_str => 1); 
             $frame_text .= " become $_";
@@ -3588,13 +3746,13 @@ sub describe_rules {
     # For impersistent rules, no point favouring a featural description to a list.
     if ($insusceptibles_exist or !$persistent) {
       # Note that sounds excluded by {except}{$locus} are already outside of \@susceptible.
-      $main_clause .= describe_set(\@susceptible, \@inventory, within => $precondition, 
+      $main_clause .= $self->describe_set(\@susceptible, \@inventory, within => $precondition, 
           morpho => 'plural', etic => 1, sort_phones => 1, get_str_pattern => \@get_str_pattern);
     } else {
-      $main_clause .= name_natural_class($precondition, \@inventory, morpho => 'plural');
-      $get_str_pattern[0] = str_part $precondition;
+      $main_clause .= $self->name_natural_class($precondition, \@inventory, morpho => 'plural');
+      $get_str_pattern[0] = $self->str_part($precondition);
     }
-    $modified = overwrite $get_str_pattern[0], $modified;
+    $modified = $FS->overwrite($get_str_pattern[0], $modified);
     my $subject_is_list = ($main_clause =~ /^\[.*\]$/); # klugy
     my $both_are_lists = 0; # don't need deviations if both subj and obj are lists
     my @example_sounds;
@@ -3615,7 +3773,7 @@ sub describe_rules {
       }
       my $braces = ($main_clause =~ /\]/);
       $main_clause .= ', i.e.' if $braces;
-      $main_clause .= ' [' . join(' ', map name_phone($_), @example_sounds)
+      $main_clause .= ' [' . join(' ', map $self->{phonetic_alphabet}->name_phone($_), @example_sounds)
           . "$example_ellipsis]";
       $main_clause .= ',' if $braces;
     }
@@ -3641,7 +3799,7 @@ sub describe_rules {
           # if the subject is a _short_ list, make the complement one too
           if ($subject_is_list and @susceptible <= 2 and scalar keys %outcome <= 1) { 
             $both_are_lists = 1;
-            $main_VP .= '[' . join(' ', map spell_out([split ' ', $outcome{$frame}{$_}], null => 1), @susceptible) . ']';
+            $main_VP .= '[' . join(' ', map $self->{phonetic_alphabet}->spell([split ' ', $outcome{$frame}{$_}], null => 1), @susceptible) . ']';
           } else {
             if ($main_VP =~ / and /) {
               $main_VP .= ' respectively'; 
@@ -3651,12 +3809,12 @@ sub describe_rules {
             for (0..length($modified)-1) {
               substr($modified, $_, 1) = '.' if substr($frame, $_, 1) eq '.' and substr($effect, $_, 1) =~ /[<>]/;
             }
-            $main_VP .= name_natural_class($modified, \@new_inventory, significant => $simple_effect, 
+            $main_VP .= $self->name_natural_class($modified, \@new_inventory, significant => $simple_effect, 
                 morpho => 'plural', nobase => 1, accept_nothing => 1, use_dominant_str => 1);
           }
           # examples
           if (keys %outcome <= 1 and !$subject_is_list) {
-            $main_VP .= ' [' . join(' ', map spell_out_spaces($outcome{$frame}{$_}, null => 1), @example_sounds)
+            $main_VP .= ' [' . join(' ', map $self->{phonetic_alphabet}->spell_spaced_string($outcome{$frame}{$_}, null => 1), @example_sounds)
                 . "$example_ellipsis]";
           }
         }
@@ -3664,17 +3822,17 @@ sub describe_rules {
       if ($effect =~ /</) {
         $_ = $effect;
         y/01u<>/...1./;
-        $_ = overwrite(str_part(enrich($precondition,\@inventory)), $_);
+        $_ = $FS->overwrite($self->str_part(enrich($precondition,\@inventory)), $_);
         $main_VP .= ' and' if $main_VP;
         $main_VP .= ' assimilate in ' .
-            name_natural_class($_, undef, scheme => 'nominalised', nobase => 1);
+            $self->name_natural_class($_, undef, scheme => 'nominalised', nobase => 1);
         if (!defined($old_post) and !$far) {
           $main_VP .= ' to a preceding ';
           @_ = grep /^$pre$/, @inventory;
           for my $phone (split / /, $rule->{except}{$locus-1}) {
             @_ = grep $_ !~ /^$phone$/, @_;
           }
-          $main_VP .= describe_set(\@_, \@inventory, morpho => 'bare', etic => 1);
+          $main_VP .= $self->describe_set(\@_, \@inventory, morpho => 'bare', etic => 1);
           $pre = undef;
         } else {
           $main_VP .= ' to the previous phone';
@@ -3685,27 +3843,27 @@ sub describe_rules {
             substr($pausal_effect, $_, 1) = substr($rule->{pause_phone}, $_, 1)
                 if substr($pausal_effect, $_, 1) eq '<';
           }
-          my $modified = overwrite $precondition, $pausal_effect; 
+          my $modified = $FS->overwrite($precondition, $pausal_effect); 
           $modified =~ s/u/./g;
           $main_VP .= ' and become ' . 
-                      name_natural_class($modified, \@new_inventory, significant => $pausal_effect, morpho => 'plural', nobase => 1) .
+                      $self->name_natural_class($modified, \@new_inventory, significant => $pausal_effect, morpho => 'plural', nobase => 1) .
                       ' word-initially';
         }
       }
       if ($effect =~ />/) {
         $_ = $effect;
         y/01u<>/....1/;
-        $_ = overwrite(str_part(enrich($precondition,\@inventory)), $_);
+        $_ = $FS->overwrite($self->str_part(enrich($precondition,\@inventory)), $_);
         $main_VP .= ' and' if $main_VP;
         $main_VP .= ' assimilate in ' .
-            name_natural_class($_, undef, scheme => 'nominalised', nobase => 1);
+            $self->name_natural_class($_, undef, scheme => 'nominalised', nobase => 1);
         if (!defined($old_pre) and !$far) {
           $main_VP .= ' to a following ';
           @_ = grep /^$post$/, @inventory;
           for my $phone (split / /, $rule->{except}{$locus+1}) {
             @_ = grep $_ !~ /^$phone$/, @_;
           }
-          $main_VP .= describe_set(\@_, \@inventory, morpho => 'bare', etic => 1);
+          $main_VP .= $self->describe_set(\@_, \@inventory, morpho => 'bare', etic => 1);
           $post = undef;
         } else {
           $main_VP .= ' to the next phone';
@@ -3716,10 +3874,10 @@ sub describe_rules {
             substr($pausal_effect, $_, 1) = substr($rule->{pause_phone}, $_, 1)
                 if substr($pausal_effect, $_, 1) eq '>';
           }
-          my $modified = overwrite $precondition, $pausal_effect; 
+          my $modified = $FS->overwrite($precondition, $pausal_effect); 
           $modified =~ s/u/./g;
           $main_VP .= ' and become ' . 
-                      name_natural_class($modified, \@new_inventory, significant => $pausal_effect, morpho => 'plural', nobase => 1) .
+                      $self->name_natural_class($modified, \@new_inventory, significant => $pausal_effect, morpho => 'plural', nobase => 1) .
                       ' word-finally';
         }
       }
@@ -3731,10 +3889,10 @@ sub describe_rules {
     my ($no_segmental_pre, $no_segmental_post);
     # the 'or word-finally' aren't quite right, since the main rule might be a between.
     if (defined $pre) {
-      $pre_text = name_natural_class($pre, \@inventory, morpho => 'indef', no_nothing => 1);
+      $pre_text = $self->name_natural_class($pre, \@inventory, morpho => 'indef', no_nothing => 1);
       $no_segmental_pre = 1 unless $pre_text;
       my @exceptions = split / /, $rule->{except}{$locus-1};
-      my @exception_texts = map name_natural_class(overwrite($precondition, $_), 
+      my @exception_texts = map $self->name_natural_class($FS->overwrite($precondition, $_), 
               \@inventory, significant => $_, no_nothing => 1, morpho => 'indef'), 
           # don't state exceptions that don't actually exclude anything
           grep { my $a = $_; grep /^$a$/ && /^$pre$/, @inventory; } @exceptions;
@@ -3744,10 +3902,10 @@ sub describe_rules {
       $pre_text .= ($pre_text ? ' or ' : '') . 'word-initially' if $rule->{or_pause}{$locus-1};
     }
     if (defined $post) {
-      $post_text = name_natural_class($post, \@inventory, morpho => 'indef', no_nothing => 1);
+      $post_text = $self->name_natural_class($post, \@inventory, morpho => 'indef', no_nothing => 1);
       $no_segmental_post = 1 unless $post_text;
       my @exceptions = split / /, $rule->{except}{$locus+1};
-      my @exception_texts = map name_natural_class(overwrite($precondition, $_), 
+      my @exception_texts = map $self->name_natural_class($FS->overwrite($precondition, $_), 
               \@inventory, significant => $_, no_nothing => 1, morpho => 'indef'), 
           # don't state exceptions that don't actually exclude anything
           grep { my $a = $_; grep /^$a$/ && /^$post$/, @inventory; } @exceptions;
@@ -3811,6 +3969,8 @@ sub describe_rules {
 }
 
 
+
+package main;
 
 
 
@@ -3931,59 +4091,28 @@ if ($use_html) {
 }
 END
   print CGI::start_html(-title => 'Random phonology', 
-                         -style => {-code => $style});
+                        -style => {-code => $style});
 } 
 else {
   $" = $, = ", ";
 }
-# David wanted a link to an IPA chart, but I hope that a humane rule description
-# would render that unnecessary.  We'll see.
 
-$FS = YAML::Any::LoadFile('features.yml');
+die 'feature system not found' unless -f 'features.yml';
+$FS = FeatureSystem::load_file('features.yml');
 
-$feature_indices{$FS->{features}[$_]{name}} = $_ for (0..@{$FS->{features}}-1);
-for my $i (0..@{$FS->{features}}-1) {
-  if (defined $FS->{features}[$i]{requires}) {
-    my $s = parse_feature_string($FS->{features}[$i]{requires});
-    for (0..length($s)-1) {
-      push @{$features_requiring[substr($s, $_, 1)][$_]}, $i if (substr($s, $_, 1) =~ /[01]/);
-    }
-  }
+my $phonetic_alphabet;
+if ($use_html && -f 'IPA_HTML.yml') {
+  $phonetic_alphabet = Transcription::load_file('IPA_HTML.yml')
+} elsif (-f 'CXS.yml') {
+  $phonetic_alphabet = Transcription::load_file('CXS.yml')
+} else {
+  die 'no suitable phonetic alphabet found';
 }
-for my $str (@{$FS->{strippings}}) {
-  $str->{condition_parsed} = parse_feature_string($str->{condition}, 1);
-}
-my @otherway_relations;
-for my $rel (@{$FS->{relations}}) {
-  if (defined $rel->{twoway}) {
-    my %flipped = %$rel;
-    $flipped{from} = $rel->{to};
-    $flipped{to} = $rel->{from};
-    push @otherway_relations, \%flipped;
-  }
-}
-push @{$FS->{relations}}, @otherway_relations;
-
-$phonetic_alphabets{CXS} = YAML::Any::LoadFile('CXS.yml') if -f 'CXS.yml';
-$phonetic_alphabets{IPA} = YAML::Any::LoadFile('IPA_HTML.yml') if -f 'IPA_HTML.yml';
-for my $alphabet (values %phonetic_alphabets) {
-  for my $type (qw/characters ligations/) {
-    for my $c (keys %{$alphabet->{$type}}) {
-      $alphabet->{$type}{parse_feature_string $c, 1} = $alphabet->{$type}{$c};
-      delete $alphabet->{$type}{$c};
-    }
-  }
-  for my $c (keys %{$alphabet->{modifiers}}) {
-    my @fs = split / /, $c;
-    my $s = parse_feature_string($c, 1) . ' ' . parse_feature_string($fs[0], 1);
-    $alphabet->{modifiers}{$s} = $alphabet->{modifiers}{$c};
-    delete $alphabet->{modifiers}{$c};
-  }
-}
-
+$debug_alphabet = Transcription::load_file('CXS.yml') if -f 'CXS.yml';
+  
 if (defined $phone_to_interpret) {
-  $phone_to_interpret = parse_feature_string($phone_to_interpret) unless $phone_to_interpret =~ /^[.01u]*$/;
-  print '[' . name_phone($phone_to_interpret) . '] ' . feature_string($phone_to_interpret);
+  $phone_to_interpret = $FS->parse($phone_to_interpret, undefined => 1) unless $phone_to_interpret =~ /^[.01u]*$/;
+  print '[' . $phonetic_alphabet->name_phone($phone_to_interpret) . '] ' . $FS->feature_string($phone_to_interpret);
   $phone_to_interpret =~ /[01]/g;
   print '   ' . (pos($phone_to_interpret) - 1) if defined pos($phone_to_interpret);
   print "\n";
@@ -3993,82 +4122,38 @@ if (defined $phone_to_interpret) {
 print STDERR "seed $seed\n" if $verbose; 
 srand $seed; 
 
-my $phonology_data;
+my $pd;
 
 if (defined $infile) {
-  $phonology_data = YAML::Any::LoadFile($infile);
-} 
-
-else {
-  print STDERR "generating phonology...\n" if $verbose;
-  my ($start_sequences, $syllable_structure, $phone_generator, $phonology) = gen_phonology;
-  $phonology_data = {
-    syllable_structure => $syllable_structure,
-    phone_generator => $phone_generator, 
-    phonology => $phonology,
-    which_preconditions => which_preconditions($phonology),
-    start_sequences => $start_sequences,
-  };
-  print STDERR "computing inventory...\n" if $verbose;
-  $phonology_data->{gen_inventory} = inventory $phonology_data; # base inventory for generation
-  postprocess_inventory $phonology_data;
-  delete $phonology_data->{phone_generator}; # now this is needless
-  if ($debug < 1) {
-    trim_inactive $phonology_data; 
-  } else {
-    print STDERR "pruning of inactive rules skipped\n";
-  }
-  $phonology_data->{which_preconditions} = which_preconditions($phonology); # since the numbers are changed
-  for (@{$phonology_data->{phonology}}) {
-    strip_feed_annotation $_;
-  }
-}
-
-$phon_descr = YAML::Any::LoadFile('phon_descr.yml');
-
-if ($show_inventory) {
-  if ($use_html) {
-    print CGI::h2('Phonemic inventory'),
-          tabulate $phonology_data;
-  } 
-  
-  else {
-    my %things_named;
-    print "phonemic inventory:\n"; 
-    for my $p (sort keys %{$phonology_data->{gen_inventory}}) { 
-      my $n = join '', map name_phone($_), split / /, $p;
-      print "/" . ($n !~ /\#\#/ ? $n : feature_string($p)) . "/\t@{$phonology_data->{gen_inventory}{$p}}\n";
-      push @{$things_named{$n}}, $p if ($n !~ /\#\#/);
-    }
-    for my $name (keys %things_named) { # left in in case it crops up
-      if (@{$things_named{$name}} >= 2) {
-        print "duplicate [$name]\n";
-        print "$_\n" for @{$things_named{$name}};
-      }
-    }
-    # subtract 1 for the empty phone
-    print "that's " . ((keys %{$phonology_data->{gen_inventory}}) - 1) . " phonemes\n";
-  }
+  $pd = YAML::Any::LoadFile($infile);
+} else {
+  $pd = Phonology::generate;
 }
 
 if (defined $outfile) {
   if (defined $humane_output) {
-    for my $rule (@{$phonology_data->{phone_generator}}, @{$phonology_data->{phonology}}) {
+    for my $rule (@{$pd->{phone_generator}}, @{$pd->{phonology}}) {
       for my $displ (keys %{$rule->{precondition}}) {
-        $rule->{precondition_humane}{$displ} = feature_string $rule->{precondition}{$displ}, 1;
+        $rule->{precondition_humane}{$displ} = $FS->feature_string($rule->{precondition}{$displ}, 1);
       }
       for my $displ (keys %{$rule->{effects}}) {
-        $rule->{effects_humane}{$displ} = feature_string $rule->{effects}{$displ}, 1;
+        $rule->{effects_humane}{$displ} = $FS->feature_string($rule->{effects}{$displ}, 1);
       }
     }
-    $phonology_data->{phonology}[$_]{number} = $_ for 0..@{$phonology_data->{phonology}}-1;
+    $pd->{phonology}[$_]{number} = $_ for 0..@{$pd->{phonology}}-1;
   }
-  YAML::Any::DumpFile($outfile, $phonology_data);
+  YAML::Any::DumpFile($outfile, $pd);
+}
+
+my $pdes = PhonologyDescriber::new($phonetic_alphabet, YAML::Any::LoadFile('phon_descr.yml'));
+
+if ($show_inventory) {
+  print $pdes->describe_inventory($pd, html => $use_html); 
 }
 
 if ($show_all) {
-  tabulate $phonology_data, annotate_only => 1;
-  my ($template, $elaborations) = describe_syllable_structure $phonology_data, html => $use_html;
+  $pdes->tabulate($pd, annotate_only => 1); # should this be given a name of its own?
+  my ($template, $elaborations) = $pdes->describe_syllable_structure($pd, html => $use_html);
   if ($use_html) { 
     print CGI::h2('Syllable structure'),
           CGI::p(join '', @$template),
@@ -4080,7 +4165,7 @@ if ($show_all) {
   }
 
   print STDERR "describing rules...\n" if $verbose;
-  my $rules = describe_rules $phonology_data;
+  my $rules = $pdes->describe_rules($pd);
   if ($use_html) {
     print CGI::h2('Allophony'),
           CGI::ul(CGI::li($rules));
@@ -4097,35 +4182,33 @@ if ($use_html and $num_words > 0) {
 }
 
 for (1..$num_words) {
-  my $word = generate_form 12, $phonology_data; # magic entropy value
+  my $word = $pd->generate_form(12); # magic entropy value
   my $surface_word;
   my $generated_word = [@$word];
   if (defined $canonicalise) {
-    ($surface_word, $word) = canonicalise_phonemic_form $generated_word, $phonology_data;
+    ($surface_word, $word) = $pd->canonicalise_phonemic_form($generated_word);
   } else {
     $surface_word = [@$word];
-    run_phonology $surface_word, $phonology_data->{phonology}, 
-        which_preconditions => $phonology_data->{which_preconditions},
-        start => $phonology_data->{start_sequences}; 
+    $pd->run($surface_word, start => $pd->{start_sequences}); 
   }
 
   if ($use_html) {
     print '<tr>';
     print "<td>//", 
-          spell_out($generated_word),
+          $phonetic_alphabet->spell($generated_word),
           "//</td>" 
         if defined $canonicalise;
     print "<td>/", 
-          spell_out($word), 
+          $phonetic_alphabet->spell($word), 
           "/</td><td>[",
-          spell_out($surface_word),
+          $phonetic_alphabet->spell($surface_word),
           "]</td></tr>\n";
   } else {
-    print "//" . spell_out($generated_word). "//\t" if defined $canonicalise;
-    print "/" . spell_out($word) . "/\t[" . spell_out($surface_word) . "]\n";
+    print "//" . $phonetic_alphabet->spell($generated_word). "//\t" if defined $canonicalise;
+    print "/" . $phonetic_alphabet->spell($word) . "/\t[" . $phonetic_alphabet->spell($surface_word) . "]\n";
     for my $phone (@$surface_word) {
-      $_ = name_phone($phone);
-      print feature_string($phone), "\n" if /\#\#/;
+      $_ = $phonetic_alphabet->name_phone($phone);
+      print $FS->feature_string($phone), "\n" if /\#\#/;
     }
   }
 }
