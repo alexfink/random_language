@@ -41,29 +41,7 @@ my $credits = 'Gleb, a phonology generator, by Alex Fink' .
               (' ' x (29 - length($version))) . # for a total length of 78
               "version $version";
 
-# Phones are specified as strings, with one character for each feature in the order
-# in which they occur in the feature definition file.  The principal values of characters:
-# '.' is unspecified, 'u' undefined, '0' off, '1' on.
-# Only [u01] appear in actual phones; '.' appears in classes (where it matches everything)
-# and sound change outcomes and the like.
-
-# There are various other characters used.  
-# In one place the syllable structure uses 'U', which gets converted to 'u' only after the generator runs.
-# Effects of sound changes can have '<' and '>', which do progressive and regressive assimilation.
-
-# Univalent features are treated by the code bivalently, just like all the others.
-# Their univalence manifests in other ways: 
-# - their complement cannot be selected as the conditioning environment of a rule (not in yet);
-# - they can't be inserted as part of a repair rule.
-
-# As essentially a hack to achieve reasonable behaviour of certain 3-place continua,
-# a feature can be marked as antithetical to another.  Then, whenever the former is
-# set +, the latter is automatically set -.
-# TODO: this likely needs generalisation for e.g. tone.
-
-my $FS; # what features there are, what they do
 my $debug_alphabet; # used for printing phones for debugging only
-
 my $verbose;
 my $debug = 0;
 my $debug2 = 0; # for the use of tracking things down with temporary diagnostic prints.  will leave for now
@@ -101,9 +79,67 @@ sub std_normal {
   return sqrt(-2*log rand(1)) * cos(rand(TWOPI));
 }
 
+# To save space, we currently trim the feature system out of a phonology before saving it.
+sub load_file {
+  my ($infile, $FS) = (shift, shift);
+  my $pd = YAML::Any::LoadFile($infile);
+  $pd->{FS} = $FS;
+  bless $pd, 'Phonology';
+  for my $rule (@{$pd->{phonology}}) {
+    $rule->{FS} = $FS;
+    bless $rule, 'PhonologicalRule';
+  }
+  bless $pd;
+}
+
+sub dump_file {
+  my ($self, $outfile, $annotate) = (shift, shift, shift);
+
+  my $FS = $self->{FS};
+  my $pd = YAML::Any::Load(YAML::Any::Dump($self)); # kluge deep copy
+  delete $pd->{FS};
+  for my $rule (@{$pd->{phonology}}) {
+    delete $rule->{FS};
+  }
+  if ($annotate) {
+    for my $rule (@{$pd->{phone_generator}}, @{$pd->{phonology}}) {
+      for my $displ (keys %{$rule->{precondition}}) {
+        $rule->{precondition_humane}{$displ} = $FS->feature_string($rule->{precondition}{$displ}, 1);
+      }
+      for my $displ (keys %{$rule->{effects}}) {
+        $rule->{effects_humane}{$displ} = $FS->feature_string($rule->{effects}{$displ}, 1);
+      }
+    }
+    $pd->{phonology}[$_]{number} = $_ for 0..@{$pd->{phonology}}-1;
+  }
+  YAML::Any::DumpFile($outfile, $pd);
+}
+
 package FeatureSystem;
-# TODO: (proximal, with OOifying) put a reference to the feature system in the phonology, and deglobalise it.  
-# But be certain not to include it in phonologies saved to files!  That would inflate them ridiculously.
+
+# There is no package for phones, since they are just strings.  The FeatureSystem object 
+# is the one that knows how to handle its phones.
+
+# Phones are specified as strings, with one character for each feature in the order
+# in which they occur in the feature definition file.  The principal values of characters:
+# '.' is unspecified, 'u' undefined, '0' off, '1' on.
+# Only [u01] appear in actual phones; '.' appears in classes (where it matches everything)
+# and sound change outcomes and the like.
+
+# There are various other characters used.  
+# In one place the syllable structure uses 'U', which gets converted to 'u' only after the generator runs.
+# Effects of sound changes can have '<' and '>', which do progressive and regressive assimilation.
+
+# Univalent features are treated by the code bivalently, just like all the others.
+# Their univalence manifests in other ways: 
+# - their complement cannot be selected as the conditioning environment of a rule (not in yet);
+# - they can't be inserted as part of a repair rule.
+
+# As essentially a hack to achieve reasonable behaviour of certain 3-place continua,
+# a feature can be marked as antithetical to another.  Then, whenever the former is
+# set +, the latter is automatically set -.
+# TODO: this likely needs generalisation for e.g. tone.
+
 
 # Uses dots for unspecified values, unless $args{undefined} is true when it uses 'u'.
 sub parse {
@@ -231,6 +267,7 @@ package PhonologicalRule;
 
 sub feed_annotate {
   my $rule = shift;
+  my $FS = $rule->{FS};
   for my $displ (keys %{$rule->{precondition}}) {
     $rule->{precondition_ar}{$displ} = $FS->add_requirements($rule->{precondition}{$displ});
     if (defined $rule->{effects}{$displ}) {
@@ -272,6 +309,7 @@ sub strip_feed_annotation {
 
 sub feeds {
   my ($ri, $rj, %args) = (shift, shift, @_);
+  my $FS = $ri->{FS}; # shd check that they're the same
 
   # Sequence-type rationales overrule ramification (1).
   # TODO: update this as we get new rule types
@@ -333,6 +371,7 @@ sub feeds {
 
 sub conflicts_with {
   my ($ri, $rj) = (shift, shift);
+  my $FS = $ri->{FS}; # shd check if they're the same
   my (@pij, @pji);
   return 0 unless $ri->feeds($rj, pairs => \@pij) and $rj->feeds($ri, pairs => \@pji);
   return 1 unless @pij and @pji; # since it's some priority ramification thing.  shouldn't arise
@@ -357,6 +396,7 @@ package Phonology;
 
 sub annotate_with_preconditions {
   my $self = shift; 
+  my $FS = $self->{FS};
   my %which;
   for my $i (0..@{$self->{phonology}}-1) {
     my $rule = $self->{phonology}[$i];
@@ -507,9 +547,9 @@ sub run {
         }
         # We must entail the effects, not just the overwritten phone, since otherwise
         # jumps over the middle point on an antithetical scale won't always work.
-        $effects = $FS->add_entailments($effects);
+        $effects = $rule->{FS}->add_entailments($effects);
       }
-      my $newphone = $FS->overwrite($word->[$i+$displ], $effects);
+      my $newphone = $rule->{FS}->overwrite($word->[$i+$displ], $effects);
       
       if ($word->[$i+$displ] ne $newphone) {
         $changed = 1;
@@ -646,7 +686,7 @@ sub run {
   }
   
   if (defined $args{generator}) {
-    $_ = $FS->add_entailments($_) for @$word;
+    $_ = $self->{FS}->add_entailments($_) for @$word;
   }
   $args{track_expiry}[0] = $track_expiry if defined $track_expiry;
 }
@@ -675,7 +715,7 @@ sub persistence_variants {
       # which set something the opposite of this rule.
       my @potential_conflicts;
       for my $displ (keys %{$rule->{effects}}) {
-        for my $i (0..@{$FS->{features}}-1) {
+        for my $i (0..@{$pd->{FS}{features}}-1) {
           push @potential_conflicts, @{$generable_val->[1-substr($rule->{effects}{$displ}, $i, 1)][$i]}
               if substr($rule->{effects}{$displ}, $i, 1) =~ /[01]/
               and defined($generable_val->[1-substr($rule->{effects}{$displ}, $i, 1)][$i]);
@@ -710,6 +750,7 @@ sub persistence_variants {
 
 sub gen_extra_condition {
   my ($self, %args) = (shift, @_);
+  my $FS = $self->{FS};
   my (%resolution_keys, %resolutions);
   my $global_res_count = 0;
 
@@ -910,6 +951,7 @@ sub gen_extra_condition {
 sub generate {
   my ($tag, %args) = (shift, @_);
   my ($kind, $k, $rest) = split / /, $tag;
+  my $FS = $args{phonology}{FS};
   # print STDERR "[" . scalar @{$args{phonology}{phonology}} . "] tag is $tag\n"; # debug
 
   # Not doing assimilation rules (or strippings) since they can't much come out differently.
@@ -981,6 +1023,7 @@ sub generate {
         precondition => {0 => $FS->overwrite($precondition, $FS->parse($1))},
         effects => {0 => $FS->parse($2)},
         recastability => 0,
+        FS => $FS,
       };
       return bless $rule;
     }
@@ -993,6 +1036,7 @@ sub generate {
       recastability => 0,
       priority => $FS->{strippings}[$k]{priority},
       tag => $tag,
+      FS => $FS,
     };
     return bless $rule;
   } 
@@ -1291,6 +1335,8 @@ sub generate {
 
   bless $selected_rule;
 
+  $selected_rule->{FS} = $FS;
+  
   # Adorn the rule with extra conditions, if we decided to before.
   if ($add_a_condition) {
     $selected_rule->gen_extra_condition(%args); # {phonology} is passed through
@@ -1357,7 +1403,8 @@ sub generate {
 
 package Phonology;
 
-# Generates a new rule with tag $tag, and 
+# Generates a new rule with tag $tag, and appends it to the phonology, 
+# making the other changes that this may entail.
 sub generate_new_rule {
   my ($self, $tag, %args) = (shift, shift, @_); 
   my $phonology = $self->{phonology};
@@ -1367,10 +1414,10 @@ sub generate_new_rule {
   my @tag_suffixes = ('');
   if ($tag =~ /^default /) {
     my ($kind, $k) = split / /, $tag;
-    @tag_suffixes = map " $_", 0..@{$FS->{features}[$k]{default}}-1;
+    @tag_suffixes = map " $_", 0..@{$self->{FS}{features}[$k]{default}}-1;
   } elsif ($tag =~ /^stripping /) {
     my ($kind, $k) = split / /, $tag;
-    @tag_suffixes = map " $_", 0..@{$FS->{strippings}[$k]{substitute}}-1;
+    @tag_suffixes = map " $_", 0..@{$self->{FS}{strippings}[$k]{substitute}}-1;
     push @tag_suffixes, '';
   }
 
@@ -1390,7 +1437,7 @@ sub generate_new_rule {
     delete $rule->{inactivate};
 
     for my $displ (keys %{$rule->{effects}}) {
-      for my $i (0..@{$FS->{features}}-1) {
+      for my $i (0..@{$self->{FS}{features}}-1) {
         if (substr($rule->{effects}{$displ}, $i, 1) =~ /[01]/) {
           push @{$args{generable_val}[substr($rule->{effects}{$displ}, $i, 1)][$i]}, scalar @$phonology;
         }
@@ -1499,7 +1546,7 @@ sub generate_new_rule {
 
 sub generate {
   print STDERR "generating phonology...\n" if $verbose;
-  my $pd = Phonology::generate_preliminary();
+  my $pd = Phonology::generate_preliminary(shift);
   $pd->annotate_with_preconditions();
   print STDERR "computing inventory...\n" if $verbose;
   $pd->compute_inventory(); # base inventory for generation
@@ -1518,6 +1565,7 @@ sub generate {
 }
 
 sub generate_preliminary {
+  my $FS = shift;
   my (@phone_generator, @phonology);
   my @syllable_structure;
 
@@ -1606,6 +1654,7 @@ sub generate_preliminary {
           precondition => {0 => $precondition},
           effects => {0 => $FS->parse($f->{name})}, # er, rework this
           prob => [map fuzz($sit->{prob}), @syllable_structure],
+          FS => $FS,
         );
         substr($rule{effects}{0}, $FS->{feature_index}{$f->{antithetical}}, 1) = '0' if (defined $f->{antithetical});
         if (@by_families) {
@@ -1783,6 +1832,7 @@ sub generate_preliminary {
     syllable_structure => \@syllable_structure,
     phone_generator => \@phone_generator, 
     phonology => \@phonology,
+    FS => $FS,
   };
   bless $self;
 
@@ -1813,8 +1863,9 @@ package Transcription;
 # once creating those is done.
 
 sub load_file {
-  my $filename = shift;
+  my ($filename, $FS) = (shift, shift);
   my $alphabet = YAML::Any::LoadFile($filename);
+  $alphabet->{FS} = $FS;
 
   for my $type (qw/characters ligations/) {
     for my $c (keys %{$alphabet->{$type}}) {
@@ -1837,6 +1888,7 @@ sub load_file {
 
 sub name_phone {
   my ($self, $phone, %args) = (shift, @_);
+  my $FS = $self->{FS};
   my %taken_care_of;
   my $s = '##';
   $s = "<abbr title=\"$phone\">$s</abbr>" if $use_html; # handy for debugging
@@ -1952,7 +2004,7 @@ sub compute_inventory {
   
   # Strip unsupported features at the end, in case the syllable structure put them in.
   for my $phone (keys %inventory) {
-    my $stripped = $FS->add_entailments($phone);
+    my $stripped = $self->{FS}->add_entailments($phone);
     $stripped =~ s/U/u/g;
     if ($stripped ne $phone) {
       add_in \%inventory, $stripped, $inventory{$phone};
@@ -2220,6 +2272,7 @@ use constant INF => 9**9**9; # is there really nothing sensible better?
 # (The latter defines words like "stop", "uvular", etc.; it is the file that would need localisation.)
 sub new {
   my $pdes = {phonetic_alphabet => shift, classes => shift};
+  $pdes->{FS} = $pdes->{phonetic_alphabet}{FS};
   bless $pdes;
 }
 
@@ -2234,7 +2287,7 @@ sub describe_inventory {
     $buffer .= "phonemic inventory:\n"; 
     for my $p (sort keys %{$pd->{gen_inventory}}) { 
       my $n = join '', map $self->{phonetic_alphabet}->name_phone($_), split / /, $p;
-      $buffer .= "/" . ($n !~ /\#\#/ ? $n : $FS->feature_string($p)) . "/\t@{$pd->{gen_inventory}{$p}}\n";
+      $buffer .= "/" . ($n !~ /\#\#/ ? $n : $self->{FS}->feature_string($p)) . "/\t@{$pd->{gen_inventory}{$p}}\n";
       push @{$things_named{$n}}, $p if ($n !~ /\#\#/);
     }
     for my $name (keys %things_named) { # left in in case it crops up
@@ -2253,11 +2306,11 @@ sub describe_inventory {
 sub add_false_features {
   my ($self, $phone, $str) = (shift, shift);
   while (defined $str->{subtables}) {
-    my $subtable = substr($phone, $FS->{feature_index}{$str->{subtables}}, 1);
+    my $subtable = substr($phone, $self->{FS}{feature_index}{$str->{subtables}}, 1);
     $str = $str->{$subtable};
   }
   while (my ($k, $v) = each %{$str->{undef_p}}) {
-    $phone = $FS->overwrite($phone, $v) if $phone =~ /^$k$/;
+    $phone = $self->{FS}->overwrite($phone, $v) if $phone =~ /^$k$/;
   }
   $phone;
 }
@@ -2269,12 +2322,12 @@ sub table_sortkey {
   # Although tabulate itself doesn't need this, it's handy if we want to use this
   # as an ordering in other places.
   if (defined $str->{subtables}) {
-    my $subtable = substr($phone, $FS->{feature_index}{$str->{subtables}}, 1);
+    my $subtable = substr($phone, $self->{FS}{feature_index}{$str->{subtables}}, 1);
     return $subtable . $self->table_sortkey($phone, $str->{$subtable});
   }
   
   while (my ($k, $v) = each %{$str->{undef_p}}) {
-    $phone = $FS->overwrite($phone, $v) if $phone =~ /^$k$/;
+    $phone = $self->{FS}->overwrite($phone, $v) if $phone =~ /^$k$/;
   }
   $phone =~ s/u/0/g;
   my $position = join '', map(substr($phone, $str->{order_i}[$_], 1) =~ /[01]/ ? 
@@ -2315,7 +2368,7 @@ sub get_str {
   my ($self, $enriched) = (shift, shift);
   my $str = $self->{classes}{table_structure};
   while (defined $str->{subtables}) {
-    my $subtable = substr($enriched, $FS->{feature_index}{$str->{subtables}}, 1);
+    my $subtable = substr($enriched, $self->{FS}{feature_index}{$str->{subtables}}, 1);
     last if $subtable eq '.';
     $str = $str->{$subtable};
   }
@@ -2325,10 +2378,10 @@ sub get_str {
 # The features of a phone determining what table it's in.
 sub str_part {
   my ($self, $phone) = (shift, shift);
-  my $skeleton = '.' x @{$FS->{features}};
+  my $skeleton = '.' x @{$self->{FS}{features}};
   my $str = $self->{classes}{table_structure};
   while (defined $str->{subtables}) {
-    my $i = $FS->{feature_index}{$str->{subtables}};
+    my $i = $self->{FS}{feature_index}{$str->{subtables}};
     my $subtable = substr($phone, $i, 1);
     last if $subtable eq '.';
     substr($skeleton, $i, 1) = substr($phone, $i, 1);
@@ -2426,8 +2479,8 @@ sub tabulate_label {
     my %dont_spell;
     my $str = $self->{classes}{table_structure};
     while (defined $str->{subtables}) {
-      $dont_spell{$FS->{feature_index}{$str->{subtables}}} = 1;
-      my $subtable = substr($enriched, $FS->{feature_index}{$str->{subtables}}, 1);
+      $dont_spell{$self->{FS}{feature_index}{$str->{subtables}}} = 1;
+      my $subtable = substr($enriched, $self->{FS}{feature_index}{$str->{subtables}}, 1);
       last if $subtable eq '.';
       $str = $str->{$subtable};
     }
@@ -2436,10 +2489,10 @@ sub tabulate_label {
       next if $taken_care_of[$i];
       next if substr($enriched, $i, 1) eq '.';
       next if $dont_spell{$i};
-      next if $args{respect_univalent} and substr($enriched, $i, 1) eq '0' and $FS->{features}[$i]{univalent};
+      next if $args{respect_univalent} and substr($enriched, $i, 1) eq '0' and $self->{FS}{features}[$i]{univalent};
       my $non = '.' x length($enriched); 
       substr($non, $i, 1) = 1 - substr($enriched, $i, 1);
-      my $enriched_non = enrich($FS->overwrite($self->str_part($enriched), $non), $args{non_inventory}); 
+      my $enriched_non = enrich($self->{FS}->overwrite($self->str_part($enriched), $non), $args{non_inventory}); 
       my $non_label = $self->tabulate_label($enriched_non, $p, $pmod, $l, $lmod, %args, 
                                      nons => undef, significant => $non, nobase => 1);
       chop $non_label while $non_label =~ / $/; # for nobase
@@ -2452,7 +2505,7 @@ sub tabulate_label {
         }
         my $ae = '.' x length($enriched);
         substr($ae, $i, 1) = substr($enriched, $i, 1);
-        $ae = $FS->add_entailments($ae);
+        $ae = $self->{FS}->add_entailments($ae);
         for (0..length($enriched)-1) {
           $taken_care_of[$_] = 1 if substr($ae, $_, 1) ne '.';
         }
@@ -2483,6 +2536,7 @@ sub tabulate_label {
 
 sub tabulate {
   my ($self, $pd, %args) = (shift, @_);
+  my $FS = $self->{FS};
   my $str = defined $args{structure} ? $args{structure} : $self->{classes}{table_structure};
   my $condition = defined $args{condition} ? $args{condition} : '.' x @{$FS->{features}};
 
@@ -2738,6 +2792,7 @@ sub English_plural {
 
 sub name_natural_class {
   my ($self, $phone, $inventory, %args) = (shift, shift, @_);
+  my $FS = $self->{FS};
 
   unless ($args{accept_nothing}) {
     return $args{no_nothing} ? '' : ($args{morpho} eq 'plural' ? 'no phones' : 'no phone') 
@@ -2897,6 +2952,7 @@ sub name_natural_class {
 
 sub describe_set {
   my ($self, $orig_phones, $inventory, %args) = (shift, shift, @_);
+  my $FS = $self->{FS};
   my $phones = $orig_phones;
   my $morpho = defined $args{morpho} ? $args{morpho} : 'indef';
   my $extend = defined $args{extend};
@@ -3160,7 +3216,7 @@ sub describe_syllable_structure {
     for my $slot (@{$self->{classes}{syllable_slots}}) {
       my $phone; 
       ($phone, $label) = split /: */, $slot;
-      $phone = '(' . join(')|(', map($FS->parse($_), split(/\|/, $phone))) . ')';
+      $phone = '(' . join(')|(', map($self->{FS}->parse($_), split(/\|/, $phone))) . ')';
       my $mismatch = 0;
       for (@phones) {
         $mismatch = 1 unless /^$phone$/;
@@ -3226,6 +3282,7 @@ sub describe_syllable_structure {
 
 sub describe_rules {
   my ($self, $pd, %args) = (shift, @_);
+  my $FS = $self->{FS};
   my %descriptions;
   my %to_be_numbered;
 
@@ -3980,7 +4037,7 @@ package main;
 
 
 my $outfile;
-my $humane_output;
+my $annotate_output;
 my $infile;
 my $show_inventory;
 my $show_all;
@@ -4030,7 +4087,7 @@ sub parse_args {
     }
     elsif ($arg =~ /^-[oO]$/) {
       $outfile = shift;
-      $humane_output = 1 if $arg eq '-O';
+      $annotate_output = 1 if $arg eq '-O';
       die "$arg expects a filename argument\n" if !defined $outfile;
     }
     elsif ($arg eq '-i') {
@@ -4101,17 +4158,17 @@ else {
 }
 
 die 'feature system not found' unless -f 'features.yml';
-$FS = FeatureSystem::load_file('features.yml');
+my $FS = FeatureSystem::load_file('features.yml');
 
 my $phonetic_alphabet;
 if ($use_html && -f 'IPA_HTML.yml') {
-  $phonetic_alphabet = Transcription::load_file('IPA_HTML.yml')
+  $phonetic_alphabet = Transcription::load_file('IPA_HTML.yml', $FS);
 } elsif (-f 'CXS.yml') {
-  $phonetic_alphabet = Transcription::load_file('CXS.yml')
+  $phonetic_alphabet = Transcription::load_file('CXS.yml', $FS);
 } else {
   die 'no suitable phonetic alphabet found';
 }
-$debug_alphabet = Transcription::load_file('CXS.yml') if -f 'CXS.yml';
+$debug_alphabet = Transcription::load_file('CXS.yml', $FS) if -f 'CXS.yml';
   
 if (defined $phone_to_interpret) {
   $phone_to_interpret = $FS->parse($phone_to_interpret, undefined => 1) unless $phone_to_interpret =~ /^[.01u]*$/;
@@ -4128,24 +4185,13 @@ srand $seed;
 my $pd;
 
 if (defined $infile) {
-  $pd = YAML::Any::LoadFile($infile);
+  $pd = Phonology::load_file($infile, $FS);
 } else {
-  $pd = Phonology::generate;
+  $pd = Phonology::generate($FS);
 }
 
 if (defined $outfile) {
-  if (defined $humane_output) {
-    for my $rule (@{$pd->{phone_generator}}, @{$pd->{phonology}}) {
-      for my $displ (keys %{$rule->{precondition}}) {
-        $rule->{precondition_humane}{$displ} = $FS->feature_string($rule->{precondition}{$displ}, 1);
-      }
-      for my $displ (keys %{$rule->{effects}}) {
-        $rule->{effects_humane}{$displ} = $FS->feature_string($rule->{effects}{$displ}, 1);
-      }
-    }
-    $pd->{phonology}[$_]{number} = $_ for 0..@{$pd->{phonology}}-1;
-  }
-  YAML::Any::DumpFile($outfile, $pd);
+  $pd->dump_file($outfile, $annotate_output);
 }
 
 my $pdes = PhonologyDescriber::new($phonetic_alphabet, YAML::Any::LoadFile('phon_descr.yml'));
