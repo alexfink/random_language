@@ -5,6 +5,8 @@ version: "5.0a"
 
 # one-time coronal palatalisation rule?
 
+# probabilistic strippings??
+
 # plosive phonation neutralisation before obstruents -- sometimes, like finally, to aspirates or glottaliseds. DONE
 # palatalisation, labialisation, velarisation are release-timed so should be losable finally or pre-obstruentally (like that phonation).  DONE
 # retroflexion and apicality most prominent in VC contexts!  they can neutralise initially! DONE
@@ -946,7 +948,7 @@ marked:
   - condition: "-resonant, -syllabic"
     except: {1: "-dorsal -coronal -labial"}
     prob: 0.925
-    extras: {"-resonant 1": 0.966667, "+nasal 0": 0.966667, "-fricative 0": 0.833333, "!+sibilant 0": 0.5, "-nasal 1": 0.25, "coronal -sibilant 0": 0.181818, "# 1": 0.044444} 
+    extras: {"-resonant 1": 0.966667, "+nasal 0": 0.966667, "-fricative 0": 0.833333, "!+sibilant 0": 0.5, "-nasal 1": 0.25, "coronal -sibilant 0": 0.181818, "# 1": 0.014815}
       # nonsibilant coronal closures are less detectable before a C.
     pause_phone: "-dorsal -coronal -labial" 
     resolve: {"r >dorsal >coronal >labial >front >back >round >retroflex >labiodental >anterior >laminal >high >palatalised_velar -affricate 0": 1}
@@ -1012,7 +1014,7 @@ marked:
   # This might be mostly not restricted in position (... huh?)
   - condition: "dorsal +resonant -lateral -tap_or_trill, +fricative -long, dorsal +resonant -lateral -tap_or_trill"
     prob: 0.075
-    extras: {"+voice 1": 0.8, "!+sibilant +anterior 1": 0.25}
+    extras: {"+voice 1": 0.975, "!+sibilant +anterior 1": 0.25}
     resolve: {"r +resonant 1": 1}
 
   # _Homorganic_ resonant spread rules exist; that's a good model for this [ln] > [ll] type behaviour.  But I haven't done it for dorsal, 'cause semivowels are the overwhelmingly dominant resonant there.
@@ -1800,7 +1802,7 @@ marked:
 
   - condition: "+resonant, -long, +resonant" 
     prob: 0.202273
-    extras: {"dorsal -lateral -tap_or_trill 0": 0.7, "dorsal -lateral -tap_or_trill 2": 0.7, "-nasal 1": 0.857143, "+voice 1": 0.925, "-constricted_glottis 1": 0.875, "dorsal 1": 0.125, "# 2": 0.125, "## 2": 0.025, "!+sibilant 1": 0.25, "-prenasalised 1": 0.5}
+    extras: {"dorsal -lateral -tap_or_trill 0": 0.7, "dorsal -lateral -tap_or_trill 2": 0.7, "-nasal 1": 0.857142, "+voice 1": 0.9, "-constricted_glottis 1": 0.875, "dorsal 1": 0.125, "# 2": 0.125, "## 2": 0.025, "!+sibilant 1": 0.25, "-prenasalised 1": 0.5}
     resolve: {"r +fricative 1": 1}
 
   # another rhotacism
@@ -1808,6 +1810,12 @@ marked:
     prob: 0.02
     extras: {"coronal 1": 0.75, "!dorsal 1": 0.8}
     resolve: {"r +tap_or_trill 1": 1}
+
+  # intervocalic tapping
+  - condition: "+resonant, -resonant -long, +resonant"
+    prob: 0.06
+    extras: {"coronal 1": 0.833333, "!dorsal 1": 0.8, "-fricative 1": 0.975, "-affricate 1": 0.75, "+voice 1": 0.875, "dorsal -lateral -tap_or_trill 0": 0.333333, "dorsal -lateral -tap_or_trill 2": 0.333333}
+    resolve: {"r +resonant +tap_or_trill 1": 1}
 
   # trill weakening
   - condition: "+resonant, +trill -syllabic -long, +resonant"
@@ -1988,6 +1996,7 @@ marked:
 
 # msd -- here begin single-phoneme conditions
 
+  # HERE: is this in fact working?
   # Glottals often have nasality passthrough, but they don't go nasal themselves.  Thus this shouldn't be phonemic_only.
   # Split resolution for the product of nasals that go placeless (per Blevins this is often [N], or a nasal glide.)
   - condition: "-dorsal -coronal -labial +nasal"
@@ -2550,11 +2559,11 @@ marked:
     flip:
       labial: 0.03125
 
-  # might clash 2
   - condition: "+laminal +tap_or_trill"
     prob: 0.993333
-    flip:
-      laminal: 23
+    resolve:
+      "free 0": 1
+      "r -laminal -front 0": 23
     related_weight:
       "+front": 0.25
 
@@ -2654,7 +2663,6 @@ marked:
   - condition: "-laminal -anterior -retroflex"
     prob: 0.75
 
-  # might clash 1
   - condition: "-laminal +front" # framed correctly?
     prob: 0.875
     flip:
