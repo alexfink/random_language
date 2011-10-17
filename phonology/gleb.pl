@@ -1378,7 +1378,10 @@ sub generate_new_rule {
     my $rule = PhonologicalRule::generate($tag.$tag_suffix, %args, phonology => $self);
     next unless $rule;
 
-    next if $tag =~ /^stripping /;
+    if ($tag =~ /^stripping /) {
+      push @$phonology, $rule;
+      next;
+    }
 
     for (@{$rule->{inactivate}}) {
       $phonology->[$_]{inactive} = scalar @$phonology unless defined $phonology->[$_]{inactive}
