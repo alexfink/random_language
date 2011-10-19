@@ -175,8 +175,8 @@ sub run {
     for my $displ (keys %{$rule->{effects}}) {
       next if ($i + $displ < 0 or $i + $displ >= @$word);
       my $effects = $rule->{effects}{$displ};
-      if (defined $args{rand_value}) {
-        $effects =~ y/01/10/ if $args{rand_value};
+      if (defined $args{alternate_effects}) {
+        $effects = $rule->{alternate_effects}{$displ} if $args{alternate_effects};
       }
       
       # Handle the assimilation characters. 

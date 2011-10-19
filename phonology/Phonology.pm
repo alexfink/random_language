@@ -512,7 +512,8 @@ sub generate_preliminary {
         $precondition = $FS->overwrite($precondition, $requires) if defined $f->{requires};
         my %rule = (
           precondition => {0 => $precondition},
-          effects => {0 => $FS->parse($f->{name})}, # er, rework this
+          effects => {0 => $FS->parse($f->{name})},
+          alternate_effects => {0 => $FS->parse('-' . $f->{name})},
           prob => [map fuzz($sit->{prob}), @syllable_structure],
           FS => $FS,
         );
@@ -716,7 +717,7 @@ sub generate_preliminary {
   $self;
 }
 
-# vectors, whee.
+# vectors, whee.  Class method.
 sub add_in {
   my ($inventory, $x, $v) = @_;
   return unless grep $_, @$v;
@@ -736,8 +737,7 @@ sub compute_inventory {
   my ($syllable_structure, $phone_generator, $phonology, $which_preconditions) = 
       @$self{qw/syllable_structure phone_generator phonology which_preconditions/};
   # This is a hash from phones to lists of probabilities in the various syllable positions.  
-  # We use these for generation and to calculate the entropy.  However, we don't take any interactions
-  # between phones into account for these numbers, so they're kind of crude.
+  # We use these for generation and to calculate the single-phone entropy.  
   my %inventory;
 
   for my $i (0..@$syllable_structure-1) {
@@ -748,17 +748,17 @@ sub compute_inventory {
     }
   }
 
-  # TODO: Revise this if ever pre-sequences resolvent rules can cause breakings or whatever.
+  # TODO: Revise this if ever resolvent rules before start_sequences can cause breakings or whatever.
   for my $rule (@$phone_generator) {
     my %inventory2;
     for my $phone (keys %inventory) {
     my @v = @{$inventory{$phone}};
       my @word;
       @word = ($phone);
-      $rule->run(\@word, rand_value => 0);
+      $rule->run(\@word, alternate_effects => 0);
       add_in \%inventory2, $word[0], [map $v[$_] * $rule->{prob}[$_], 0..@v-1];
       @word = ($phone); 
-      $rule->run(\@word, rand_value => 1);
+      $rule->run(\@word, alternate_effects => 1);
       add_in \%inventory2, $word[0], [map $v[$_] * (1 - $rule->{prob}[$_]), 0..@v-1];
     }
     %inventory = %inventory2;
