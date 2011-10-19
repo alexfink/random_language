@@ -2,6 +2,10 @@ package Phonology;
 use strict;
 use constant INF => 9**9**9; # is there really nothing sensible better?
 
+our $debug_alphabet; # used for printing phones for debugging only
+our $verbose = 0;
+our $debug = 0;
+
 # Go from a prototypical prob to an actual one.  Now twice as gentle!
 sub fuzz {
   my $p = shift;
@@ -189,7 +193,7 @@ sub run {
   my @loop_rules;
   my @loop_cessions;
   my %ceders;
-  print STDERR "@$word (initially)\n" if $main::debug >= 1;
+  print STDERR "@$word (initially)\n" if $debug >= 1;
   for my $k ($start..$end-1) {
     my %agenda = ($k => 1);
     my $iterations = 0;
@@ -208,7 +212,7 @@ sub run {
           if (keys %{$phonology->[$i]{precondition}} > 1) { # an optimization.  helpful?
             1 while $phonology->[$i]->run($word, %args);
           }
-          print STDERR "@$word (after $i)\n" if $main::debug >= 1;
+          print STDERR "@$word (after $i)\n" if $debug >= 1;
 
           @changes = @{$args{change_record}} if ($first_time and defined $args{change_record});
           $first_time = undef;
@@ -401,14 +405,14 @@ sub generate_new_rule {
 # to retcon some extra history.  But that seems hard.
 
 sub generate {
-  print STDERR "generating phonology...\n" if $main::verbose;
+  print STDERR "generating phonology...\n" if $verbose;
   my $pd = Phonology::generate_preliminary(shift);
   $pd->annotate_with_preconditions();
-  print STDERR "computing inventory...\n" if $main::verbose;
+  print STDERR "computing inventory...\n" if $verbose;
   $pd->compute_inventory(); # base inventory for generation
-  $pd->postprocess_inventory();
+  $pd->postprocess();
   delete $pd->{phone_generator}; # now this is needless
-  if ($main::debug < 1) {
+  if ($debug < 1) {
     $pd->trim_inactive(); 
   } else {
     print STDERR "pruning of inactive rules skipped\n";
@@ -694,7 +698,7 @@ sub generate_preliminary {
 
   for my $tag (@rule_tags) {
     if ($tag eq '#') {
-      print STDERR "on to allophony...\n" if $main::verbose;
+      print STDERR "on to allophony...\n" if $verbose;
       $self->{start_sequences} = @phonology; # end of rules that pertain only to individual segments
       next;
     } 
@@ -775,10 +779,10 @@ sub compute_inventory {
 
   for my $phone (keys %inventory) {
     my @word = ($phone);
-    print STDERR "in:  $phone\n" if $main::debug >= 1; 
+    print STDERR "in:  $phone\n" if $debug >= 1; 
     $self->run(\@word, end => $self->{start_sequences});
     my $outcome = join(' ', @word);
-    print STDERR "out: $outcome /" . (@word ? $main::debug_alphabet->name_phone($word[0]) : '') . "/\n" if $main::debug >= 1;
+    print STDERR "out: $outcome /" . (@word ? $debug_alphabet->name_phone($word[0]) : '') . "/\n" if $debug >= 1;
     $resolver{$phone} = $outcome;
     add_in \%prinv, $outcome, $inventory{$phone};
   }
@@ -827,8 +831,11 @@ sub bend_frequencies {
 }
 
 # Make some tweaks to the inventory of the sort that're problematic to do in initial generation.
+# Prominent among these are the forcing of the phoneme frequencies in the main slots not to have
+# certain phonemes anomalously common. 
+
 # There is some icky duplication in here.
-sub postprocess_inventory {
+sub postprocess {
   my $self = shift;
 
   for (my $i = $#{$self->{syllable_structure}}; $i >= 0; --$i) {
@@ -938,7 +945,7 @@ sub canonicalise_phonemic_form {
   my @sources = 0..@$word-1;
   
   for my $k ($self->{start_sequences}..@{$self->{phonology}}-1) {
-#    print "before $k /" . $main::debug_alphabet->spell(\@canonical_word) . "/ [" . $main::debug_alphabet->spell(\@current_word) . "]\n"; # debug
+#    print "before $k /" . $debug_alphabet->spell(\@canonical_word) . "/ [" . $debug_alphabet->spell(\@current_word) . "]\n"; # debug
     my @old_sources = @sources;
     my @old_word = @current_word;
     my (@prov_canonical_word, @prov_current_word);
@@ -947,7 +954,7 @@ sub canonicalise_phonemic_form {
                start => $k,
                end => $k+1,
              sources => \@sources);
-#    print "target [" . $main::debug_alphabet->spell(\@current_word) . "]\n"; # debug
+#    print "target [" . $debug_alphabet->spell(\@current_word) . "]\n"; # debug
     
     { # block for redo
       $changed = 0;
@@ -992,7 +999,7 @@ sub canonicalise_phonemic_form {
           substr($prov_canonical_word[$sources[$i]], $_, 1) = substr($current_word[$i], $_, 1) 
               for @prov_varied_features;
           if (defined $self->{gen_inventory}{$prov_canonical_word[$sources[$i]]}) {
-#          print "trying out " . $main::debug_alphabet->name_phone($prov_canonical_word[$sources[$i]]) . " at $i\n"; # debug
+#          print "trying out " . $debug_alphabet->name_phone($prov_canonical_word[$sources[$i]]) . " at $i\n"; # debug
             @prov_current_word = @prov_canonical_word;
             $self->run(\@prov_current_word, 
                        start => $self->{start_sequences},

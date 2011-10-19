@@ -45,10 +45,7 @@ my $credits = 'Gleb, a phonology generator, by Alex Fink' .
               (' ' x (29 - length($version))) . # for a total length of 78
               "version $version";
 
-my $debug_alphabet; # used for printing phones for debugging only
 my $verbose;
-my $debug = 0;
-my $debug2 = 0; # for the use of tracking things down with temporary diagnostic prints.  will leave for now
 my $use_html;
 my $CGI;
 my $seed =  time ^ $$ ^ $$<<15; 
@@ -98,7 +95,7 @@ sub parse_args {
   my $arg;
   while ($arg = shift) {
     if ($arg eq '-D') {
-      $debug++;
+      $Phonology::debug++;
     }
     elsif ($arg eq '-r') {
       $seed = shift;
@@ -120,7 +117,7 @@ sub parse_args {
       $show_inventory = $show_all = 1;
     }
     elsif ($arg eq '-v') {
-      $verbose = 1;
+      $verbose = $Phonology::verbose = 1;
     }
     elsif ($arg eq '-w') {
       $num_words = shift;
@@ -187,7 +184,7 @@ if ($use_html && -f 'IPA_HTML.yml') {
 } else {
   die 'no suitable phonetic alphabet found';
 }
-$debug_alphabet = Transcription::load_file('CXS.yml', $FS) if -f 'CXS.yml';
+$Phonology::debug_alphabet = Transcription::load_file('CXS.yml', $FS) if -f 'CXS.yml';
   
 if (defined $phone_to_interpret) {
   $phone_to_interpret = $FS->parse($phone_to_interpret, undefined => 1) unless $phone_to_interpret =~ /^[.01u]*$/;
