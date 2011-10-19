@@ -1006,12 +1006,13 @@ marked:
 
   # Collapse of grave places before a coronal.
   - condition: "-resonant, coronal -resonant"
-    except: {0: "!-dorsal -labial"}
-    prob: 0.027778
+    except: {0: "-dorsal -labial"}
+    prob: 0.037037
     extras: {"+fricative 0": 0.5}
     resolve: {"r dorsal -labial 0": 1, "r -dorsal labial 0": 1}
 
-  # This might be mostly not restricted in position (... huh?)
+  # other rules against certain place combinations?
+
   - condition: "dorsal +resonant -lateral -tap_or_trill, +fricative -long, dorsal +resonant -lateral -tap_or_trill"
     prob: 0.075
     extras: {"+voice 1": 0.975, "!+sibilant +anterior 1": 0.25}
@@ -1800,9 +1801,9 @@ marked:
     extras: {"-labial 0": 0.166667, "-coronal -labial 1": 0.125, "-voice 0": 0.9375, "-fricative 0": 0.333333, "-voice 1": 0.75}
     resolve: {"r -resonant +fricative dorsal +back 1": 1}
 
-  - condition: "+resonant, -long, +resonant" 
+  - condition: "+resonant, -long -resonant, +resonant" 
     prob: 0.202273
-    extras: {"dorsal -lateral -tap_or_trill 0": 0.7, "dorsal -lateral -tap_or_trill 2": 0.7, "-nasal 1": 0.857142, "+voice 1": 0.9, "-constricted_glottis 1": 0.875, "dorsal 1": 0.125, "# 2": 0.125, "## 2": 0.025, "!+sibilant 1": 0.25, "-prenasalised 1": 0.5}
+    extras: {"dorsal -lateral -tap_or_trill 0": 0.7, "dorsal -lateral -tap_or_trill 2": 0.7, "-nasal 1": 0.875, "+voice 1": 0.875, "-constricted_glottis 1": 0.875, "dorsal 1": 0.125, "# 2": 0.125, "## 2": 0.025, "!+sibilant 1": 0.25, "-prenasalised 1": 0.5}
     resolve: {"r +fricative 1": 1}
 
   # another rhotacism
@@ -2565,7 +2566,7 @@ marked:
       "free 0": 1
       "r -laminal -front 0": 23
     related_weight:
-      "+front": 0.25
+      "+front": 0 # against loops
 
   # a gap that seems to come up.  perhaps implied enough by the laminality stuff?
   # check the resolutions of this; [r_j] type things delete more than I think is right
