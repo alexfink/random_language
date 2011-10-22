@@ -560,6 +560,11 @@ relations:
     to: "dorsal"
     weight: 0.666667
 
+  # even straight [s] > [x] is not unheard of
+  - from: "coronal +fricative"
+    to: "dorsal"
+    weight: 0.083333
+
   - from: "dorsal +nasal -resonant"
     to: "coronal"
     weight: 2
@@ -792,8 +797,6 @@ relations:
     to: "+round -labial"
     weight: 0.666667
 
-  # Does [S] > [x] need its own thing, or is that always via like [s`]?
-
   - from: "+pharyngealised"
     to: "-ATR"
     weight: 0.4
@@ -991,7 +994,7 @@ marked:
   # velar coarticulate formation
   - condition: "-resonant, -syllabic"
     except: {0: "-coronal -labial", 1: "-dorsal -coronal -labial"}
-    prob: 0.125 # larger than its counterpart 'cause labvel > lab more
+    prob: 0.1875 # larger than its counterpart 'cause labvel > lab more
     extras: {"labial 0": 0.5, "-resonant 1": 0.125, "# 1": 0.333333}
     pause_phone: "-dorsal" 
     resolve: {"r >dorsal >front >back >high >palatalised_velar 0": 1}
@@ -999,7 +1002,7 @@ marked:
   # labial coarticulate formation
   - condition: "-resonant, -syllabic"
     except: {0: "-dorsal -coronal", 1: "-dorsal -coronal -labial"}
-    prob: 0.0625
+    prob: 0.09375
     extras: {"dorsal 0": 0.5, "-resonant 1": 0.125, "# 1": 0.333333}
     pause_phone: "-labial" 
     resolve: {"r >labial >labiodental 0": 1}
@@ -1011,12 +1014,16 @@ marked:
     extras: {"+fricative 0": 0.5}
     resolve: {"r dorsal -labial 0": 1, "r -dorsal labial 0": 1}
 
-  # other rules against certain place combinations?
-
   - condition: "dorsal +resonant -lateral -tap_or_trill, +fricative -long, dorsal +resonant -lateral -tap_or_trill"
     prob: 0.075
     extras: {"+voice 1": 0.975, "!+sibilant +anterior 1": 0.25}
     resolve: {"r +resonant 1": 1}
+
+  # to tie labial fricatives to labialisation more
+  - condition: "-resonant, labial -resonant"
+    prob: 0.055556
+    extras: {"-nasal 0": 0.666667, "-labial 0": 0.95, "+fricative 1": 0.875, "!-fricative -nasal 1": 0.6}
+    resolve: {"r dorsal +resonant +back +round 1": 1}
 
   # _Homorganic_ resonant spread rules exist; that's a good model for this [ln] > [ll] type behaviour.  But I haven't done it for dorsal, 'cause semivowels are the overwhelmingly dominant resonant there.
   # The "+voice" extra here is a little weird given that unvoiced resonants do exist...
@@ -1122,12 +1129,26 @@ marked:
     extras: {"-syllabic 0": 0.95, "-resonant 0": 0.375, "-nasal 0": 0.875, "+nasal 0": 0.142857, "-resonant -nasal 1": 0.6, "-nasal 1": 0.333333, "+resonant 1": 0.666667, "-spread_glottis 1": 0.5, "-constricted_glottis 1": 0.5} # +resonant is high because -resonant -nasal will usually knock it out
     resolve: {"r {voice 1": 1}
 
-  # For resonants, the main thing is that we shouldn't knock out all 
-  # sequences like [l_0a], so nonsyllabic only.
-  # TODO: what we really want is 
-  # voice assimilation of all C _if_ voice is contrastive on resonants.
-  # Ditto the analogue for nasals.
-  # (This is also perhaps a place for sonorant unification.)
+  # Much frequenter voice assimilation of all C _if_ voice is contrastive on resonants.
+  - condition: "-syllabic, "
+    except: {1: "+resonant"}
+    prob: 0.005
+    contrast_probs:
+      "+resonant +voice, +resonant -voice": 0.95
+      # nasals too...  that's usually generated but destroyed though
+    extras: {"-syllabic 1": 0.95, "-resonant 1": 0.375, "# 1": 0.4}
+    pause_phone: "-voice"
+    resolve: {"r }voice 0": 1}
+
+  - condition: ", -syllabic"
+    except: {0: "+resonant"}
+    prob: 0.001667
+    contrast_probs:
+      "+resonant +voice, +resonant -voice": 0.95
+      # nasals too, as above
+    extras: {"-syllabic 0": 0.95, "-resonant 0": 0.375, "# 0": 0.05}
+    pause_phone: "-voice"
+    resolve: {"r {voice 1": 1}
 
   # next sequential voicings, which can include vowels
   - condition: "+voice, -voice -long, +voice" 
@@ -1472,18 +1493,33 @@ marked:
     extras: {"-resonant 1": 0.5}
     resolve: {"r }front 0": 1}
 
-  # compare front -> nonback especially here.
-  # TODO: these should only be allowed if there is a robust
-  # palatality contrast, especially the backing of front vowels
-  # which is essentially unconditional without such.
-  - condition: "-syllabic, dorsal +resonant -lateral -tap_or_trill"
+  # The next two only do fronting.
+  # The following two do both but only apply if there's a 
+  # C palatality contrast; our tests for that are to exclude the glides.
+  - condition: "-syllabic +front, dorsal +resonant -lateral -tap_or_trill"
     prob: 0.2
-    extras: {"+front 0": 0.9875, "-back 1": 0.8}
+    extras: {"-back 1": 0.8}
+    resolve: {"r +front 1": 1}
+
+  - condition: "dorsal +resonant -lateral -tap_or_trill, -syllabic +front"
+    prob: 0.2
+    extras: {"-back 0": 0.8}
+    resolve: {"r +front 0": 1}
+
+  - condition: "-syllabic, dorsal +resonant -lateral -tap_or_trill"
+    prob: 0
+    contrast_probs:
+      "-syllabic -dorsal -front, -syllabic -dorsal +front": 0.2
+      "-syllabic -resonant -front, -syllabic -resonant +front": 0.05
+    extras: {"-back 1": 0.8}
     resolve: {"r {front 1": 1}
 
   - condition: "dorsal +resonant -lateral -tap_or_trill, -syllabic"
-    prob: 0.2
-    extras: {"+front 1": 0.9875, "-back 0": 0.8}
+    prob: 0
+    contrast_probs:
+      "-syllabic -dorsal -front, -syllabic -dorsal +front": 0.2
+      "-syllabic -resonant -front, -syllabic -resonant +front": 0.05
+    extras: {"-back 0": 0.8}
     resolve: {"r }front 0": 1}
 
   - condition: "dorsal +resonant -lateral -tap_or_trill, -syllabic dorsal +resonant -lateral -tap_or_trill"
@@ -1885,7 +1921,7 @@ marked:
     resolve: {"r -back 0": 1}
 
   - condition: "-syllabic, coronal -retroflex"
-    prob: 0.025
+    prob: 0.04
     extras: {"!dorsal +resonant -lateral -tap_or_trill 1": 0.6, "-anterior 1": 0.5}
     resolve: {"r -back 0": 1}
 
@@ -2333,6 +2369,13 @@ marked:
       implosive: 0.1
     related_weight:
       "-dorsal -coronal -labial": 0
+
+  # creaky and uncreaky implosives shouldn't contrast.
+  - condition: "+implosive +voice -constricted_glottis"
+    prob: 0
+    contrast_probs:
+      "-constricted_glottis, +constricted_glottis": 0.95
+    resolve: {"r +constricted_glottis 0": 1}
 
   # impossible radicals.  first the nothing-at-all consonant.
   # we'd like it if like the [j w] rules can tend to come before this.

@@ -9,16 +9,12 @@
 # Short-term plan for features:
 # - Our new general sequence rules yield a framework for general constraints against sequences 
 #   (e.g. trapped resonant, /tl/, increasing sonority sequences in V_V, ...)
-# - Presence of certain contrasts influencing chances of certain assimilations.
-#   (I'm thinking of resonant voice assimilation, and V frontness assim to C.)
-#   (also markednesses?  e.g. /b_< b_<_k/ shd be collapsed, and often /v\ w/.
-#    can kluge that with a change in one direction though)
 # - Implement some of the assimilations we already have code support for.
 # - Do something to get rid of syllable structures where the coda can have two resonants 
 #   but never an obstruent (3327079296 presently).
 # - Do something so that [?_j] goes to [j_k] more, even though it's constrained against?
 # - Coronals shouldn't front vowels, nor labials round them, etc., unless more obvious sources do too.
-# - We can simplify ``a phone or word-initially''.
+# _ Improve loop detection?
 # > 0.3.1.  
 # - For surface filters that redistribute a phoneme, we need rules which
 #   bar running of earlier persistent rules after first passing them in applying sound changes.

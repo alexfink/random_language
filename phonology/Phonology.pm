@@ -44,7 +44,7 @@ sub dump_file {
     delete $rule->{FS};
   }
   if ($annotate) {
-    for my $rule (@{$pd->{phone_generator}}, @{$pd->{phonology}}) {
+    for my $rule (@{$pd->{phonology}}) {
       for my $displ (keys %{$rule->{precondition}}) {
         $rule->{precondition_humane}{$displ} = $FS->feature_string($rule->{precondition}{$displ}, 1);
       }
@@ -261,6 +261,37 @@ sub run {
     $_ = $self->{FS}->add_entailments($_) for @$word;
   }
   $args{track_expiry}[0] = $track_expiry if defined $track_expiry;
+}
+
+
+
+# Is there a generated contrast between phones matching $phone0 and $phone1?
+sub generatedly_contrast {
+  my ($self, $phone0, $phone1) = (shift, shift, shift);
+  
+  # If the contrast isn't in just one feature, default to false for now.
+  my $f = -1;
+  for(my $i = 0; $i < scalar @{$self->{FS}{features}}; ++$i) {
+    if (substr($phone0, $i, 1) ne substr($phone1, $i, 1)) {
+      if ($f == -1) {
+        $f = $i;
+      } else {
+        warn "can't test for a contrast on generation";
+        return 0;
+      }
+    }
+  }
+  return 1 if ($f == -1);
+
+  my $base_phone = $phone0;
+  substr($base_phone, $f, 1) = '.';
+  $base_phone = $self->{FS}->add_requirements($base_phone);
+  for my $rule (@{$self->{phone_generator}}) {
+    if (substr($rule->{precondition}{0}, $f, 1) eq 'u') { # safer, because of antitheticals
+      return 1 if $self->{FS}->compatible($base_phone, $rule->{precondition}{0});
+    }
+  }
+  return 0;
 }
 
 # Generates a new rule with tag $tag, and appends it to the phonology, 

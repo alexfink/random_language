@@ -490,8 +490,17 @@ sub generate {
     $threshold = $FS->{features}[$k]{default}[$rest]{value};
   } elsif ($kind eq 'repair') {
     $threshold = $FS->{marked}[$k]{prob};
-  } elsif ($kind eq 'assimilation') {
-    $threshold = $FS->{assimilations}[$k]{prob};
+    if (defined $FS->{marked}[$k]{contrast_probs}) {
+      while (my ($cp, $prob) = each %{$FS->{marked}[$k]{contrast_probs}}) {
+        my ($phone0, $phone1) = split /, */, $cp;
+        $phone0 = $FS->parse($phone0);
+        $phone1 = $FS->parse($phone1);
+        if ($args{initial} and $args{phonology}->generatedly_contrast($phone0, $phone1)) {
+          $threshold = $prob;
+          last;
+        }
+      }
+    }
   }
 
   my $initial_threshold = $threshold; # e.g. for things which are more unlikely than marked, in a way that feature choice can't handle
@@ -500,7 +509,7 @@ sub generate {
   }
 
   my $skip_me = 0;
-  if (!$args{dont_skip} and ($kind eq 'repair' or $kind eq 'assimilation')) {
+  if (!$args{dont_skip} and ($kind eq 'repair')) {
     $skip_me = (rand() > $initial_threshold);
   }
   my $add_a_condition = 0;
@@ -571,13 +580,8 @@ sub generate {
     return bless $rule;
   } 
   
-  elsif ($kind =~ /^assimilation/ or $kind =~ /^repair/) { # TESTING
-    my $unsplit_d;
-    if ($kind =~ /^assimilation/) {
-      $unsplit_d = $FS->{assimilations}[$k];
-    } elsif ($kind =~ /^repair/) {
-      $unsplit_d = $FS->{marked}[$k];
-    }
+  elsif ($kind =~ /^repair/) { # TESTING
+    my $unsplit_d = $FS->{marked}[$k];
     my $d;
     if ($kind =~ /_split$/) {
       $d = $unsplit_d->{split}[$rest];
