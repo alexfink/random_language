@@ -107,13 +107,15 @@ sub annotate_with_preconditions {
       }
     }
 
-    # Again, except never contains undefined features.
+    # Again for excepts.
     for my $displ (keys %{$rule->{except}}) {
       my @exceptions = split / /, $rule->{except}{$displ};
       for my $phone (@exceptions) {
         for my $j (0..@{$FS->{features}}) {
-          push @{$which{1-substr($rule->{except}{$displ}, $j, 1)}[$j]}, $i
-            if substr($rule->{except}{$displ}, $j, 1) =~ /[01]/;
+          if (substr($rule->{except}{$displ}, $j, 1) =~ /[01]/) {
+            push @{$which{1-substr($rule->{except}{$displ}, $j, 1)}[$j]}, $i;
+            push @{$which{'u'}[$j]}, $i;
+          }
         }
       }
     }

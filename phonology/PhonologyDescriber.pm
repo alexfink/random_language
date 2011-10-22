@@ -1042,6 +1042,7 @@ sub describe_rules {
   my %sortkey = map(($_ => $self->table_sortkey($_, $self->{classes}{table_structure})), @inventory);
 
   RULE: for my $i ($args{start}..$args{end}-1) {
+    printf STDERR "describing rule $i\n" if $Phonology::debug;
     my $rule = $pd->{phonology}[$i];
 
     # For now, assume there's only one change.  
