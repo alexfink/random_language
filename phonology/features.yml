@@ -6,22 +6,7 @@ version: "5.0a"
 # one-time coronal palatalisation rule?
 
 # probabilistic strippings??
-
-# plosive phonation neutralisation before obstruents -- sometimes, like finally, to aspirates or glottaliseds. DONE
-# palatalisation, labialisation, velarisation are release-timed so should be losable finally or pre-obstruentally (like that phonation).  DONE
-# retroflexion and apicality most prominent in VC contexts!  they can neutralise initially! DONE
-# collect all the flat: velarised, pharyngealised, labialised, retroflex.  for instance, is [tu] > [t_wu] > [t`u] in yet? DONE
-# Blevins knows of no cases of V-coloring-C coarticulatory effects in pharyngealiseation (DONE), creaky or breathy (DONE), or rhoticity (really?)
-
-# no reason not to do deletions via gestural hiding now (like [ktm] > [km]): I suspect this mostly applies to stops between obstruent and obstruent-or-nasal, sometimes to only dentals.  DONE
-# nasals going placeless before fricatives, or resonants. DONE
-# "trills or flaps have been shown to _lower_ a preceding vowel".  DONE Similarly, when coda rhotics > glides, they should also be predisposed to go to a low one.  How to achieve this?  Perhaps put back [r] > [R]; rather, make tapping of postalveolar approximants not a thing.
-# pre-nasal raising DONE
-# affricate simplification in clusters?  also other cluster weakenings &c.
-# dorsal ~ labial exchange before coronals DONE
-
-# Coronal to velar after high vowels is attested.  (How to make this perseverate over NC clusters?  A tier??)  Also make sure [t] <> [k] by previous vowel frontness is in.
-# velar frication near low. ???DONE I forget.
+# Coronals shouldn't front vowels, nor labials round them, etc., unless more obvious sources do too.
 
 # fricatives and unvoiced resonants sometimes becoming _aspirated_ stops
 
@@ -58,6 +43,7 @@ syllable_template:
     presence: 0.125
     features: "-syllabic +resonant dorsal -nasal -lateral -tap_or_trill"
     reprune: 0.833333
+    lump: -1
 
   - tag: vowel
     prob: 1
@@ -70,6 +56,7 @@ syllable_template:
     presence: 0.142857
     features: "-syllabic +resonant dorsal -nasal -lateral -tap_or_trill"
     reprune: 0.833333
+    lump: 1
 
   - tag: glottal
     prob: 0.033333
@@ -82,6 +69,7 @@ syllable_template:
     features: "-syllabic +resonant 1 -syllabic +nasal -resonant 1" # this is an or
     except: 
       "-dorsal -coronal -labial": 0.958333
+    lump: 1
 
   - tag: coda
     prob: 0.714286
@@ -867,21 +855,21 @@ relations:
 
   # Long vowels have a tendency to rise.  In four movements.
   # TODO: these probably shouldn't be relations as much as wandering-frequencies, when we get there.  Also [3:] > [a:] shd be favoured.
-  - from: "+long +low +front"
-    to: "-low"
-    weight: 1
-
-  - from: "+long +low +back"
-    to: "-low"
-    weight: 1
-
-  - from: "+long -low -high"
-    to: "+high"
-    weight: 1
-
-  - from: "+long -low -ATR"
-    to: "+ATR"
-    weight: 1
+#  - from: "+long +low +front"
+#    to: "-low"
+#    weight: 1
+#
+#  - from: "+long +low +back"
+#    to: "-low"
+#    weight: 1
+#
+#  - from: "+long -low -high"
+#    to: "+high"
+#    weight: 1
+#
+#  - from: "+long -low -ATR"
+#    to: "+ATR"
+#    weight: 1
 
   - from: "+syllabic -long"
     to: "-ATR"
@@ -893,8 +881,6 @@ relations:
   - from: "+low +syllabic" # hope that's not trouble...
     to: "+long"
     weight: 0.125
-
-  # TODO: preceding a nasal can raise vowels
 
   # TODO: one should include influence of phonation on height and ATRness (and frontness??).  Creaky lowers, breathy raises, for formant reasons.  This is found in Khmer.  See Thurgood.  For ATR, Wikipedia says something.  (What's the southern Spanish [e a] > [E &] before an [s] > [h] then?)
 
@@ -963,7 +949,7 @@ marked:
   # Blust 1979: in fact, coronal+non-coronal clusters are more likely to assimilate, or metathesise the coronal before Resonants, than others.  But sibilants are the other way; these are distinctive, and so they metathesise into less salient positions: KsR > sKR, sK(#,O) > Ks(#,O), where K is an obstruent (Steriade 2001).  From Hayes-Kirchner-Steriade [pk] > [kp] is also there. 
   # I've also seen [sk] > [st] I think more or less unconditioned; is sibilancy strong enough to do this sometimes?
   # What about funny [p] <> [k] before [t]?  What's the auditory basis?  Does it have structural prerequisites?
-  # and a form of place dissimilation, [tl] > [kl]
+  # and a form of place dissimilation, [tl] > [kl] vel sim
   # TODO: [t] > [ts)] before stops is also a strategy, but it belongs thematically with stop+stop > fric+stop.
 
   # a repeat, for extra weight of [t] assimilating before things where other stops don't
@@ -1126,7 +1112,7 @@ marked:
   - condition: ", -syllabic"
     except: {0: "+resonant"}
     prob: 0.555556
-    extras: {"-syllabic 0": 0.95, "-resonant 0": 0.375, "-nasal 0": 0.875, "+nasal 0": 0.142857, "-resonant -nasal 1": 0.6, "-nasal 1": 0.333333, "+resonant 1": 0.666667, "-spread_glottis 1": 0.5, "-constricted_glottis 1": 0.5} # +resonant is high because -resonant -nasal will usually knock it out
+    extras: {"-syllabic 0": 0.95, "-resonant 0": 0.375, "-nasal 0": 0.875, "+nasal 0": 0.142857, "-resonant -nasal 1": 0.6, "-nasal 1": 0.333333, "+resonant 1": 0.666667, "-spread_glottis 1": 0.5, "-constricted_glottis 1": 0.5, "# 0": 0.005} # +resonant is high because -resonant -nasal will usually knock it out
     resolve: {"r {voice 1": 1}
 
   # Much frequenter voice assimilation of all C _if_ voice is contrastive on resonants.
@@ -1146,7 +1132,7 @@ marked:
     contrast_probs:
       "+resonant +voice, +resonant -voice": 0.95
       # nasals too, as above
-    extras: {"-syllabic 0": 0.95, "-resonant 0": 0.375, "# 0": 0.05}
+    extras: {"-syllabic 0": 0.95, "-resonant 0": 0.375, "# 0": 0.02}
     pause_phone: "-voice"
     resolve: {"r {voice 1": 1}
 
@@ -2049,7 +2035,7 @@ marked:
 
   # Nearly always, coloured radicals can be resurrected, always to resonants.
   # Deleting [j] and [w], then, is best done by _actual_ deletion.
-  # This used to not work, but honestly, now, I have no idea.
+  # However, colored realisable radicals [? h] etc are likelier to stay.
   #
   # Ultimately, what happens when a coarticulated C falls should depend
   # on dissimilation-type factors; the coarticulation should not be left
@@ -2057,6 +2043,7 @@ marked:
 
   - condition: "-dorsal -coronal -labial +front"
     prob: 0.925
+    extras: {"-constricted_glottis -spread_glottis 0": 0.666667}
     flip:
       dorsal: 4
       front: 0.01
@@ -2064,6 +2051,7 @@ marked:
 
   - condition: "-dorsal -coronal -labial +round"
     prob: 0.925
+    extras: {"-constricted_glottis -spread_glottis 0": 0.666667}
     flip:
       dorsal: 4
       round: 0.01
@@ -2438,9 +2426,6 @@ marked:
       "": 0
 
   # Voiced phonation rules.  
-
-  # TODO: uniformise the phonation assimilations (above) so that
-  # sonorants can behave uniformly.  ... done?
 
   - condition: "-syllabic +voice +constricted_glottis"
     except: {0: "+implosive"}
@@ -3016,8 +3001,10 @@ marked:
 
 # For syllabic Cs, perhaps we should really just generate deleting the vowel in suitable circumstances.
 
-# Broader problem: there's no real accommodation for marked situations other than spelling out particular resolutions: eg. *sonority increase across a syllable; *tl.  Though maybe Blevins would still give me some idea.
+# things: *sonority increase across a syllable; *tl.
 # Glottal stops in word-extremal position across an obstruent sorts of things also seem dispreferred.
 # resonant+glide seems to like to metathesise, though sometimes glide fortition.
-# How do we handle sonority decrease being preferred across syllable break?
+
+# Coronal to velar after high vowels is attested.  (How to make this perseverate over NC clusters?  A tier??)  Also make sure [t] <> [k] by previous vowel frontness is in.
+# velar frication near low. ???DONE I forget.
 

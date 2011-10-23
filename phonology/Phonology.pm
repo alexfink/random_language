@@ -490,6 +490,7 @@ sub generate_preliminary {
         tag => $slot->{tag},
       };
       $rslot->{bend} = $slot->{bend} if defined $slot->{bend};
+      $rslot->{lump} = $slot->{lump} if defined $slot->{lump};
       $rslot->{reprune} = 1 if defined $slot->{reprune} and rand() < $slot->{reprune};
       if (defined $slot->{except}) {
         while (my ($k, $v) = each %{$slot->{except}}) {
@@ -919,6 +920,41 @@ sub postprocess {
     }
   }
 
+  # Second pass, for some adjacency things sensitive to it.
+  for (my $i = $#{$self->{syllable_structure}}; $i >= 0; --$i) {
+    # Check for lumping together of syllable positions.  
+    # We lump if this position contains at least as much as the one it's next to, or roughly so.
+    # If lump = -1, compare to the previous; if lump = +1, to the next.
+    if (defined $self->{syllable_structure}[$i]{lump}) {
+      my $j = $i + $self->{syllable_structure}[$i]{lump};
+      my $unique_to_j = 0;
+      for my $phone (keys %{$self->{gen_inventory}}) {
+        $unique_to_j += $self->{gen_inventory}{$phone}[$j] if $self->{gen_inventory}{$phone}[$i] <= 0;
+      }
+      $unique_to_j /= (1 - ($self->{gen_inventory}{''}[$j] + 2.2250738585072014e-308)); # smallest float
+
+      # do we proceed with lumping?
+      if (rand() < 1 - 2*$unique_to_j) { # magic function
+        my $i0 = $self->{gen_inventory}{''}[$i];
+        my $j0 = $self->{gen_inventory}{''}[$j];
+        my $d = $i0 + $j0 - $i0 * $j0;
+        for my $phone (keys %{$self->{gen_inventory}}) {
+          if ($phone ne '') {
+            $self->{gen_inventory}{$phone}[$j] = 
+                ($self->{gen_inventory}{$phone}[$j] * $i0 + $self->{gen_inventory}{$phone}[$i] * $j0) / $d;
+          } else {
+            $self->{gen_inventory}{$phone}[$j] = $i0 * $j0 / $d;
+          }
+        }
+
+        for my $phone (keys %{$self->{gen_inventory}}) {
+          splice @{$self->{gen_inventory}{$phone}}, $i, 1;
+        }
+        splice @{$self->{syllable_structure}}, $i, 1;
+      } # proceed with lumping
+    }   
+  }
+
   # Now that we're done playing with it, record entropies in bits on the syllable structure.  
   for my $i (0..@{$self->{syllable_structure}}-1) {
     my $entropy = 0;
@@ -937,7 +973,6 @@ sub generate_form {
   my $entropy = $normal * $target_entropy; 
 
   # Form generation was once done by rules with probabilistic effects.  But that is long obsolete.
-  # TODO: remove this.  (It's marked OBSOLETE: above.)  I think {antieffects} is eliminable too.
   
   my @form;
   # The form of this loop will very much be changing when we start asking for

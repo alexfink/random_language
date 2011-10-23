@@ -6,23 +6,7 @@
 # and Marcus and UPSID for being proximal sources for various numbers.
 # (A greater proportion of the numbers are wholly fabricated, though!)
 
-# Short-term plan for features:
-# - Our new general sequence rules yield a framework for general constraints against sequences 
-#   (e.g. trapped resonant, /tl/, increasing sonority sequences in V_V, ...)
-# - Implement some of the assimilations we already have code support for.
-# - Do something to get rid of syllable structures where the coda can have two resonants 
-#   but never an obstruent (3327079296 presently).
-# - Do something so that [?_j] goes to [j_k] more, even though it's constrained against?
-# - Coronals shouldn't front vowels, nor labials round them, etc., unless more obvious sources do too.
-# _ Improve loop detection?
-# > 0.3.1.  
-# - For surface filters that redistribute a phoneme, we need rules which
-#   bar running of earlier persistent rules after first passing them in applying sound changes.
-#   This way, the second always runs immediately after the first.
-#   Other than this, these clusters of rules need no unusual properties
-#   (e.g. they can be pushed back normally.)
-#
-#   After that, should we privilege 
+# What next?  Should we privilege 
 # (a) advanced inventory tracking, with the bigram transition matrix stuff; or
 # (b) new phonology?  (long-distance rules; syllable tracking > moraic stuff)
 
@@ -36,7 +20,7 @@ use Phonology;
 use Transcription;
 use PhonologyDescriber;
 
-my $version = '0.3.0b';
+my $version = '0.3.1';
 my $credits = 'Gleb, a phonology generator, by Alex Fink' . 
               (' ' x (29 - length($version))) . # for a total length of 78
               "version $version";
