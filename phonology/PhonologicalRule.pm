@@ -1,13 +1,47 @@
 package PhonologicalRule;
 use strict;
 
-# Each rule is a hash.  In the simplest case, it has hashes of _preconditions_
-# and of _effects_, each of them on a phoneme specified by an index relative
-# to this one.  
-# Other things there can be:
-# _Deletions_ happen after effects.  Deletions should be a list of indices in decreasing order.
+# Each rule is a hash.  In the simplest case, it has hashes that
+# contain hashes with keys including {condition} and {effects},
+# giving the before and after of the rule in this position.
+# The top-level keys are relative indices into the word, and these are always integers
+# starting from 0 and sequentially increasing.  (So e.g. $rule->{0}{condition} exists.)
+#
+# Hashes with keys {condition} and {except} are used elsewhere to specify phone classes too.
+#
+# Other kinds of effects include {deletions}.
+
+# Dump this rule without the feature system.
+sub debug_dump {
+  my $self = shift;
+  my $a = { %$self };
+  delete $a->{FS};
+  YAML::Any::Dump($a);
+}
+
+# Return the indices for this rule.  If passed an argument, return the indices that have that datum.
+sub indices {
+  my $self = shift;
+  if (@_) {
+    return grep((/^[0-9]*$/ and defined $self->{$_}{$_[0]}), keys %$self);
+  } else {
+    return grep /^[0-9]*$/, keys %$self;
+  }
+}
+
+# Make a copy of this rule which deeply copies the indexed parts.
+sub deep_copy_indexed {
+  my $self = shift;
+  my $a = { %$self };
+  bless $a;
+  for my $i (grep /^[0-9]*$/, keys %$self) {
+    $a->{$i} = { %{$self->{$i}} };
+  }
+  $a;
+}
 
 # Choose randomly from a hash giving weight distribution.  (Not called everywhere it might be, yet.)
+# Class method.
 sub weighted_one_of {
   my $sum = 0; 
   $sum += $_[2*$_+1] for 0..@_/2-1;
@@ -22,23 +56,24 @@ sub weighted_one_of {
 
 # Memoise a rule for the computations performed in feeds(!).
 # These things can be totally stripped out once the phonology is finalised. 
-
 sub feed_annotate {
   my $rule = shift;
   my $FS = $rule->{FS};
-  for my $displ (keys %{$rule->{precondition}}) {
-    $rule->{precondition_ar}{$displ} = $FS->add_requirements($rule->{precondition}{$displ});
-    if (defined $rule->{effects}{$displ}) {
-      $rule->{outcome}{$displ} = $FS->overwrite($FS->add_requirements($rule->{precondition}{$displ}), $rule->{effects}{$displ});
-      $rule->{outcome}{$displ} =~ s/[<>]/./g;
+  for my $displ ($rule->indices('condition')) {
+    $rule->{$displ}{condition_ar} = $FS->add_requirements($rule->{$displ}{condition});
+    if (defined $rule->{$displ}{effects}) {
+      $rule->{$displ}{outcome} = $FS->overwrite($FS->add_requirements($rule->{$displ}{condition}), $rule->{$displ}{effects});
+      $rule->{$displ}{outcome} =~ s/[<>]/./g;
     }
   }
 }
 
 sub strip_feed_annotation {
   my $rule = shift;
-  delete $rule->{precondition_ar};
-  delete $rule->{outcome};
+  for my $i ($rule->indices()) {
+    delete $rule->{$i}{condition_ar};
+    delete $rule->{$i}{outcome};
+  }
 }
 
 # Given two rules ri, rj, can the execution of ri cause rj to be applicable
@@ -72,46 +107,46 @@ sub feeds {
   # Sequence-type rationales overrule ramification (1).
   # TODO: update this as we get new rule types
   # an insertion means we have to look at everything (whereas a fission might be okay with less); etc.
-  return 1 if defined $ri->{deletions} and 
-      (keys %{$rj->{precondition}} > 1 or defined $rj->{or_pause});
+  return 1 if scalar $ri->indices('deletions') and 
+      (scalar $ri->indices('condition') > 1) or scalar $ri->indices('or_pause');
 
   # ramification (1)
   #return 0 if (defined $ri->{priority} ? $ri->{priority} : 0) >
   #            (defined $rj->{priority} ? $rj->{priority} : 0); 
 
-  for my $i_displ (keys %{$ri->{effects}}) {
-    for my $j_displ (keys %{$rj->{precondition}}) {
+  for my $i_displ ($ri->indices('effects')) {
+    for my $j_displ ($rj->indices('condition')) {
       # ramification (2)
       #return 1 if (defined $ri->{priority} ? $ri->{priority} : 0) <
       #            (defined $rj->{priority} ? $rj->{priority} : 0) and
-      #            defined $rj->{effects}{$j_displ} and
-      #            !$FS->compatible($ri->{effects}{$i_displ}, $rj->{effects}{$j_displ});
+      #            defined $rj->{$j_displ}{effects} and
+      #            !$FS->compatible($ri->{$i_displ}{effects}, $rj->{$j_displ}{effects});
       # ramification (3)
       #for my $str (@{$FS->{strippings}}) {
-      #  return 1 if $FS->compatible($ri->{precondition}{$i_displ}, $str->{condition_parsed}) and
-      #             !$FS->compatible($ri->{effects}{$i_displ}, $str->{condition_parsed}); 
+      #  return 1 if $FS->compatible($ri->{$i_displ}{condition}, $str->{condition_parsed}) and
+      #             !$FS->compatible($ri->{$i_displ}{effects}, $str->{condition_parsed}); 
       #}
       
-      # this is costly enough that it's slightly worth putting it in here.
-      $ri->feed_annotate() if !defined $ri->{precondition_ar};
-      $rj->feed_annotate() if !defined $rj->{precondition_ar};
-      next if !$FS->compatible($ri->{outcome}{$i_displ}, $rj->{precondition_ar}{$j_displ});
+      # this is costly enough that it's slightly worth putting it in here.  klugily, assume index 0 has a condition
+      $ri->feed_annotate() if !defined $ri->{0}{condition_ar};
+      $rj->feed_annotate() if !defined $rj->{0}{condition_ar};
+      next if !$FS->compatible($ri->{$i_displ}{outcome}, $rj->{$j_displ}{condition_ar});
 
       # The wrinkle-free cases.
       # We might have rules which unnecessarily set features identically
       # to their precondition (antithetical, I'm thinking of you); this can't feed, of course.
       # Either-value assimilation characters can always feed.
       for my $f (0..@{$FS->{features}}-1) {
-        if (substr($ri->{effects}{$i_displ}, $f, 1) =~ /[<>]/ and
-            substr($rj->{precondition}{$j_displ}, $f, 1) ne '.') {
+        if (substr($ri->{$i_displ}{effects}, $f, 1) =~ /[<>]/ and
+            substr($rj->{$j_displ}{condition}, $f, 1) ne '.') {
           return 1 unless defined $args{pairs};
           push @{$args{pairs}}, [$i_displ, $j_displ];
         }
-        if (substr($ri->{effects}{$i_displ}, $f, 1) eq 
-              substr($rj->{precondition}{$j_displ}, $f, 1) and
-            substr($ri->{effects}{$i_displ}, $f, 1) ne 
-              substr($ri->{precondition}{$i_displ}, $f, 1) and 
-            substr($ri->{effects}{$i_displ}, $f, 1) ne '.') {
+        if (substr($ri->{$i_displ}{effects}, $f, 1) eq 
+              substr($rj->{$j_displ}{condition}, $f, 1) and
+            substr($ri->{$i_displ}{effects}, $f, 1) ne 
+              substr($ri->{$i_displ}{condition}, $f, 1) and 
+            substr($ri->{$i_displ}{effects}, $f, 1) ne '.') {
           return 1 unless defined $args{pairs};
           push @{$args{pairs}}, [$i_displ, $j_displ];
         }
@@ -136,7 +171,7 @@ sub conflicts_with {
   for my $dij (@pij) {
     for my $dji (@pji) {
       next unless $dij->[0] eq $dji->[1] and $dij->[1] eq $dji->[0];
-      return 1 if !$FS->compatible($ri->{effects}{$dji->[1]}, $rj->{effects}{$dij->[1]});
+      return 1 if !$FS->compatible($ri->{$dji->[1]}{effects}, $rj->{$dij->[1]}{effects});
     }
   }
   return 0;
@@ -150,39 +185,51 @@ sub conflicts_with {
 # "d" -- a segment was deleted
 
 sub run {
-  my ($rule, $word, %args) = (shift, shift, @_);
+  my ($rule, $unfiltered_word, %args) = (shift, shift, @_);
   my $changed = 0;
   my $syllable_position = defined $args{syllable_position} ? $args{syllable_position} : 0;
-  
-  # start at -1 for assimilations to word-initial pause
-  PHONE: for (my $i = -1; $i < @$word; $i++) {
-    for my $displ (keys %{$rule->{precondition}}) {
-      next if !$args{nopause} and defined $rule->{or_pause} and defined $rule->{or_pause}{$displ} and 
+
+  my $word;
+  my (@inverse_filter, %surviving);
+  if (defined $rule->{filter}) {
+    # TODO: these invocations of {filter} will become matching by the filter objects.
+    @inverse_filter = grep $unfiltered_word->[$_] =~ /^$rule->{filter}$/, 0..@$unfiltered_word-1;
+    $word = [grep /^$rule->{filter}$/, @$unfiltered_word];
+    %surviving = map ($_ => 1), 0..@$word-1;
+  } else {
+    $word = $unfiltered_word;
+  }
+
+  # iterate in the direction specified
+  my @displs = -1..@$word-1;   # start at -1 for assimilations to word-initial pause;
+      # may want to be larger if rules can have non-canonical indices
+  @displs = reverse @displs if (defined $rule->{direction} and $rule->{direction} < 0);
+  PHONE: for my $i (@displs) {
+    for my $displ ($rule->indices('condition')) {
+      next if !$args{nopause} and defined $rule->{$displ}{or_pause} and 
               ($i + $displ < 0 or $i + $displ >= @$word);
       next PHONE if ($i + $displ < 0 or $i + $displ >= @$word);
-      next PHONE if $word->[$i+$displ] !~ /^$rule->{precondition}{$displ}$/;
+      next PHONE if $word->[$i+$displ] !~ /^$rule->{$displ}{condition}$/;
     }
-    if (defined $rule->{except}) {
-      for my $displ (keys %{$rule->{except}}) {
-        next if ($i + $displ < 0 or $i + $displ >= @$word);
-        my @exceptions = split / /, $rule->{except}{$displ};
-        for (@exceptions) {
-          next PHONE if $word->[$i+$displ] =~ /^$_$/;
-        }
+    for my $displ ($rule->indices('except')) {
+      next if ($i + $displ < 0 or $i + $displ >= @$word);
+      my @exceptions = split / /, $rule->{$displ}{except};
+      for (@exceptions) {
+        next PHONE if $word->[$i+$displ] =~ /^$_$/;
       }
     }
 
-    for my $displ (keys %{$rule->{effects}}) {
+    for my $displ ($rule->indices('effects')) {
       next if ($i + $displ < 0 or $i + $displ >= @$word);
-      my $effects = $rule->{effects}{$displ};
+      my $effects = $rule->{$displ}{effects};
       if (defined $args{alternate_effects}) {
-        $effects = $rule->{alternate_effects}{$displ} if $args{alternate_effects};
+        $effects = $rule->{$displ}{alternate_effects} if $args{alternate_effects};
       }
       
       # Handle the assimilation characters. 
       if ($effects =~ /[<>]/) {
         my ($next_before, $next_after) = (undef, undef);
-        for (keys %{$rule->{precondition}}) { # TODO: use the actual offsets when distance rules exist
+        for ($rule->indices('condition')) { # TODO: use the actual offsets when distance rules exist
           $next_before = $_ if (!defined $next_before or $next_before < $_) and $_ < $displ;
           $next_after = $_ if (!defined $next_after or $next_after > $_) and $_ > $displ;
         }
@@ -209,16 +256,37 @@ sub run {
       $word->[$i+$displ] = $newphone;
     }
     
-    if (defined $rule->{deletions}) {
+    if (scalar $rule->indices('deletions')) {
       $changed = 1;
       push @{$args{changes}}, 'd' if defined $args{changes};
-      splice @$word, $i+$_, 1 for @{$rule->{deletions}};
-      if (defined $args{sources}) {
-        splice @{$args{sources}}, $i+$_, 1 for @{$rule->{deletions}};
+      # Note that deletions are always sorted decreasing!
+      splice @$word, $i+$_, 1 for sort {$b <=> $a} $rule->indices('deletions');
+      if (defined $rule->{filter}) {
+        delete $surviving{$i+$_} for sort {$b <=> $a} $rule->indices('deletions');
+      } else {
+        # can only do this if it's not a subword
+        if (defined $args{sources}) {
+          splice @{$args{sources}}, $i+$_, 1 for sort {$b <=> $a} $rule->indices('deletions');
+        }
       }
-      $i -= @{$rule->{deletions}};
+      $i -= scalar $rule->indices('deletions');
     }
   } 
+
+  # CURRENT: making this testable.
+  if (defined $rule->{filter}) {
+    my $j = 0;
+    for my $i (0..$#inverse_filter) {
+      if ($surviving{$i}) {
+        $unfiltered_word->[$inverse_filter[$i]] = $word->[$j++];
+      } else {
+        splice @$unfiltered_word, $inverse_filter[$i], 1;
+        if (defined $args{sources}) {
+          splice @{$args{sources}}, $inverse_filter[$i], 1;
+        }
+      }
+    } # i
+  }
   
   $changed;
 }
@@ -244,11 +312,12 @@ sub persistence_variants {
       # in the phonology generation.  By way of cutting down, only check rules
       # which set something the opposite of this rule.
       my @potential_conflicts;
-      for my $displ (keys %{$rule->{effects}}) {
+      bless $rule; # kluge, but whatever
+      for my $displ ($rule->indices('effects')) {
         for my $i (0..@{$pd->{FS}{features}}-1) {
-          push @potential_conflicts, @{$generable_val->[1-substr($rule->{effects}{$displ}, $i, 1)][$i]}
-              if substr($rule->{effects}{$displ}, $i, 1) =~ /[01]/
-              and defined($generable_val->[1-substr($rule->{effects}{$displ}, $i, 1)][$i]);
+          push @potential_conflicts, @{$generable_val->[1-substr($rule->{$displ}{effects}, $i, 1)][$i]}
+              if substr($rule->{$displ}{effects}, $i, 1) =~ /[01]/
+              and defined($generable_val->[1-substr($rule->{$displ}{effects}, $i, 1)][$i]);
         }
       }
       my %pch = map(($_ => 1), @potential_conflicts);
@@ -256,11 +325,11 @@ sub persistence_variants {
       for my $j (@potential_conflicts) {
         next if defined $phonology->[$j]{inactive} and $phonology->[$j]{inactive} < @$phonology;
         if ($rule->conflicts_with($phonology->[$j])) {
-#              print "$reqd > $effects and\n$jreqd > $phonology->[$j]{effects}{$displ} [$j] clash\n"; # debug
+#              print "$reqd > $effects and\n$jreqd > $phonology->[$j]{$displ}{effects} [$j] clash\n"; # debug
           push @{$rule->{inactivate}}, $j;
           # this is an ugly kluge, but few rules have more than one effect
           if (defined $phonology->[$j]{tag}) {
-            my $evitands = join '|', values %{$phonology->[$j]{effects}};
+            my $evitands = join '|', map($phonology->[$j]{$_}{effects}, $phonology->[$j]->indices('effects'));
             push @{$rule->{broken_tags}}, $phonology->[$j]{tag} . ' ' . $evitands;
           }
           $loopbreak_penalty *= $phonology->[$j]{recastability} if defined $phonology->[$j]{recastability};
@@ -284,28 +353,26 @@ sub gen_extra_condition {
   my (%resolution_keys, %resolutions);
   my $global_res_count = 0;
 
-  for my $locus (keys %{$self->{or_pause}}) {
+  for my $locus ($self->indices('or_pause')) {
     # Restriction to word-extremal, and away from it.
-    my %rule1 = %$self;
-    $rule1{precondition} = { %{$self->{precondition}} }; # deep copy this part
-    substr($rule1{precondition}{$locus}, 0, 1) = 'x';
+    my $rule1 = $self->deep_copy_indexed();
+    substr($rule1->{$locus}{condition}, 0, 1) = 'x';
     $resolution_keys{$global_res_count} = 0.5; # magic weight
-    $resolutions{$global_res_count++} = \%rule1;
+    $resolutions{$global_res_count++} = $rule1;
     
-    my %rule2 = %$self;
-    $rule2{or_pause} = { %{$self->{or_pause}} }; # deep copy this part
-    delete $rule2{or_pause}{$locus};
+    my $rule2 = $self->deep_copy_indexed();
+    delete $rule2->{$locus}{or_pause};
     $resolution_keys{$global_res_count} = 0.5; # magic weight
-    $resolutions{$global_res_count++} = \%rule2;
+    $resolutions{$global_res_count++} = $rule2;
   }
 
-  for my $locus (keys %{$self->{effects}}) {
-    my $effect = $self->{effects}{$locus};
+  for my $locus ($self->indices('effects')) {
+    my $effect = $self->{$locus}{effects};
 
     # Conditions of the same family as the effects (which we don't have stored in a special structure).
     %_ = map(($_ => 1), map split(/ /, $FS->{features}[$_]{families}), 
         grep substr($effect, $_, 1) ne '.', 0..length($effect)-1);
-    my @families = grep $FS->compatible($FS->parse($FS->{families}{$_}), $self->{precondition}{$locus}),
+    my @families = grep $FS->compatible($FS->parse($FS->{families}{$_}), $self->{$locus}{condition}),
         grep $_, keys %_;
     my @family_features = grep {
       my $i = $_;
@@ -315,34 +382,32 @@ sub gen_extra_condition {
         0..length($effect)-1);
     # TODO: handle this when there's no generable_val.  also, a more uniform way of dropping ungenerables for the later types
     for my $f (@family_features) {
-      next if substr($self->{precondition}{$locus}, $f, 1) ne '.';
+      next if substr($self->{$locus}{condition}, $f, 1) ne '.';
       for my $v (0..1) {
         next if $v == 0 and $FS->{features}[$f]{univalent};
-        my %rule1 = %$self;
-        $rule1{precondition} = { %{$self->{precondition}} }; # deep copy this part
-        substr($rule1{precondition}{$locus}, $f, 1) = $v;
+        my $rule1 = $self->deep_copy_indexed();
+        substr($rule1->{$locus}{condition}, $f, 1) = $v;
         $resolution_keys{$global_res_count} = $FS->{features}[$f]{univalent} ? 1.0 : 0.5; # magic factor
           # equiprobable on features, aot on their values
-        $resolutions{$global_res_count++} = \%rule1;
+        $resolutions{$global_res_count++} = $rule1;
       }
     }
     
     # Conditions related to the outcome.
-    my $outcome = $FS->overwrite($self->{precondition}{$locus}, $effect);
+    my $outcome = $FS->overwrite($self->{$locus}{condition}, $effect);
     $outcome =~ s/[<>]/./;
     for my $rel (@{$FS->{relations}}) {
       next if $rel->{spread_only};
       $_ = $FS->parse($rel->{to});
       next unless $outcome =~ /^$_$/;
       
-      my %rule1 = %$self;
-      $rule1{precondition} = { %{$self->{precondition}} }; # deep copy this part
+      my $rule1 = $self->deep_copy_indexed();
       my $extra = $FS->parse($rel->{from});
-      next unless $FS->compatible($rule1{precondition}{$locus}, $extra);
-      $rule1{precondition}{$locus} = $FS->overwrite($rule1{precondition}{$locus}, $extra);
-      next if $rule1{precondition}{$locus} == $self->{precondition}{$locus};
+      next unless $FS->compatible($rule1->{$locus}{condition}, $extra);
+      $rule1->{$locus}{condition} = $FS->overwrite($rule1->{$locus}{condition}, $extra);
+      next if $rule1->{$locus}{condition} == $self->{$locus}{condition};
       $resolution_keys{$global_res_count} = $rel->{weight}; # magic factor
-      $resolutions{$global_res_count++} = \%rule1;
+      $resolutions{$global_res_count++} = $rule1;
     }
 
     # Conditions to which the outcome is a (possibly related) assimilation.
@@ -356,31 +421,29 @@ sub gen_extra_condition {
           my @condition = map $FS->parse($_), split /, */, $d->{condition}, -1;
           next unless $outcome =~ /^$condition[$d->{target}]$/;
 
-          my %rule1 = %$self;
-          $rule1{precondition} = { %{$self->{precondition}} }; # deep copy this part
-          $rule1{or_pause} = { %{$self->{or_pause}} }; # deep copy this part
+          my $rule1 = $self->deep_copy_indexed();
           for my $displ (0..$#condition) {
             my $l = $locus + $displ - $d->{target};
-            if (!defined $rule1{precondition}{$l}) {
+            if (!defined $rule1->{$l}{condition}) {
               $_ = $FS->parse($FS->{generic_pause_phone});
-              $rule1{or_pause}{$l} = 1 if $_ =~ /^$condition[$displ]$/;
-              $rule1{precondition}{$l} = '.' x length($effect);
+              $rule1->{$l}{or_pause} = 1 if $_ =~ /^$condition[$displ]$/;
+              $rule1->{$l}{condition} = '.' x length($effect);
             }
-            next EF_ASSIM unless $FS->compatible($rule1{precondition}{$l}, $condition[$displ]);
-            $rule1{precondition}{$l} = $FS->overwrite($rule1{precondition}{$l}, $condition[$displ]);
+            next EF_ASSIM unless $FS->compatible($rule1->{$l}{condition}, $condition[$displ]);
+            $rule1->{$l}{condition} = $FS->overwrite($rule1->{$l}{condition}, $condition[$displ]);
           }
           $_ = '.'  x length($effect);
-          substr($_, $f, 1) = substr($rule1{precondition}{$locus}, $f, 1); 
-          next unless $FS->compatible(substr($rule1{precondition}{$locus + 1 - 2*$d->{target}}, $f, 1), $_);
-          substr($rule1{precondition}{$locus + 1 - 2*$d->{target}}, $f, 1) =
-              $FS->overwrite(substr($rule1{precondition}{$locus + 1 - 2*$d->{target}}, $f, 1), $_); # impose the actual assimilation
+          substr($_, $f, 1) = substr($rule1->{$locus}{condition}, $f, 1); 
+          next unless $FS->compatible(substr($rule1->{$locus + 1 - 2*$d->{target}{condition}}, $f, 1), $_);
+          substr($rule1->{$locus + 1 - 2*$d->{target}{condition}}, $f, 1) =
+              $FS->overwrite(substr($rule1->{$locus + 1 - 2*$d->{target}{condition}}, $f, 1), $_); # impose the actual assimilation
           
           $resolution_keys{$global_res_count} = ($d->{prob} >= 1/24.0 ? 1/24.0 : $d->{prob}) * 48; # magic factor
-          $resolutions{$global_res_count++} = \%rule1;
+          $resolutions{$global_res_count++} = $rule1;
         }
       }
 
-      # pretty duplicative
+      # pretty duplicative :/
       for my $r (@{$FS->{relations}}) {
         $_ = $FS->parse($r->{to});
         next if $effect !~ /^$_$/;
@@ -389,26 +452,24 @@ sub gen_extra_condition {
           my @condition = map $FS->parse($_), split /, */, $d->{condition}, -1;
           next unless $outcome =~ /^$condition[$d->{target}]$/;
 
-          my %rule1 = %$self;
-          $rule1{precondition} = { %{$self->{precondition}} }; # deep copy this part
-          $rule1{or_pause} = { %{$self->{or_pause}} }; # deep copy this part
+          my $rule1 = $self->deep_copy_indexed();
           for my $displ (0..$#condition) {
             my $l = $locus + $displ - $d->{target};
-            if (!defined $rule1{precondition}{$l}) {
+            if (!defined $rule1->{$l}->{condition}) {
               $_ = $FS->parse($FS->{generic_pause_phone});
-              $rule1{or_pause}{$l} = 1 if $_ =~ /^$condition[$displ]$/;
-              $rule1{precondition}{$l} = '.' x length($effect);
+              $rule1->{$l}{or_pause} = 1 if $_ =~ /^$condition[$displ]$/;
+              $rule1->{$l}{condition} = '.' x length($effect);
             }
-            next EF_ASSIMR unless $FS->compatible($rule1{precondition}{$l}, $condition[$displ]);
-            $rule1{precondition}{$l} = $FS->overwrite($rule1{precondition}{$l}, $condition[$displ]);
+            next EF_ASSIMR unless $FS->compatible($rule1->{$l}{condition}, $condition[$displ]);
+            $rule1->{$l}{condition} = $FS->overwrite($rule1->{$l}{condition}, $condition[$displ]);
           }
           $_ = $FS->parse($r->{from});
-          next unless $FS->compatible($rule1{precondition}{$locus + 1 - 2*$d->{target}}, $_);
-          $rule1{precondition}{$locus + 1 - 2*$d->{target}} = 
-              $FS->overwrite($rule1{precondition}{$locus + 1 - 2*$d->{target}}, $_); # impose the actual assimilation
+          next unless $FS->compatible($rule1->{$locus + 1 - 2*$d->{target}{condition}}, $_);
+          $rule1->{$locus + 1 - 2*$d->{target}{condition}} = 
+              $FS->overwrite($rule1->{$locus + 1 - 2*$d->{target}{condition}}, $_); # impose the actual assimilation
           
           $resolution_keys{$global_res_count} = ($d->{prob} >= 1/24.0 ? 1/24.0 : $d->{prob}) * 48; # magic factor
-          $resolutions{$global_res_count++} = \%rule1;
+          $resolutions{$global_res_count++} = $rule1;
         }
       }
     }
@@ -416,27 +477,25 @@ sub gen_extra_condition {
     # Conditions that avoid a marked situation changed by a previous rule.
     for my $old_rule (@{$args{phonology}{phonology}}) {
       next if defined $old_rule->{inactive};
-      next if keys %{$old_rule->{precondition}} >= 2 and $args{bar_sequences};
-      for my $old_locus (keys %{$old_rule->{effects}}) {
-        my $old_precondition = $old_rule->{precondition}{$old_locus};
+      next if scalar $old_rule->indices('condition') >= 2 and $args{bar_sequences};
+      for my $old_locus ($old_rule->indices('effects')) {
+        my $old_precondition = $old_rule->{$old_locus}{condition};
         next if $old_precondition =~ /u/;
         next unless $FS->compatible($old_precondition, $outcome);
-        my $old_effect = $old_rule->{effects}{$old_locus};
+        my $old_effect = $old_rule->{$old_locus}{effects};
         # We take a rule to avoid markedness if its effect 
         # is incompatible with its precondition.
         for (0..length($old_effect)-1) {
-          substr($old_effect, $_, 1) = substr($old_rule->{effects}{$old_locus+1}, $_, 1)
+          substr($old_effect, $_, 1) = substr($old_rule->{$old_locus+1}{effects}, $_, 1)
             if substr($old_effect, $_, 1) eq '>';
-          substr($old_effect, $_, 1) = substr($old_rule->{effects}{$old_locus-1}, $_, 1)
+          substr($old_effect, $_, 1) = substr($old_rule->{$old_locus-1}{effects}, $_, 1)
             if substr($old_effect, $_, 1) eq '<';
         }
         next if $FS->compatible($old_effect, $old_precondition);
 
         # We let how good this thing is as a condition to avoid depend on how many features have to be added.  
         # (We just perform this subtraction on the old precondition, direcly.)
-        my %rule1 = %$self;
-        $rule1{precondition} = { %{$self->{precondition}} }; # deep copy this part
-        $rule1{except} = { %{$self->{except}} } if defined $self->{except}; # deep copy this part
+        my $rule1 = $self->deep_copy_indexed();
 
         my $num_convergences = scalar grep substr($old_precondition, $_, 1) ne '.', 0..length($old_precondition)-1;
         for (0..length($old_precondition)-1) {
@@ -446,17 +505,17 @@ sub gen_extra_condition {
         my $num_divergences = scalar grep substr($old_precondition, $_, 1) ne '.', 0..length($old_precondition)-1;
         $num_convergences -= $num_divergences; # num_convergences is for magic weights
         if ($num_divergences <= 0) {
-          substr($rule1{precondition}{$locus}, 0, 1) = 'x'; # nothing is left to match!
+          substr($rule1->{$locus}{condition}, 0, 1) = 'x'; # nothing is left to match!
         } elsif ($num_divergences <= 1) {
           $old_precondition =~ y/01/10/;
-          $rule1{precondition}{$locus} = $FS->overwrite($rule1{precondition}{$locus}, $old_precondition);
+          $rule1->{$locus}{condition} = $FS->overwrite($rule1->{$locus}{condition}, $old_precondition);
         } else {
-          $rule1{except}{$locus} .= ' ' if defined $rule1{except}{$locus};
-          $rule1{except}{$locus} .= $old_precondition;
+          $rule1->{$locus}{except} .= ' ' if defined $rule1->{$locus}{except};
+          $rule1->{$locus}{except} .= $old_precondition;
         }
         $resolution_keys{$global_res_count} = 
             $num_convergences / ($num_divergences * ($num_divergences - 1) / 2 + 1); # much magic :/
-        $resolutions{$global_res_count++} = \%rule1;
+        $resolutions{$global_res_count++} = $rule1;
       }
     }
   } # locus
@@ -466,6 +525,15 @@ sub gen_extra_condition {
     my $i = weighted_one_of(%resolution_keys);
     return $resolutions{$i};
   }
+}
+
+# TODO: (proximal)   - Extract the conditions description, as below.  
+# - Reorganise rules to contain an ordered structure of hashes {condition => ..., except => ...}, etc.
+#   (Then this structure has the hope of becoming a "something phones may match" object.)
+# - Since that breaks save compatibility,  while at it, 
+#   we may as well change the name 'precondition' to 'condition'.
+
+sub parse_conditions_description {
 }
 
 # To expand a rule tag:
@@ -534,15 +602,14 @@ sub generate {
       my $weight = $_ ? $FS->{features}[$k]{default}[$rest]{value} :
                     1 - $FS->{features}[$k]{default}[$rest]{value};
       my $rule = {
-        precondition => {0 => $precondition},
-        effects => {0 => $effects},
+        0 => {condition => $precondition, effects => $effects},
         recastability => 1 - $weight,
       };
       # Default-provision rules shouldn't run where a stripping exists.  
       # This could be made more general later.
       for (@{$FS->{strippings}}) {
         if ($_->{strip} =~ /(^| )$FS->{features}[$k]{name}( |$)/) {
-          $rule->{except} = {0 => $FS->parse($_->{condition})};
+          $rule->{0}{except} = $FS->parse($_->{condition});
           last;
         }
       }
@@ -559,8 +626,7 @@ sub generate {
       my $s = $FS->{strippings}[$k]{substitute}[$rest];
       $s =~ /^(.*) *: *(.*)$/;
       my $rule = {
-        precondition => {0 => $FS->overwrite($precondition, $FS->parse($1))},
-        effects => {0 => $FS->parse($2)},
+        0 => {condition => $FS->overwrite($precondition, $FS->parse($1)), effects => $FS->parse($2)},
         recastability => 0,
         FS => $FS,
       };
@@ -570,8 +636,7 @@ sub generate {
     my $effects = $FS->parse($FS->{strippings}[$k]{strip});
     $effects =~ s/1/u/g;
     my $rule = {
-      precondition => {0 => $precondition},
-      effects => {0 => $effects},
+      0 => {condition => $precondition, effects => $effects},
       recastability => 0,
       priority => $FS->{strippings}[$k]{priority},
       tag => $tag,
@@ -580,7 +645,7 @@ sub generate {
     return bless $rule;
   } 
   
-  elsif ($kind =~ /^repair/) { # TESTING
+  elsif ($kind =~ /^repair/) {
     my $unsplit_d = $FS->{marked}[$k];
     my $d;
     if ($kind =~ /_split$/) {
@@ -603,23 +668,23 @@ sub generate {
     my @phones = map $FS->parse($_), split /, */, $d->{condition}, -1;
     $phones[$_] = $FS->overwrite($unsplit_phones[$_], $phones[$_]) for 0..$#phones;
     my %base_rule = (
-      precondition => {map(($_ => $phones[$_]), 0..$#phones)},
       recastability => 1 - $d->{prob},
       tag => $tag,
       cede => 1 - $threshold,
     ); 
+    $base_rule{$_} = {condition => $phones[$_]} for 0..$#phones;
 
     if (defined $d->{except}) {
       my %except = %{$d->{except}};
       for my $displ (keys %except) {
         $except{$displ} = join ' ', map $FS->parse($_), split /, */, $d->{except}{$displ};
       }
-      $base_rule{except} = {%except};
+      $base_rule{$_}{except} = $except{$_} for keys %except;
     }
     if ($kind =~ /_split$/ and defined $unsplit_d->{except}) {
       for my $displ (keys %{$unsplit_d->{except}}) {
-        $base_rule{except}{$displ} .= ' ' if defined $base_rule{except}{$displ};
-        $base_rule{except}{$displ} .= join ' ', map $FS->parse($_), split /, */, $unsplit_d->{except}{$displ};
+        $base_rule{$displ}{except} .= ' ' if defined $base_rule{$displ}{except};
+        $base_rule{$displ}{except} .= join ' ', map $FS->parse($_), split /, */, $unsplit_d->{except}{$displ};
       }
     }
 
@@ -636,20 +701,25 @@ sub generate {
         $e =~ /^(.*) ([^ ]*)$/;
         my ($e0, $e1) = ($1, $2);
         if ($e0 eq '##') { # ad hoc notation for _only_ at extremum of word
-          $base_rule{or_pause}{$e1} = 1;
+          $base_rule{$e1}{or_pause} = 1;
           $base_rule{pause_phone} = $pause_phone;
-          substr($base_rule{precondition}{$e1}, 0, 1) = 'x'; # ad hoc match prevention
+          substr($base_rule{$e1}{condition}, 0, 1) = 'x'; # ad hoc match prevention
         } elsif ($e0 eq '#') { # end of word _allowed_
-          $base_rule{or_pause}{$e1} = 1;
+          $base_rule{$e1}{or_pause} = 1;
           $base_rule{pause_phone} = $pause_phone;
         } elsif ($e0 =~ /^!/) {
-          $base_rule{except}{$e1} .= ' ' if defined $base_rule{except}{$e1};
-          $base_rule{except}{$e1} .= $FS->parse(substr($e0,1));
+          $base_rule{$e1}{except} .= ' ' if defined $base_rule{$e1}{except};
+          $base_rule{$e1}{except} .= $FS->parse(substr($e0,1));
         } else {
-          $base_rule{precondition}{$e1} = $FS->overwrite($base_rule{precondition}{$e1}, $FS->parse($e0));
+          $base_rule{$e1}{condition} = $FS->overwrite($base_rule{$e1}{condition}, $FS->parse($e0));
         }
       }
     }
+
+    my $base_ruleref = \%base_rule;
+    bless $base_ruleref;
+
+    # TODO: (proximal) extract the parsing of this 'except' and 'extras' structure
 
     # {resolve} is a weight-hash of possible resolutions, whose keys are of the form "$operation $argument".
     # 
@@ -664,9 +734,7 @@ sub generate {
       /^([^ ]*) +(.*)$/;
       my ($reskind, $arg) = ($1, $2);
 
-      my %rule = %base_rule;
-      my $ruleobj = \%rule; 
-      bless $ruleobj;
+      my $rule = $base_ruleref->deep_copy_indexed();
       my @variants = (); # where to put the generated rules
 
       # resolve as specified
@@ -682,8 +750,8 @@ sub generate {
             if (substr($parsed_effect, $_, 1) =~ /[{}]/) {
               my $restriction = rand(2.0 + 4.0/(1-$threshold)); # 4 is a magic factor
               if ($restriction < 2.0) {
-                substr($rule{precondition}{$target}, $_, 1) = int($restriction)
-                    if substr($rule{precondition}{$target}, $_, 1) eq 'u';
+                substr($rule->{$target}{condition}, $_, 1) = int($restriction)
+                    if substr($rule->{$target}{condition}, $_, 1) eq 'u';
               }
             }
           }
@@ -699,10 +767,10 @@ sub generate {
                     if substr($parsed_effect, $_, 1) =~ /[<>]/ 
                     and substr($parsed_effect, $i, 1) eq substr($parsed_effect, $_, 1);
               }
-              $rule{precondition}{$target} = $FS->overwrite($rule{precondition}{$target}, $requirements);
+              $rule->{$target}{condition} = $FS->overwrite($rule->{$target}{condition}, $requirements);
               if (substr($parsed_effect, $_, 1) =~ /[<>]/) {
                 my $source = (substr($parsed_effect, $_, 1) eq '>') ? $target + 1 : $target - 1;
-                $rule{precondition}{$source} = $FS->overwrite($rule{precondition}{$source}, $requirements);
+                $rule->{$source}{condition} = $FS->overwrite($rule->{$source}{condition}, $requirements);
               }
             }
           }
@@ -712,24 +780,24 @@ sub generate {
 
         # But not if it's stripped off.
         for my $str (@{$FS->{strippings}}) {
-          for my $displ (keys %{$rule{precondition}}) { 
-            if ($rule{precondition}{$displ} =~ /^$str->{condition_parsed}$/) {
+          for my $displ ($rule->indices('condition')) { 
+            if ($rule->{$displ}{condition} =~ /^$str->{condition_parsed}$/) {
               my $effect = $FS->parse($str->{strip});
               $effect =~ s/1/a/g; # temporary char
-              $rule{precondition}{$displ} = $FS->overwrite($rule{precondition}{$displ}, $effect);
-              $rule{precondition}{$displ} =~ s/a/./g;
+              $rule->{$displ}{condition} = $FS->overwrite($rule->{$displ}{condition}, $effect);
+              $rule->{$displ}{condition} =~ s/a/./g;
             }
           }
         }
 
-        $rule{effects} = \%effects;
-        push @variants, $ruleobj->persistence_variants(1, $args{phonology}, $threshold, 
+        $rule->{$_}{effects} = $effects{$_} for keys %effects;
+        push @variants, $rule->persistence_variants(1, $args{phonology}, $threshold, 
                                              0, $args{generable_val});
       } #r
 
       elsif ($reskind eq 'delete') {
-        push @{$rule{deletions}}, $arg;
-        push @variants, [\%rule, 1];
+        $rule->{$arg}{deletions} = 1;
+        push @variants, [$rule, 1];
       } #delete
 
       # Resolve the named phone in the ways listed in {flip} and {related_weight}.
@@ -749,9 +817,7 @@ sub generate {
           my $no_persist = 0;
           $no_persist = 1 if defined $d->{phonemic_only};
 
-          %rule = %base_rule; 
-          $ruleobj = \%rule;
-          bless $ruleobj;
+          my $rule = $base_ruleref->deep_copy_indexed();
 
           if ($resolution_type == 0) {
             $i = 0, $resolution_type++, next if $i >= length($resolvend);
@@ -811,12 +877,12 @@ sub generate {
 
           $total_base_weight += $base_weight;
 
-          $rule{effects}{$arg} = $effects;
+          $rule->{$arg}{effects} = $effects;
           # This base_weight is used to fill out recastability, below.
-          $rule{base_weight} = $base_weight; 
+          $rule->{base_weight} = $base_weight; 
 
           my $persistence_weight = defined $d->{persist} ? $d->{persist} : $threshold;
-          push @variants, $ruleobj->persistence_variants($base_weight, $args{phonology}, $persistence_weight, 
+          push @variants, $rule->persistence_variants($base_weight, $args{phonology}, $persistence_weight, 
                                               $no_persist, $args{generable_val});
           for (@variants) {
             push @resolutions, $_->[0];
@@ -832,7 +898,7 @@ sub generate {
         push @resolutions, $_->[0];
         push @weights, $_->[1] * $weight / $total_weight;
       }
-    }
+    } # each %resolutions
   } # assimilation
 
   else {
@@ -850,15 +916,17 @@ sub generate {
     for (0..$#weights) {
       $j = $_, $selected_rule = $resolutions[$_], last if (($w -= $weights[$_]) < 0);  
     }
+
+    bless $selected_rule;
     
     # Decorate the selected resolution by clearing features that now lack their requirements.
     # Do antithetical features.
-    for my $displ (keys %{$selected_rule->{effects}}) {
-      $selected_rule->{effects}{$displ} = $FS->add_entailments($selected_rule->{effects}{$displ});
+    for my $displ ($selected_rule->indices('effects')) {
+      $selected_rule->{$displ}{effects} = $FS->add_entailments($selected_rule->{$displ}{effects});
 
       # If this resolution is to be avoided, try again.
       for my $avoid (@{$args{avoid}}) {
-        if ($selected_rule->{effects}{$displ} eq $avoid) {
+        if ($selected_rule->{$displ}{effects} eq $avoid) {
           splice @resolutions, $j, 1;
           splice @weights, $j, 1;
           redo RESOLVE;
@@ -866,8 +934,6 @@ sub generate {
       }
     } # $displ
   } # RESOLVE
-
-  bless $selected_rule;
 
   $selected_rule->{FS} = $FS;
   
@@ -878,10 +944,10 @@ sub generate {
 
   # If any of the preconditions of this rule are not generable by anything coming before,
   # and it's a one-time rule, it's never triggerable; just drop it and don't write it down.
-  for my $displ (keys %{$selected_rule->{precondition}}) {
+  for my $displ ($selected_rule->indices('condition')) {
     for my $i (0..@{$FS->{features}}-1) {
-      return if substr($selected_rule->{precondition}{$displ}, $i, 1) =~ /[01]/ 
-            and !defined($args{generable_val}[substr($selected_rule->{precondition}{$displ}, $i, 1)][$i])
+      return if substr($selected_rule->{$displ}{condition}, $i, 1) =~ /[01]/ 
+            and !defined($args{generable_val}[substr($selected_rule->{$displ}{condition}, $i, 1)][$i])
             and defined $selected_rule->{inactive};
     }
   }
@@ -896,15 +962,15 @@ sub generate {
   # Get rid of effectses if we can.
   if (defined $args{forcibly_unmark}) {
     for my $i (keys %{$args{forcibly_unmark}}) {
-      for my $displ (keys %{$selected_rule->{effects}}) {
+      for my $displ ($selected_rule->indices('effects')) {
         if ($kind ne 'default' and $kind ne 'stripping') {
-          substr($selected_rule->{effects}{$displ}, $i, 1) = '.'
-              if substr($selected_rule->{effects}{$displ}, $i, 1) =~ /[01]/;
-          delete $selected_rule->{effects}{$displ}, next unless $selected_rule->{effects}{$displ} =~ /[^.]/;
+          substr($selected_rule->{$displ}{effects}, $i, 1) = '.'
+              if substr($selected_rule->{$displ}{effects}, $i, 1) =~ /[01]/;
+          delete $selected_rule->{$displ}{effects}, next unless $selected_rule->{$displ}{effects} =~ /[^.]/;
         }
         for (@{$args{forcibly_unmark}{$i}}) { 
-          substr($selected_rule->{effects}{$displ}, $i, 1) = 'u', last 
-              if substr($selected_rule->{effects}{$displ}, $_, 1) ne '.';
+          substr($selected_rule->{$displ}{effects}, $i, 1) = 'u', last 
+              if substr($selected_rule->{$displ}{effects}, $_, 1) ne '.';
         }
       }
     }
@@ -912,7 +978,10 @@ sub generate {
 
   # Abandon this ruls if it does nothing now.
   # TODO: update these tests for rules that do nothing as needed
-  return unless keys %{$selected_rule->{effects}} or defined $selected_rule->{deletions}; 
+  return unless scalar $selected_rule->indices('effects') or scalar $selected_rule->indices('deletions'); 
+
+  # Choose a directionality.  
+  $selected_rule->{direction} = rand(2) >= 1.0 ? -1 : 1;
 
   # Adding {except} conditions if this might newly set a feature which a stripping takes out
   # would be nice if it worked, but there are problems if the feature being set is a side effect;
@@ -931,7 +1000,7 @@ sub generate {
     $selected_rule->{recastability} = 0 if $selected_rule->{recastability} < 0;
     delete $selected_rule->{base_weight};
   }
-  
+
   $selected_rule;
 }
 

@@ -4,7 +4,7 @@
 # Alex Fink, January 2010 -- present.
 # Thanks to Marcus Smith <http://smithma.bol.ucla.edu/> for unwitting inspiration,
 # and Marcus and UPSID for being proximal sources for various numbers.
-# (A greater proportion of the numbers are wholly fabricated, though!)
+# (A much greater proportion of the numbers are wholly fabricated, though!)
 
 # What next?  Should we privilege 
 # (a) advanced inventory tracking, with the bigram transition matrix stuff; or
@@ -20,7 +20,7 @@ use Phonology;
 use Transcription;
 use PhonologyDescriber;
 
-my $version = '0.3.1';
+my $version = '0.3.1a';
 my $credits = 'Gleb, a phonology generator, by Alex Fink' . 
               (' ' x (29 - length($version))) . # for a total length of 78
               "version $version";

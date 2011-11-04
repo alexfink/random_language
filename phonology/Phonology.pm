@@ -45,11 +45,11 @@ sub dump_file {
   }
   if ($annotate) {
     for my $rule (@{$pd->{phonology}}) {
-      for my $displ (keys %{$rule->{precondition}}) {
-        $rule->{precondition_humane}{$displ} = $FS->feature_string($rule->{precondition}{$displ}, 1);
+      for my $displ ($rule->indices('condition')) {
+        $rule->{$displ}{condition_humane} = $FS->feature_string($rule->{$displ}{condition}, 1);
       }
-      for my $displ (keys %{$rule->{effects}}) {
-        $rule->{effects_humane}{$displ} = $FS->feature_string($rule->{effects}{$displ}, 1);
+      for my $displ ($rule->indices('effects')) {
+        $rule->{$displ}{effects_humane} = $FS->feature_string($rule->{$displ}{effects}, 1);
       }
     }
     $pd->{phonology}[$_]{number} = $_ for 0..@{$pd->{phonology}}-1;
@@ -72,9 +72,9 @@ sub annotate_with_preconditions {
     # Strippings need to be special-cased: the features they strip out shouldn't be allowed
     # to be turned on.
     if (defined $rule->{tag} and $rule->{tag} =~ /^stripping/) {
-      for my $displ (keys %{$rule->{effects}}) {
+      for my $displ ($rule->indices('effects')) {
         for my $j (0..@{$FS->{features}}) {
-          if (substr($rule->{effects}{$displ}, $j, 1) eq 'u') {
+          if (substr($rule->{$displ}{effects}, $j, 1) eq 'u') {
             push @{$which{0}[$j]}, $i;
             push @{$which{1}[$j]}, $i;
           }
@@ -82,25 +82,25 @@ sub annotate_with_preconditions {
       }
     }
 
-    for my $displ (keys %{$rule->{precondition}}) {
+    for my $displ ($rule->indices('condition')) {
       for my $j (0..@{$FS->{features}}) {
-        push @{$which{substr($rule->{precondition}{$displ}, $j, 1)}[$j]}, $i
-            if substr($rule->{precondition}{$displ}, $j, 1) =~ /[01]/;
+        push @{$which{substr($rule->{$displ}{condition}, $j, 1)}[$j]}, $i
+            if substr($rule->{$displ}{condition}, $j, 1) =~ /[01]/;
         # Doing undefined features is unnecessary, given the restricted circumstances
         # in which we set features undefined.  
         # Not so!  We now use this for forcibly_unmark.
         push @{$which{u}[$j]}, $i
-           if substr($rule->{precondition}{$displ}, $j, 1) eq 'u'; 
+           if substr($rule->{$displ}{condition}, $j, 1) eq 'u'; 
       }
     }
 
     # Assimilations (to a feature undefined in the target) can be triggered by any change.
-    for my $displ (keys %{$rule->{effects}}) {
+    for my $displ ($rule->indices('effects')) {
       for my $j (0..@{$FS->{features}}) {
-        if ((substr($rule->{effects}{$displ}, $j, 1) eq '<' and
-             substr($rule->{precondition}{$displ-1}, $j, 1) eq '.') or
-            (substr($rule->{effects}{$displ}, $j, 1) eq '>' and
-             substr($rule->{precondition}{$displ+1}, $j, 1) eq '.')) {
+        if ((substr($rule->{$displ}{effects}, $j, 1) eq '<' and
+             substr($rule->{$displ-1}{condition}, $j, 1) eq '.') or
+            (substr($rule->{$displ}{effects}, $j, 1) eq '>' and
+             substr($rule->{$displ+1}{condition}, $j, 1) eq '.')) {
           push @{$which{0}[$j]}, $i;
           push @{$which{1}[$j]}, $i;
         }
@@ -108,18 +108,18 @@ sub annotate_with_preconditions {
     }
 
     # Again for excepts.
-    for my $displ (keys %{$rule->{except}}) {
-      my @exceptions = split / /, $rule->{except}{$displ};
+    for my $displ ($rule->indices('except')) {
+      my @exceptions = split / /, $rule->{$displ}{except};
       for my $phone (@exceptions) {
         for my $j (0..@{$FS->{features}}) {
-          if (substr($rule->{except}{$displ}, $j, 1) =~ /[01]/) {
-            push @{$which{1-substr($rule->{except}{$displ}, $j, 1)}[$j]}, $i;
+          if (substr($rule->{$displ}{except}, $j, 1) =~ /[01]/) {
+            push @{$which{1-substr($rule->{$displ}{except}, $j, 1)}[$j]}, $i;
             push @{$which{'u'}[$j]}, $i;
           }
         }
       }
     }
-    push @{$which{seq}}, $i if keys %{$rule->{precondition}} >= 2;
+    push @{$which{seq}}, $i if scalar($rule->indices('condition')) >= 2;
   }
 
   $self->{which_preconditions} = \%which;
@@ -211,7 +211,7 @@ sub run {
         my @changes;
         if (($first_time and defined $args{cleanup}) or
             $phonology->[$i]->run($word, %args, changes => \@changes)) {
-          if (keys %{$phonology->[$i]{precondition}} > 1) { # an optimization.  helpful?
+          if (scalar($phonology->[$i]->indices()) > 1) { # an optimization.  helpful?
             1 while $phonology->[$i]->run($word, %args);
           }
           print STDERR "@$word (after $i)\n" if $debug >= 1;
@@ -289,8 +289,8 @@ sub generatedly_contrast {
   substr($base_phone, $f, 1) = '.';
   $base_phone = $self->{FS}->add_requirements($base_phone);
   for my $rule (@{$self->{phone_generator}}) {
-    if (substr($rule->{precondition}{0}, $f, 1) eq 'u') { # safer, because of antitheticals
-      return 1 if $self->{FS}->compatible($base_phone, $rule->{precondition}{0});
+    if (substr($rule->{0}{condition}, $f, 1) eq 'u') { # safer, because of antitheticals
+      return 1 if $self->{FS}->compatible($base_phone, $rule->{0}{condition});
     }
   }
   return 0;
@@ -329,10 +329,10 @@ sub generate_new_rule {
     }
     delete $rule->{inactivate};
 
-    for my $displ (keys %{$rule->{effects}}) {
+    for my $displ ($rule->indices('effects')) {
       for my $i (0..@{$self->{FS}{features}}-1) {
-        if (substr($rule->{effects}{$displ}, $i, 1) =~ /[01]/) {
-          push @{$args{generable_val}[substr($rule->{effects}{$displ}, $i, 1)][$i]}, scalar @$phonology;
+        if (substr($rule->{$displ}{effects}, $i, 1) =~ /[01]/) {
+          push @{$args{generable_val}[substr($rule->{$displ}{effects}, $i, 1)][$i]}, scalar @$phonology;
         }
       }
     }
@@ -347,23 +347,19 @@ sub generate_new_rule {
     my $former_length = @$phonology;
     DROP_REDUNDANT: while(1) {
       my $rule1 = $phonology->[-1];
-      for my $displ (keys %{$rule->{precondition}}) {
-        last DROP_REDUNDANT unless defined $rule1->{precondition}{$displ}
-            and $rule1->{precondition}{$displ} =~ /^$rule->{precondition}{$displ}$/;
+      for my $displ ($rule->indices('condition')) {
+        last DROP_REDUNDANT unless defined $rule1->{$displ}{condition}
+            and $rule1->{$displ}{condition} =~ /^$rule->{$displ}{condition}$/;
       }
-      last DROP_REDUNDANT unless keys %{$rule1->{effects}} == keys %{$rule->{effects}};
-      for my $displ (keys %{$rule->{effects}}) {
-        last DROP_REDUNDANT unless defined $rule1->{effects}{$displ}
-            and $rule1->{effects}{$displ} eq $rule->{effects}{$displ};
+      last DROP_REDUNDANT unless $rule1->indices('effects') == $rule->indices('effects');
+      for my $displ ($rule->indices('effects')) {
+        last DROP_REDUNDANT unless defined $rule1->{$displ}{effects}
+            and $rule1->{$displ}{effects} eq $rule->{$displ}{effects};
       }
-      if (defined $rule1->{deletions}) {
-        last DROP_REDUNDANT if !defined $rule->{deletions};
-        last DROP_REDUNDANT unless scalar @{$rule1->{deletions}} == scalar @{$rule->{deletions}};
-        for my $displ (@{$rule1->{deletions}}) {
-          last DROP_REDUNDANTE unless grep $_ == $displ, @{$rule->{deletions}};
-        }
-      } else {
-        last DROP_REDUNDANT if defined $rule->{deletions};
+      last DROP_REDUNDANT if scalar $rule->indices('deletions') == 0;
+      last DROP_REDUNDANT unless scalar $rule1->indices('deletions') == scalar $rule->indices('deletions');
+      for my $displ ($rule1->indices('deletions')) {
+        last DROP_REDUNDANT unless grep $_ == $displ, $rule->indices('deletions');
       }
       last DROP_REDUNDANT if !defined $rule1->{inactive} and defined $rule->{inactive};
       #print STDERR YAML::Any::Dump($rule1) . "redounds with\n" . YAML::Any::Dump($rule) . "\n"; # debug
@@ -545,20 +541,19 @@ sub generate_preliminary {
         substr($precondition, $FS->{feature_index}{$f->{name}}, 1) = 'u';
         $precondition = $FS->overwrite($precondition, $requires) if defined $f->{requires};
         my %rule = (
-          precondition => {0 => $precondition},
-          effects => {0 => $FS->parse($f->{name})},
-          alternate_effects => {0 => $FS->parse('-' . $f->{name})},
+          0 => {condition => $precondition, effects => $FS->parse($f->{name}),
+                alternate_effects => $FS->parse('-' . $f->{name})},
           prob => [map fuzz($sit->{prob}), @syllable_structure],
           FS => $FS,
         );
-        substr($rule{effects}{0}, $FS->{feature_index}{$f->{antithetical}}, 1) = '0' if (defined $f->{antithetical});
+        substr($rule{0}{effects}, $FS->{feature_index}{$f->{antithetical}}, 1) = '0' if (defined $f->{antithetical});
         if (@by_families) {
           for (@by_families) {
             my %rule1 = %rule; 
-            $rule1{precondition}{0} = $FS->overwrite($precondition, $_);
+            $rule1{0}{condition} = $FS->overwrite($precondition, $_);
             # Don't allow a rule inserting f in families to be sensitive to f.
             # (It confuses the inventory-taker.)
-            next if index($rule1{precondition}{0}, 'u') == -1;
+            next if index($rule1{0}{condition}, 'u') == -1;
             push @phone_generator, \%rule1;
           }
         } else {
@@ -582,7 +577,7 @@ sub generate_preliminary {
               if ($r < $f->{slots}{$slot->{tag}}[0]) {
                 $phone = $FS->overwrite($phone, $rule{antieffects}{0});
               } elsif ($r < $f->{slots}{$slot->{tag}}[0] + $f->{slots}{$slot->{tag}}[1]) {
-                $phone = $FS->overwrite($phone, $rule{effects}{0});
+                $phone = $FS->overwrite($phone, $rule{0}{effects});
                 $phone = $FS->overwrite($phone, $FS->parse($f->{slot_if_on}))
                     if defined $f->{slot_if_on};
               } elsif ($r < $f->{slots}{$slot->{tag}}[0] + $f->{slots}{$slot->{tag}}[1] +  $f->{slots}{$slot->{tag}}[2]) {
@@ -605,7 +600,7 @@ sub generate_preliminary {
             $s =~ s/u/./g;
             next if $phone !~ /^$s$/;
             # Using $rule{prob}[0] here of course isn't especially correct, but it'll do.
-            $family_inventories{$fam}{$FS->overwrite($phone, $rule{effects}{0})} += 
+            $family_inventories{$fam}{$FS->overwrite($phone, $rule{0}{effects})} += 
               $family_inventories{$fam}{$phone} * $rule{prob}[0] if ($rule{prob}[0] > 0);
             $family_inventories{$fam}{$FS->overwrite($phone, $rule{antieffects}{0})} += 
               $family_inventories{$fam}{$phone} * (1 - $rule{prob}[0]) if ($rule{prob}[0] < 1);

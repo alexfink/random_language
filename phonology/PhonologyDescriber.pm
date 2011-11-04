@@ -1006,8 +1006,8 @@ sub describe_syllable_structure {
 # no if they occurred apart for diachronic).
 # Not that we do any such folding yet.
 
-# TODO: this needs lots of updating when new rule types arise, for instance
-# those that can have multiple effects.
+# TODO: update for these rule types and features:
+# - directionality
 
 # More current issues:
 # - There is a misstatement in 11598455.  It is a fundamental one: the rule as stated is
@@ -1046,18 +1046,20 @@ sub describe_rules {
     my $rule = $pd->{phonology}[$i];
 
     # For now, assume there's only one change.  
-    if (keys %{$rule->{effects}} > 1) {
+    if ($rule->indices('effects') > 1) {
       $descriptions{$i}{rule} = '(some rule where multiple phones change at once)';
       next;
     }
 
-    my ($locus, $effect) = each %{$rule->{effects}};
+    @_ = $rule->indices('effects');
+    my $locus = $_[0];
+    my $effect = $rule->{$locus}{effects};
     my $old_effect = $effect;
-    my $precondition = $rule->{precondition}{$locus};
+    my $precondition = $rule->{$locus}{condition};
     my ($pre, $old_pre, $post, $old_post, $far);
-    $old_pre = $pre = $rule->{precondition}{$locus-1} if defined $rule->{precondition}{$locus-1};
-    $old_post = $post = $rule->{precondition}{$locus+1} if defined $rule->{precondition}{$locus+1};
-    $far = grep(($_ ne $locus-1 and $_ ne $locus and $_ ne $locus+1), keys %{$rule->{precondition}});
+    $old_pre = $pre = $rule->{$locus-1}{condition} if defined $rule->{$locus-1}{condition};
+    $old_post = $post = $rule->{$locus+1}{condition} if defined $rule->{$locus+1}{condition};
+    $far = grep(($_ ne $locus-1 and $_ ne $locus and $_ ne $locus+1), $rule->indices('condition'));
     # Try to simplify assimilations, taking advantage of enrichments.
     for my $i (0..length($effect)-1) {
       substr($effect, $i, 1) = substr($pre, $i, 1)
@@ -1074,16 +1076,16 @@ sub describe_rules {
     #
     # Some rules are being missed; is it this thing's fault?
     my %matcheds;
-    for my $displ (keys %{$rule->{precondition}}) {
-      @{$matcheds{$displ}} = grep $_ =~ /^$rule->{precondition}{$displ}$/, @inventory;
-      if (defined $rule->{except}{$displ}) {
-        my @exceptions = split / /, $rule->{except}{$displ};
+    for my $displ ($rule->indices('condition')) {
+      @{$matcheds{$displ}} = grep $_ =~ /^$rule->{$displ}{condition}$/, @inventory;
+      if (defined $rule->{$displ}{except}) {
+        my @exceptions = split / /, $rule->{$displ}{except};
         for my $exception (@exceptions) {
           @{$matcheds{$displ}} = grep $_ !~ /^$exception$/, @{$matcheds{$displ}};
         }
       }
       # Rules aren't pointless if they trigger _only_ at word boundary.
-      unless (@{$matcheds{$displ}} or $rule->{or_pause}{$displ}) {
+      unless (@{$matcheds{$displ}} or $rule->{$displ}{or_pause}) {
         $rule->{pointless} = 1;
         next RULE;
       }
@@ -1417,8 +1419,8 @@ sub describe_rules {
                         ($effect !~ /</ ? $old_post : '.' x @{$FS->{features}})), $phone);
         @_ = grep /^$phone$/, @inventory;
         my @exceptions;
-        push @exceptions, split / /, $rule->{except}{$locus-1} if $effect =~ /</;
-        push @exceptions, split / /, $rule->{except}{$locus+1} if $effect =~ />/;
+        push @exceptions, split / /, $rule->{$locus-1}{except} if $effect =~ /</;
+        push @exceptions, split / /, $rule->{$locus+1}{except} if $effect =~ />/;
         for my $phone (@exceptions) {
             @_ = grep $_ !~ /^$phone$/, @_;
         }
@@ -1541,7 +1543,7 @@ sub describe_rules {
 
     # For impersistent rules, no point favouring a featural description to a list.
     if ($insusceptibles_exist or !$persistent) {
-      # Note that sounds excluded by {except}{$locus} are already outside of \@susceptible.
+      # Note that sounds excluded by {$locus}{except} are already outside of \@susceptible.
       $main_clause .= $self->describe_set(\@susceptible, \@inventory, within => $precondition, 
           morpho => 'plural', etic => 1, sort_phones => 1, get_str_pattern => \@get_str_pattern);
     } else {
@@ -1625,7 +1627,7 @@ sub describe_rules {
         if (!defined($old_post) and !$far) {
           $main_VP .= ' to a preceding ';
           @_ = grep /^$pre$/, @inventory;
-          for my $phone (split / /, $rule->{except}{$locus-1}) {
+          for my $phone (split / /, $rule->{$locus-1}{except}) {
             @_ = grep $_ !~ /^$phone$/, @_;
           }
           $main_VP .= $self->describe_set(\@_, \@inventory, morpho => 'bare', etic => 1);
@@ -1633,7 +1635,7 @@ sub describe_rules {
         } else {
           $main_VP .= ' to the previous phone';
         }
-        if ($rule->{or_pause}{$locus-1}) { # word-initial
+        if ($rule->{$locus-1}{or_pause}) { # word-initial
           my $pausal_effect = $effect;
           for (0..length($pausal_effect)-1) {
             substr($pausal_effect, $_, 1) = substr($rule->{pause_phone}, $_, 1)
@@ -1656,7 +1658,7 @@ sub describe_rules {
         if (!defined($old_pre) and !$far) {
           $main_VP .= ' to a following ';
           @_ = grep /^$post$/, @inventory;
-          for my $phone (split / /, $rule->{except}{$locus+1}) {
+          for my $phone (split / /, $rule->{$locus+1}{except}) {
             @_ = grep $_ !~ /^$phone$/, @_;
           }
           $main_VP .= $self->describe_set(\@_, \@inventory, morpho => 'bare', etic => 1);
@@ -1664,7 +1666,7 @@ sub describe_rules {
         } else {
           $main_VP .= ' to the next phone';
         }
-        if ($rule->{or_pause}{$locus+1}) { # word-final
+        if ($rule->{$locus+1}{or_pause}) { # word-final
           my $pausal_effect = $effect;
           for (0..length($pausal_effect)-1) {
             substr($pausal_effect, $_, 1) = substr($rule->{pause_phone}, $_, 1)
@@ -1687,28 +1689,28 @@ sub describe_rules {
     if (defined $pre) {
       $pre_text = $self->name_natural_class($pre, \@inventory, morpho => 'indef', no_nothing => 1);
       $no_segmental_pre = 1 unless $pre_text;
-      my @exceptions = split / /, $rule->{except}{$locus-1};
+      my @exceptions = split / /, $rule->{$locus-1}{except};
       my @exception_texts = map $self->name_natural_class($FS->overwrite($precondition, $_), 
               \@inventory, significant => $_, no_nothing => 1, morpho => 'indef'), 
           # don't state exceptions that don't actually exclude anything
           grep { my $a = $_; grep /^$a$/ && /^$pre$/, @inventory; } @exceptions;
       @exception_texts = grep $_, @exception_texts;
       $pre_text .= ' except for ' . join ' and ', @exception_texts if @exception_texts;
-      $pre_text .= ',' if (scalar @exception_texts) and $rule->{or_pause}{$locus-1};
-      $pre_text .= ($pre_text ? ' or ' : '') . 'word-initially' if $rule->{or_pause}{$locus-1};
+      $pre_text .= ',' if (scalar @exception_texts) and $rule->{$locus-1}{or_pause};
+      $pre_text .= ($pre_text ? ' or ' : '') . 'word-initially' if $rule->{$locus-1}{or_pause};
     }
     if (defined $post) {
       $post_text = $self->name_natural_class($post, \@inventory, morpho => 'indef', no_nothing => 1);
       $no_segmental_post = 1 unless $post_text;
-      my @exceptions = split / /, $rule->{except}{$locus+1};
+      my @exceptions = split / /, $rule->{$locus+1}{except};
       my @exception_texts = map $self->name_natural_class($FS->overwrite($precondition, $_), 
               \@inventory, significant => $_, no_nothing => 1, morpho => 'indef'), 
           # don't state exceptions that don't actually exclude anything
           grep { my $a = $_; grep /^$a$/ && /^$post$/, @inventory; } @exceptions;
       @exception_texts = grep $_, @exception_texts;
       $post_text .= ' except for ' . join ' and ', @exception_texts if @exception_texts;
-      $post_text .= ',' if (scalar @exception_texts) and $rule->{or_pause}{$locus+1};
-      $post_text .= ($post_text ? ' or ' : '') . 'word-finally' if $rule->{or_pause}{$locus+1};
+      $post_text .= ',' if (scalar @exception_texts) and $rule->{$locus+1}{or_pause};
+      $post_text .= ($post_text ? ' or ' : '') . 'word-finally' if $rule->{$locus+1}{or_pause};
     }
     if ($no_segmental_pre) {
       $environment_text .= " $pre_text";
