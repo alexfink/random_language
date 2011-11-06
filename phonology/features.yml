@@ -3,9 +3,13 @@ version: "5.0a"
 
 # Also see end of file for more things TODO.
 
+# proximal TODO: one or a couple (targetted resp. to coda & intervocalic) placelessising rules for coronals (affricates no) and dorsals (sometimes just uvulars). 
+# Also, test whether [?] etc. isn't surviving in the post-phoneme stage as much as it should.
+
 # one-time coronal palatalisation rule?
 
-# probabilistic strippings??
+# A way to make e.g. [M\_+] prefer to resolve according to frontness of a nearby vowel.  The trouble with this is that it has to come before the uniform resolution of [M\_+] to take effect.  That means it comes before the phoneme boundary, which is very problematic.  Or is it?  Maybe it only is for writing the rules up, and for that we should get by if we can project forward.  (It's the same problem that e.g. harmony can be expected to invoke.)
+# Probabilistic pre-strippings??  The trouble with this is changing them in diachrony.  I guess one has to change the whole cluster, and make it uninterruptable.
 # Coronals shouldn't front vowels, nor labials round them, etc., unless more obvious sources do too.
 
 # fricatives and unvoiced resonants sometimes becoming _aspirated_ stops
@@ -1008,8 +1012,8 @@ marked:
   # to tie labial fricatives to labialisation more
   - condition: "-resonant, labial -resonant"
     prob: 0.055556
-    extras: {"-nasal 0": 0.666667, "-labial 0": 0.95, "+fricative 1": 0.875, "!-fricative -nasal 1": 0.6}
-    resolve: {"r dorsal +resonant +back +round 1": 1}
+    extras: {"-nasal 0": 0.666667, "-labial 0": 0.333333, "+fricative 1": 0.875, "!-fricative -nasal 1": 0.6}
+    resolve: {"r +resonant +round 1": 1}
 
   # _Homorganic_ resonant spread rules exist; that's a good model for this [ln] > [ll] type behaviour.  But I haven't done it for dorsal, 'cause semivowels are the overwhelmingly dominant resonant there.
   # The "+voice" extra here is a little weird given that unvoiced resonants do exist...
@@ -1085,7 +1089,7 @@ marked:
 
   # fricative dissimilation?  Howe has assimilation too in C clusters
 
-  # affricate dissimilation to stable stops at a distance (e.g. Mingrelian, Moroccan Arabic), though also even in like [ts)Vs]
+  # affricate dissimilation to stable stops (-sibilant -lateral) at a distance (e.g. Mingrelian, Moroccan Arabic), though also even in like [ts)Vs]
 
   - condition: "coronal, coronal"
     further_features: trill lateral
@@ -1851,6 +1855,8 @@ marked:
     resolve: {"r -spread_glottis -constricted_glottis 1": 1}
 
   # TODO: some version of the Spanish [nm mn dn ...] > [lm mr dr ...] changes
+
+  # TODO: together with the stop & fricative cluster changes, a homorganic assimilation (e.g. [fp] > [pp] and/or [pf] > [ff])
 
   - condition: "+nasal -resonant, -prenasalised"
     prob: 0.03
@@ -2965,6 +2971,11 @@ marked:
       resonant: 4
       voice: 1.5
 
+  # This rule is only to fix a preponderance of [tK)_-] things in v.5.
+  - condition: "-anterior +lateral -resonant"
+    initial_prob: 0.9375
+    prob: 0
+
   # the modern Greek rule
   - condition: "+voice -fricative -nasal -prenasalised -implosive"
     prob: 0.025
@@ -3004,6 +3015,7 @@ marked:
 # things: *sonority increase across a syllable; *tl.
 # Glottal stops in word-extremal position across an obstruent sorts of things also seem dispreferred.
 # resonant+glide seems to like to metathesise, though sometimes glide fortition.
+# Note also that [dn] > [nd] type metatheses do happen (e.g. Span/Port, Oromo)!
 
 # Coronal to velar after high vowels is attested.  (How to make this perseverate over NC clusters?  A tier??)  Also make sure [t] <> [k] by previous vowel frontness is in.
 # velar frication near low. ???DONE I forget.
