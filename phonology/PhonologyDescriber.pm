@@ -1426,8 +1426,12 @@ sub describe_rules {
         }
         $frame_text .= $self->describe_set(\@_, \@inventory, morpho => 'indef', bar_nons => 1, etic => 1); 
             # disallowing nons isn't right, but it makes the thing readable
-        # okay, so just defined($rule->{pause_phone}) isn't what I look for elsewhere, but it should hackwork
-        $frame_text .= ' or pause' if defined $rule->{pause_phone} and $rule->{pause_phone} =~ /^$frame$/;
+        if ($effect =~ /</) {
+          $frame_text .= ' or pause' if defined $rule->{$locus-1}{or_pause} and $rule->{or_pause} =~ /^$frame$/;
+        }
+        if ($effect =~ />/) {
+          $frame_text .= ' or pause' if defined $rule->{$locus+1}{or_pause} and $rule->{or_pause} =~ /^$frame$/;
+        }
         $frame_text .= ', ';
       }
 
@@ -1635,10 +1639,10 @@ sub describe_rules {
         } else {
           $main_VP .= ' to the previous phone';
         }
-        if ($rule->{$locus-1}{or_pause}) { # word-initial
+        if (defined $rule->{$locus-1}{or_pause}) { # word-initial
           my $pausal_effect = $effect;
           for (0..length($pausal_effect)-1) {
-            substr($pausal_effect, $_, 1) = substr($rule->{pause_phone}, $_, 1)
+            substr($pausal_effect, $_, 1) = substr($rule->{$locus-1}{or_pause}, $_, 1)
                 if substr($pausal_effect, $_, 1) eq '<';
           }
           my $modified = $FS->overwrite($precondition, $pausal_effect); 
@@ -1666,10 +1670,10 @@ sub describe_rules {
         } else {
           $main_VP .= ' to the next phone';
         }
-        if ($rule->{$locus+1}{or_pause}) { # word-final
+        if (defined $rule->{$locus+1}{or_pause}) { # word-final
           my $pausal_effect = $effect;
           for (0..length($pausal_effect)-1) {
-            substr($pausal_effect, $_, 1) = substr($rule->{pause_phone}, $_, 1)
+            substr($pausal_effect, $_, 1) = substr($rule->{$locus+1}{or_pause}, $_, 1)
                 if substr($pausal_effect, $_, 1) eq '>';
           }
           my $modified = $FS->overwrite($precondition, $pausal_effect); 
@@ -1686,6 +1690,8 @@ sub describe_rules {
     my ($pre_text, $post_text);
     my ($no_segmental_pre, $no_segmental_post);
     # the 'or word-finally' aren't quite right, since the main rule might be a between.
+    # FIXME: 'or word-finally' etc. is wrong when an assimilation only runs one way
+    # FIXME: there is too much 'no phone' for the word-extremal stuff.
     if (defined $pre) {
       $pre_text = $self->name_natural_class($pre, \@inventory, morpho => 'indef', no_nothing => 1);
       $no_segmental_pre = 1 unless $pre_text;

@@ -1371,19 +1371,19 @@ marked:
   # Do the tautosyllabicity thing on these next two groups.
   # Lowering before rhotics.
   - condition: "dorsal +resonant -lateral -tap_or_trill -high, +resonant"
-    except: {1: "-coronal -tap_or_trill, +lateral -tap_or_trill"}
+    except: {1: "-coronal -tap_or_trill | +lateral -tap_or_trill"}
     prob: 0.022222
     extras: {"-labial 1": 0.5, "+tap_or_trill 1": 0.333333, "coronal -tap_or_trill 1": 0.166667, "-ATR 0": 0.8}
     resolve: {"r +low 0": 1}
 
   - condition: "dorsal +resonant -lateral -tap_or_trill +high, +resonant"
-    except: {1: "-coronal -tap_or_trill, +lateral -tap_or_trill"}
+    except: {1: "-coronal -tap_or_trill | +lateral -tap_or_trill"}
     prob: 0.022222
     extras: {"-labial 1": 0.5, "+tap_or_trill 1": 0.333333, "coronal -tap_or_trill 1": 0.166667}
     resolve: {"r -high 0": 1}
 
   - condition: "dorsal +resonant -lateral -tap_or_trill +ATR, +resonant"
-    except: {1: "-coronal -tap_or_trill, +lateral -tap_or_trill"}
+    except: {1: "-coronal -tap_or_trill | +lateral -tap_or_trill"}
     prob: 0.022222
     extras: {"-labial 1": 0.5, "+tap_or_trill 1": 0.333333, "coronal -tap_or_trill 1": 0.166667}
     resolve: {"r -ATR 0": 1}
@@ -2975,6 +2975,8 @@ marked:
   - condition: "-anterior +lateral -resonant"
     initial_prob: 0.9375
     prob: 0
+    flip:
+      resonant: 0
 
   # the modern Greek rule
   - condition: "+voice -fricative -nasal -prenasalised -implosive"

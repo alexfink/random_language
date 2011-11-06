@@ -202,7 +202,7 @@ sub run {
 
   # iterate in the direction specified
   my @displs = -1..@$word-1;   # start at -1 for assimilations to word-initial pause;
-      # may want to be larger if rules can have non-canonical indices
+      # will need to be larger if rules can have non-canonical indices
   @displs = reverse @displs if (defined $rule->{direction} and $rule->{direction} < 0);
   PHONE: for my $i (@displs) {
     for my $displ ($rule->indices('condition')) {
@@ -236,12 +236,12 @@ sub run {
         while ($effects =~ /</) {
           my $c = index($effects, '<');
           substr($effects, $c, 1) = 
-              substr($i+$next_before >= 0 ? $word->[$i+$next_before] : $rule->{pause_phone}, $c, 1);
+              substr($i+$next_before >= 0 ? $word->[$i+$next_before] : $rule->{$next_before}{or_pause}, $c, 1);
         }
         while ($effects =~ />/) {
           my $c = index($effects, '>');
           substr($effects, $c, 1) =
-              substr($i+$next_after < @$word ? $word->[$i+$next_after] : $rule->{pause_phone}, $c, 1);
+              substr($i+$next_after < @$word ? $word->[$i+$next_after] : $rule->{$next_after}{or_pause}, $c, 1);
         }
         # We must entail the effects, not just the overwritten phone, since otherwise
         # jumps over the middle point on an antithetical scale won't always work.
@@ -426,7 +426,7 @@ sub gen_extra_condition {
             my $l = $locus + $displ - $d->{target};
             if (!defined $rule1->{$l}{condition}) {
               $_ = $FS->parse($FS->{generic_pause_phone});
-              $rule1->{$l}{or_pause} = 1 if $_ =~ /^$condition[$displ]$/;
+              $rule1->{$l}{or_pause} = $_ if /^$condition[$displ]$/;
               $rule1->{$l}{condition} = '.' x length($effect);
             }
             next EF_ASSIM unless $FS->compatible($rule1->{$l}{condition}, $condition[$displ]);
@@ -457,7 +457,7 @@ sub gen_extra_condition {
             my $l = $locus + $displ - $d->{target};
             if (!defined $rule1->{$l}->{condition}) {
               $_ = $FS->parse($FS->{generic_pause_phone});
-              $rule1->{$l}{or_pause} = 1 if $_ =~ /^$condition[$displ]$/;
+              $rule1->{$l}{or_pause} = $_ if /^$condition[$displ]$/;
               $rule1->{$l}{condition} = '.' x length($effect);
             }
             next EF_ASSIMR unless $FS->compatible($rule1->{$l}{condition}, $condition[$displ]);
@@ -527,13 +527,66 @@ sub gen_extra_condition {
   }
 }
 
-# TODO: (proximal)   - Extract the conditions description, as below.  
-# - Reorganise rules to contain an ordered structure of hashes {condition => ..., except => ...}, etc.
-#   (Then this structure has the hope of becoming a "something phones may match" object.)
-# - Since that breaks save compatibility,  while at it, 
-#   we may as well change the name 'precondition' to 'condition'.
 
-sub parse_conditions_description {
+# If $multi is 0, parse into $s a description of a phone set given in $d by {condition}, {except}, {extras}.
+# If $multi is 1, parse into $s a hash of the same for multiple indexed phones.
+# TODO: (proximal) rather than {pause_phone}, just let {or_pause} have a value
+sub parse_phoneset {
+  my ($s, $d, $multi, %args) = (shift, shift, shift, @_);
+  my $FS = $args{FS};
+
+  my @phones = map $FS->parse($_), split /, */, $d->{condition}, -1;
+  $s->{$_}{condition} = $phones[$_] for 0..$#phones;
+
+  if (defined $d->{except}) {
+    # two styles: hash for backward compatibility, string so that specifying single phones is sane
+    if (ref $d->{except} eq 'HASH') {
+      for my $displ (keys %{$d->{except}}) {
+        $s->{$displ}{except} = join ' ', map $FS->parse($_), split / *\| */, $d->{except}{$displ};
+      }
+    } else {
+      my @exceptions = map $FS->parse($_), split /, */, $d->{except}, -1;
+      for my $displ (0..$#exceptions) {
+        $s->{$displ}{except} = join ' ', map $FS->parse($_), split / *\| */, $d->{except}{$displ};
+      }
+    }
+  }
+
+  my $pause_phone;
+  @_ = split / +([0-9.]+) */, $d->{pause_phone};
+  if (scalar @_ == 1) {
+    $pause_phone = $FS->parse($d->{pause_phone}, undefined => 1);
+  } elsif (scalar @_ > 1) {
+    $pause_phone = $FS->parse(weighted_one_of(@_), undefined => 1);
+  }
+  # As a corollary of the sort here, '-' assignments follow '+' ones.  TODO: make this saner?
+  for my $e (sort keys %{$d->{extras}}) {
+    if (rand() < $d->{extras}{$e}) {
+      my ($e0, $e1);
+      if ($e =~ /^(.*) ([^ ]*)$/) {
+        ($e0, $e1) = ($1, $2);
+      } else {
+        ($e0, $e1) = ($e, 0);
+      }
+      if ($e0 eq '##') { # ad hoc notation for _only_ at extremum of word
+        $s->{$e1}{or_pause} = $pause_phone;
+        substr($s->{$e1}{condition}, 0, 1) = 'x'; # ad hoc match prevention
+      } elsif ($e0 eq '#') { # end of word _allowed_
+        $s->{$e1}{or_pause} = $pause_phone;
+      } elsif ($e0 =~ /^!/) {
+        $s->{$e1}{except} .= ' ' if defined $s->{$e1}{except};
+        $s->{$e1}{except} .= $FS->parse(substr($e0,1));
+      } else {
+        $s->{$e1}{condition} = $FS->overwrite($s->{$e1}{condition}, $FS->parse($e0));
+      }
+    }
+  }
+
+  # If this wasn't supposed to be multiple phones, lift everything up a level. 
+  unless ($multi) {
+    $s->{$_} = $s->{0}{$_} for keys %{$s->{0}};
+    delete $s->{0};
+  }
 }
 
 # To expand a rule tag:
@@ -663,61 +716,23 @@ sub generate {
       }
     }
 
-    # the condition on a split is further to the condition on the parent
-    my @unsplit_phones = map $FS->parse($_), split /, */, $unsplit_d->{condition}, -1;
-    my @phones = map $FS->parse($_), split /, */, $d->{condition}, -1;
-    $phones[$_] = $FS->overwrite($unsplit_phones[$_], $phones[$_]) for 0..$#phones;
-    my %base_rule = (
-      recastability => 1 - $d->{prob},
-      tag => $tag,
-      cede => 1 - $threshold,
-    ); 
-    $base_rule{$_} = {condition => $phones[$_]} for 0..$#phones;
+    my $base_rule = {};
+    parse_phoneset($base_rule, $d, 1, FS => $FS, unsplit => $unsplit_d);
+    bless $base_rule;
+    $base_rule->{recastability} = 1 - $d->{prob};
+    $base_rule->{tag} = $tag;
+    $base_rule->{cede} = 1 - $threshold;
 
-    if (defined $d->{except}) {
-      my %except = %{$d->{except}};
-      for my $displ (keys %except) {
-        $except{$displ} = join ' ', map $FS->parse($_), split /, */, $d->{except}{$displ};
-      }
-      $base_rule{$_}{except} = $except{$_} for keys %except;
-    }
+    # The condition on a split is further to the condition on the parent.
+    my @unsplit_phones = map $FS->parse($_), split /, */, $unsplit_d->{condition}, -1;
+    $base_rule->{$_}{condition} = $FS->overwrite($unsplit_phones[$_], $base_rule->{$_}{condition}) for 0..$#unsplit_phones;
+
     if ($kind =~ /_split$/ and defined $unsplit_d->{except}) {
       for my $displ (keys %{$unsplit_d->{except}}) {
-        $base_rule{$displ}{except} .= ' ' if defined $base_rule{$displ}{except};
-        $base_rule{$displ}{except} .= join ' ', map $FS->parse($_), split /, */, $unsplit_d->{except}{$displ};
+        $base_rule->{$displ}{except} .= ' ' if defined $base_rule->{$displ}{except};
+        $base_rule->{$displ}{except} .= join ' ', map $FS->parse($_), split /, */, $unsplit_d->{except}{$displ};
       }
     }
-
-    my $pause_phone;
-    @_ = split / +([0-9.]+) */, $d->{pause_phone};
-    if (scalar @_ == 1) {
-      $pause_phone = $FS->parse($d->{pause_phone}, undefined => 1);
-    } elsif (scalar @_ > 1) {
-      $pause_phone = $FS->parse(weighted_one_of(@_), undefined => 1);
-    }
-    # As a corollary of the sort here, '-' assignments follow '+' ones.  TODO: make this saner?
-    for my $e (sort keys %{$d->{extras}}) {
-      if (rand() < $d->{extras}{$e}) {
-        $e =~ /^(.*) ([^ ]*)$/;
-        my ($e0, $e1) = ($1, $2);
-        if ($e0 eq '##') { # ad hoc notation for _only_ at extremum of word
-          $base_rule{$e1}{or_pause} = 1;
-          $base_rule{pause_phone} = $pause_phone;
-          substr($base_rule{$e1}{condition}, 0, 1) = 'x'; # ad hoc match prevention
-        } elsif ($e0 eq '#') { # end of word _allowed_
-          $base_rule{$e1}{or_pause} = 1;
-          $base_rule{pause_phone} = $pause_phone;
-        } elsif ($e0 =~ /^!/) {
-          $base_rule{$e1}{except} .= ' ' if defined $base_rule{$e1}{except};
-          $base_rule{$e1}{except} .= $FS->parse(substr($e0,1));
-        } else {
-          $base_rule{$e1}{condition} = $FS->overwrite($base_rule{$e1}{condition}, $FS->parse($e0));
-        }
-      }
-    }
-
-    my $base_ruleref = \%base_rule;
-    bless $base_ruleref;
 
     # TODO: (proximal) extract the parsing of this 'except' and 'extras' structure
 
@@ -734,7 +749,7 @@ sub generate {
       /^([^ ]*) +(.*)$/;
       my ($reskind, $arg) = ($1, $2);
 
-      my $rule = $base_ruleref->deep_copy_indexed();
+      my $rule = $base_rule->deep_copy_indexed();
       my @variants = (); # where to put the generated rules
 
       # resolve as specified
@@ -807,7 +822,7 @@ sub generate {
       # not the resolution.  If entries in {flip} or keys in {related_weight} are followed by
       # a number, they apply only to the phone of that index, else they apply to all phones.
       elsif ($reskind eq 'free') {
-        my $resolvend = $phones[$arg];
+        my $resolvend = $base_rule->{$arg}{condition};
         my $reqd = $FS->add_requirements($resolvend);
         my $i = 0;
         my $resolution_type = 0;
@@ -817,7 +832,7 @@ sub generate {
           my $no_persist = 0;
           $no_persist = 1 if defined $d->{phonemic_only};
 
-          my $rule = $base_ruleref->deep_copy_indexed();
+          my $rule = $base_rule->deep_copy_indexed();
 
           if ($resolution_type == 0) {
             $i = 0, $resolution_type++, next if $i >= length($resolvend);
