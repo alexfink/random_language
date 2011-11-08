@@ -530,24 +530,33 @@ sub gen_extra_condition {
 
 # If $multi is 0, parse into $s a description of a phone set given in $d by {condition}, {except}, {extras}.
 # If $multi is 1, parse into $s a hash of the same for multiple indexed phones.
-# TODO: (proximal) rather than {pause_phone}, just let {or_pause} have a value
+# 
+# If $s already has stuff in it, overwrite that rather than trampling it.
 sub parse_phoneset {
   my ($s, $d, $multi, %args) = (shift, shift, shift, @_);
   my $FS = $args{FS};
 
   my @phones = map $FS->parse($_), split /, */, $d->{condition}, -1;
-  $s->{$_}{condition} = $phones[$_] for 0..$#phones;
+  for (0..$#phones) {
+    if (defined $s->{$_}) {
+      $s->{$_}{condition} = $FS->overwrite($s->{$_}{condition}, $phones[$_]);
+    } else {
+      $s->{$_}{condition} = $phones[$_];
+    }
+  }
 
   if (defined $d->{except}) {
     # two styles: hash for backward compatibility, string so that specifying single phones is sane
     if (ref $d->{except} eq 'HASH') {
       for my $displ (keys %{$d->{except}}) {
-        $s->{$displ}{except} = join ' ', map $FS->parse($_), split / *\| */, $d->{except}{$displ};
+        $s->{$displ}{except} .= ' ' if defined $s->{$displ}{except};
+        $s->{$displ}{except} .= join ' ', map $FS->parse($_), split / *\| */, $d->{except}{$displ};
       }
     } else {
       my @exceptions = map $FS->parse($_), split /, */, $d->{except}, -1;
       for my $displ (0..$#exceptions) {
-        $s->{$displ}{except} = join ' ', map $FS->parse($_), split / *\| */, $d->{except}{$displ};
+        $s->{$displ}{except} .= ' ' if defined $s->{$displ}{except};
+        $s->{$displ}{except} .= join ' ', map $FS->parse($_), split / *\| */, $d->{except}{$displ};
       }
     }
   }
@@ -603,7 +612,7 @@ sub generate {
   my ($tag, %args) = (shift, @_);
   my ($kind, $k, $rest) = split / /, $tag;
   my $FS = $args{phonology}{FS};
-  # print STDERR "[" . scalar @{$args{phonology}{phonology}} . "] tag is $tag\n"; # debug
+  #print STDERR "[" . scalar @{$args{phonology}{phonology}} . "] tag is $tag\n"; # debug
 
   # Not doing assimilation rules (or strippings) since they can't much come out differently.
   my $threshold = 1;
@@ -707,34 +716,17 @@ sub generate {
       $d = $unsplit_d;
     }
 
-    # If there are split resolutions, recurse to handle them.  
-    # Recursive splits don't in fact work, as this is currently implemented.
-    if (defined $d->{split}) {
-      for my $i (0..$#{$d->{split}}) {
-        $args{phonology}->generate_new_rule("${kind}_split $k $i", %args, dont_skip => 1) 
-            if rand() < $d->{split}[$i]{prob};
-      }
-    }
-
     my $base_rule = {};
-    parse_phoneset($base_rule, $d, 1, FS => $FS, unsplit => $unsplit_d);
+    if (defined $args{unsplit_rule}) {
+      $base_rule = $args{unsplit_rule}->deep_copy_indexed();
+    }
+    parse_phoneset($base_rule, $d, 1, FS => $FS);
     bless $base_rule;
     $base_rule->{recastability} = 1 - $d->{prob};
     $base_rule->{tag} = $tag;
     $base_rule->{cede} = 1 - $threshold;
 
-    # The condition on a split is further to the condition on the parent.
     my @unsplit_phones = map $FS->parse($_), split /, */, $unsplit_d->{condition}, -1;
-    $base_rule->{$_}{condition} = $FS->overwrite($unsplit_phones[$_], $base_rule->{$_}{condition}) for 0..$#unsplit_phones;
-
-    if ($kind =~ /_split$/ and defined $unsplit_d->{except}) {
-      for my $displ (keys %{$unsplit_d->{except}}) {
-        $base_rule->{$displ}{except} .= ' ' if defined $base_rule->{$displ}{except};
-        $base_rule->{$displ}{except} .= join ' ', map $FS->parse($_), split /, */, $unsplit_d->{except}{$displ};
-      }
-    }
-
-    # TODO: (proximal) extract the parsing of this 'except' and 'extras' structure
 
     # {resolve} is a weight-hash of possible resolutions, whose keys are of the form "$operation $argument".
     # 
@@ -914,7 +906,25 @@ sub generate {
         push @weights, $_->[1] * $weight / $total_weight;
       }
     } # each %resolutions
-  } # assimilation
+
+    # Record which split resolutions we will need to do.
+    # Recursive splits don't in fact work, as this is currently implemented.
+    if (defined $d->{split}) {
+      for my $rule (@resolutions) {
+        for my $i (0..$#{$d->{split}}) {
+          next unless rand() < $d->{split}[$i]{prob};
+          if (defined $d->{split}[$i]{if}) {
+            $d->{split}[$i]{if} =~ /^(.*) +([0-9]*)$/;
+            my ($condition, $target) = ($1, $2);
+            $condition = $FS->parse($condition);
+            next unless $rule->{$target}{effects} =~ /^$condition$/;
+          }
+          next if grep $_ eq "${kind}_split $k $i", @{$rule->{splits}}; #kluge? 
+          push @{$rule->{splits}}, "${kind}_split $k $i";
+        }
+      }
+    }
+  } # repair
 
   else {
     warn "unknown rule tag: $tag";

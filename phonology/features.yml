@@ -2033,7 +2033,8 @@ marked:
     flip:
       nasal: 63
     split:
-      - condition: "-constricted_glottis -spread_glottis -pharyngealised"
+      - if: "-nasal 0"
+        condition: "-constricted_glottis -spread_glottis -pharyngealised"
         prob: 1
         flip:
           dorsal: 1.5
@@ -2077,7 +2078,8 @@ marked:
     flip:
       dorsal: 2
     split:
-      - condition: "+resonant"
+      - if: "-dorsal 0"
+        condition: "+resonant"
         prob: 1
         flip:
           labial: 15
@@ -2739,12 +2741,26 @@ marked:
     flip:
       lateral: 0.666667
     related_weight:
-      "+fricative": 0.05 # not llike these are good kinds of fricatives either
+      "+fricative": 0.05 # not like these are good kinds of fricatives either
+    split:
+      - if: "+lateral 0"
+        condition: "-anterior"
+        prob: 0.9
+        flip:
+          lateral: 0.020833
+        related_weight:
+          "+fricative": 0.05
 
   - condition: "-sibilant -lateral +fricative"
     prob: 0.8
     flip:
       lateral: 0.666667
+    split:
+      - if: "+lateral 0"
+        condition: "-anterior"
+        prob: 0.9
+        flip:
+          lateral: 0.020833
 
   # Same for posteriors but way stronger.  
   - condition: "-sibilant -anterior -lateral +affricate"
@@ -2809,9 +2825,10 @@ marked:
       retroflex: 0.1
     related_weight:
       "+nasal": 0
-      "+fricative": 0.1
+      "+fricative": 0.05
     split:
-      - condition: "+tap_or_trill"
+      - if: "dorsal 0"
+        condition: "+tap_or_trill"
         prob: 0.8
         flip:
           resonant: 0
@@ -2972,6 +2989,7 @@ marked:
       voice: 1.5
 
   # This rule is only to fix a preponderance of [tK)_-] things in v.5.
+  # FIXME: (proximal) for its persistence variants, this isn't enough.
   - condition: "-anterior +lateral -resonant"
     initial_prob: 0.9375
     prob: 0

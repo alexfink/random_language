@@ -337,6 +337,13 @@ sub generate_new_rule {
       }
     }
 
+    if (defined $rule->{splits}) {
+      my @splits = @{$rule->{splits}};
+      delete $rule->{splits};
+      delete $rule->{run_again};
+      $self->generate_new_rule($_, %args, unsplit_rule => $rule, dont_skip => 1) for @splits;
+    }
+
     # Since extra conditions added to this rule may have come out the same way, delete redundant ones,
     # i.e. rules made since invoking this function whose conditions are narrower than 
     # the one about to be inserted, and which have the same effect, unless they're persistent
