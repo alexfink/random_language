@@ -1752,6 +1752,9 @@ sub describe_rules {
       $text .= $deviation_texts unless !$no_main_VP and ($all_all_deviates or $both_are_lists);
     }
 
+    # TEMPORARY!!!
+    $text .= ' FILTER' if defined $rule->{filter};
+
     $text =~ s/^ *//;
     $descriptions{$i}{rule} = ucfirst $text . '. ';
 

@@ -37,6 +37,7 @@ sub deep_copy_indexed {
   for my $i (grep /^[0-9]*$/, keys %$self) {
     $a->{$i} = { %{$self->{$i}} };
   }
+  $a->{filter} = $self->{filter} if defined $self->{filter};
   $a;
 }
 
@@ -179,6 +180,106 @@ sub conflicts_with {
 
 
 
+# If $multi is 0, parse into $s a description of a phone set given in $d by {condition}, {except}, {extras}.
+# If $multi is 1, parse into $s a hash of the same for multiple indexed phones.
+# 
+# If $s already has stuff in it, overwrite that rather than trampling it.
+sub parse_phoneset {
+  my ($s, $d, $multi, %args) = (shift, shift, shift, @_);
+  my $FS = $args{FS};
+
+  my @phones = map $FS->parse($_), split /, */, $d->{condition}, -1;
+  for (0..$#phones) {
+    if (defined $s->{$_}) {
+      $s->{$_}{condition} = $FS->overwrite($s->{$_}{condition}, $phones[$_]);
+    } else {
+      $s->{$_}{condition} = $phones[$_];
+    }
+  }
+
+  if (defined $d->{except}) {
+    # two styles: hash for backward compatibility, string so that specifying single phones is sane
+    if (ref $d->{except} eq 'HASH') {
+      for my $displ (keys %{$d->{except}}) {
+        $s->{$displ}{except} .= ' ' if defined $s->{$displ}{except};
+        $s->{$displ}{except} .= join ' ', map $FS->parse($_), split / *\| */, $d->{except}{$displ};
+      }
+    } else {
+      my @exceptions = map $FS->parse($_), split /, */, $d->{except}, -1;
+      for my $displ (0..$#exceptions) {
+        $s->{$displ}{except} .= ' ' if defined $s->{$displ}{except};
+        $s->{$displ}{except} .= join ' ', map $FS->parse($_), split / *\| */, $d->{except}{$displ};
+      }
+    }
+  }
+
+  my $pause_phone;
+  @_ = split / +([0-9.]+) */, $d->{pause_phone};
+  if (scalar @_ == 1) {
+    $pause_phone = $FS->parse($d->{pause_phone}, undefined => 1);
+  } elsif (scalar @_ > 1) {
+    $pause_phone = $FS->parse(weighted_one_of(@_), undefined => 1);
+  }
+  # As a corollary of the sort here, '-' assignments follow '+' ones.  TODO: make this saner?
+  for my $e (sort keys %{$d->{extras}}) {
+    if (rand() < $d->{extras}{$e}) {
+      my ($e0, $e1);
+      if ($e =~ /^(.*) ([^ ]*)$/) {
+        ($e0, $e1) = ($1, $2);
+      } else {
+        ($e0, $e1) = ($e, 0);
+      }
+      if ($e0 eq '##') { # ad hoc notation for _only_ at extremum of word
+        $s->{$e1}{or_pause} = $pause_phone;
+        substr($s->{$e1}{condition}, 0, 1) = 'x'; # ad hoc match prevention
+      } elsif ($e0 eq '#') { # end of word _allowed_
+        $s->{$e1}{or_pause} = $pause_phone;
+      } elsif ($e0 =~ /^!/) {
+        $s->{$e1}{except} .= ' ' if defined $s->{$e1}{except};
+        $s->{$e1}{except} .= $FS->parse(substr($e0,1));
+      } else {
+        $s->{$e1}{condition} = $FS->overwrite($s->{$e1}{condition}, $FS->parse($e0));
+      }
+    }
+  }
+
+  # If this wasn't supposed to be multiple phones, lift everything up a level. 
+  unless ($multi) {
+    $s->{$_} = $s->{0}{$_} for keys %{$s->{0}};
+    delete $s->{0};
+  }
+}
+
+# Test a phoneset against a single phone.
+sub phoneset_matches {
+  my ($s, $phone) = (shift, shift);
+  if (defined $s->{condition}) {
+    return 0 unless $phone =~ /^$s->{condition}$/;
+  }
+  if (defined $s->{except}) {
+    for my $exception (split / /, $s->{except}) {
+      return 0 if $phone =~ /^$exception$/;
+    }
+  }
+  return 1;
+}
+
+# Test a hash of phonesets against a word, at given displacement $i.
+sub matches_word {
+  my ($self, $word, $i, %args) = (shift, shift, shift, @_);
+  for my $displ ($self->indices()) {
+    if ($i + $displ < 0 or $i + $displ >= @$word) {
+      next if !$args{nopause} and defined $self->{$displ}{or_pause};
+      return 0 if defined $self->{$displ}{condition};
+      next;
+    }
+    return 0 unless phoneset_matches($self->{$displ}, $word->[$i+$displ]);
+  }
+  return 1;
+}
+
+
+
 # If %args includes a list {changes}, tags describing the particular changes caused
 # will be pushed.  These tags are:
 # "c $v $f" -- feature $f was changed to value $v
@@ -190,12 +291,12 @@ sub run {
   my $syllable_position = defined $args{syllable_position} ? $args{syllable_position} : 0;
 
   my $word;
-  my (@inverse_filter, %surviving);
+  my (@inverse_filter, @surviving);
   if (defined $rule->{filter}) {
     # TODO: these invocations of {filter} will become matching by the filter objects.
-    @inverse_filter = grep $unfiltered_word->[$_] =~ /^$rule->{filter}$/, 0..@$unfiltered_word-1;
-    $word = [grep /^$rule->{filter}$/, @$unfiltered_word];
-    %surviving = map ($_ => 1), 0..@$word-1;
+    @inverse_filter = grep phoneset_matches($rule->{filter}, $unfiltered_word->[$_]), 0..@$unfiltered_word-1;
+    $word = [grep phoneset_matches($rule->{filter}, $_), @$unfiltered_word];
+    @surviving = (1,) x @$word;
   } else {
     $word = $unfiltered_word;
   }
@@ -204,20 +305,8 @@ sub run {
   my @displs = -1..@$word-1;   # start at -1 for assimilations to word-initial pause;
       # will need to be larger if rules can have non-canonical indices
   @displs = reverse @displs if (defined $rule->{direction} and $rule->{direction} < 0);
-  PHONE: for my $i (@displs) {
-    for my $displ ($rule->indices('condition')) {
-      next if !$args{nopause} and defined $rule->{$displ}{or_pause} and 
-              ($i + $displ < 0 or $i + $displ >= @$word);
-      next PHONE if ($i + $displ < 0 or $i + $displ >= @$word);
-      next PHONE if $word->[$i+$displ] !~ /^$rule->{$displ}{condition}$/;
-    }
-    for my $displ ($rule->indices('except')) {
-      next if ($i + $displ < 0 or $i + $displ >= @$word);
-      my @exceptions = split / /, $rule->{$displ}{except};
-      for (@exceptions) {
-        next PHONE if $word->[$i+$displ] =~ /^$_$/;
-      }
-    }
+  for my $i (@displs) {
+    next unless $rule->matches_word($word, $i, nopause => $args{nopause});
 
     for my $displ ($rule->indices('effects')) {
       next if ($i + $displ < 0 or $i + $displ >= @$word);
@@ -262,7 +351,7 @@ sub run {
       # Note that deletions are always sorted decreasing!
       splice @$word, $i+$_, 1 for sort {$b <=> $a} $rule->indices('deletions');
       if (defined $rule->{filter}) {
-        delete $surviving{$i+$_} for sort {$b <=> $a} $rule->indices('deletions');
+        $surviving[$i+$_] = 0 for grep(($i+$_ >= 0 and $i+$_ < @surviving), sort {$b <=> $a} $rule->indices('deletions'));
       } else {
         # can only do this if it's not a subword
         if (defined $args{sources}) {
@@ -273,11 +362,11 @@ sub run {
     }
   } 
 
-  # CURRENT: making this testable.
+  # CURRENT: making this testable.  HEREHEREHERE
   if (defined $rule->{filter}) {
     my $j = 0;
     for my $i (0..$#inverse_filter) {
-      if ($surviving{$i}) {
+      if ($surviving[$i]) {
         $unfiltered_word->[$inverse_filter[$i]] = $word->[$j++];
       } else {
         splice @$unfiltered_word, $inverse_filter[$i], 1;
@@ -528,76 +617,6 @@ sub gen_extra_condition {
 }
 
 
-# If $multi is 0, parse into $s a description of a phone set given in $d by {condition}, {except}, {extras}.
-# If $multi is 1, parse into $s a hash of the same for multiple indexed phones.
-# 
-# If $s already has stuff in it, overwrite that rather than trampling it.
-sub parse_phoneset {
-  my ($s, $d, $multi, %args) = (shift, shift, shift, @_);
-  my $FS = $args{FS};
-
-  my @phones = map $FS->parse($_), split /, */, $d->{condition}, -1;
-  for (0..$#phones) {
-    if (defined $s->{$_}) {
-      $s->{$_}{condition} = $FS->overwrite($s->{$_}{condition}, $phones[$_]);
-    } else {
-      $s->{$_}{condition} = $phones[$_];
-    }
-  }
-
-  if (defined $d->{except}) {
-    # two styles: hash for backward compatibility, string so that specifying single phones is sane
-    if (ref $d->{except} eq 'HASH') {
-      for my $displ (keys %{$d->{except}}) {
-        $s->{$displ}{except} .= ' ' if defined $s->{$displ}{except};
-        $s->{$displ}{except} .= join ' ', map $FS->parse($_), split / *\| */, $d->{except}{$displ};
-      }
-    } else {
-      my @exceptions = map $FS->parse($_), split /, */, $d->{except}, -1;
-      for my $displ (0..$#exceptions) {
-        $s->{$displ}{except} .= ' ' if defined $s->{$displ}{except};
-        $s->{$displ}{except} .= join ' ', map $FS->parse($_), split / *\| */, $d->{except}{$displ};
-      }
-    }
-  }
-
-  my $pause_phone;
-  @_ = split / +([0-9.]+) */, $d->{pause_phone};
-  if (scalar @_ == 1) {
-    $pause_phone = $FS->parse($d->{pause_phone}, undefined => 1);
-  } elsif (scalar @_ > 1) {
-    $pause_phone = $FS->parse(weighted_one_of(@_), undefined => 1);
-  }
-  # As a corollary of the sort here, '-' assignments follow '+' ones.  TODO: make this saner?
-  for my $e (sort keys %{$d->{extras}}) {
-    if (rand() < $d->{extras}{$e}) {
-      my ($e0, $e1);
-      if ($e =~ /^(.*) ([^ ]*)$/) {
-        ($e0, $e1) = ($1, $2);
-      } else {
-        ($e0, $e1) = ($e, 0);
-      }
-      if ($e0 eq '##') { # ad hoc notation for _only_ at extremum of word
-        $s->{$e1}{or_pause} = $pause_phone;
-        substr($s->{$e1}{condition}, 0, 1) = 'x'; # ad hoc match prevention
-      } elsif ($e0 eq '#') { # end of word _allowed_
-        $s->{$e1}{or_pause} = $pause_phone;
-      } elsif ($e0 =~ /^!/) {
-        $s->{$e1}{except} .= ' ' if defined $s->{$e1}{except};
-        $s->{$e1}{except} .= $FS->parse(substr($e0,1));
-      } else {
-        $s->{$e1}{condition} = $FS->overwrite($s->{$e1}{condition}, $FS->parse($e0));
-      }
-    }
-  }
-
-  # If this wasn't supposed to be multiple phones, lift everything up a level. 
-  unless ($multi) {
-    $s->{$_} = $s->{0}{$_} for keys %{$s->{0}};
-    delete $s->{0};
-  }
-}
-
 # To expand a rule tag:
 # - make all the resolutions, incl. related features, incl. loop-preserving and -breaking forms.
 # - make the rules (retaining the tag, for later remaking).  When flipping a feature between 0 and 1, 
@@ -725,6 +744,11 @@ sub generate {
     $base_rule->{recastability} = 1 - $d->{prob};
     $base_rule->{tag} = $tag;
     $base_rule->{cede} = 1 - $threshold;
+
+    if (defined $d->{filter}) {
+      $base_rule->{filter} = {};
+      parse_phoneset($base_rule->{filter}, $d->{filter}, 0, FS => $FS);
+    }
 
     my @unsplit_phones = map $FS->parse($_), split /, */, $unsplit_d->{condition}, -1;
 
