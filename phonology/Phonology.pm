@@ -5,6 +5,7 @@ use constant INF => 9**9**9; # is there really nothing sensible better?
 our $debug_alphabet; # used for printing phones for debugging only
 our $verbose = 0;
 our $debug = 0;
+our $noprune = 0;
 
 # Go from a prototypical prob to an actual one.  Now twice as gentle!
 sub fuzz {
@@ -448,7 +449,7 @@ sub generate {
   $pd->compute_inventory(); # base inventory for generation
   $pd->postprocess();
   delete $pd->{phone_generator}; # now this is needless
-  if ($debug < 1) {
+  if ($debug < 1 and !$noprune) {
     $pd->trim_inactive(); 
   } else {
     print STDERR "pruning of inactive rules skipped\n";

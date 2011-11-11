@@ -1008,8 +1008,9 @@ sub describe_syllable_structure {
 
 # TODO: update for these rule types and features:
 # - directionality
+# - {except} without a {condition}???  (unused probably)
 
-# More current issues:
+# FIXME: More current issues:
 # - There is a misstatement in 11598455.  It is a fundamental one: the rule as stated is
 #   _always_ wrong, given that an assimilation to the _same_ environment interferes with
 #   what would otherwise be the resolution of the resulting segment.  
@@ -1056,10 +1057,17 @@ sub describe_rules {
     my $effect = $rule->{$locus}{effects};
     my $old_effect = $effect;
     my $precondition = $rule->{$locus}{condition};
-    my ($pre, $old_pre, $post, $old_post, $far);
+    my ($pre, $old_pre, $post, $old_post);
     $old_pre = $pre = $rule->{$locus-1}{condition} if defined $rule->{$locus-1}{condition};
     $old_post = $post = $rule->{$locus+1}{condition} if defined $rule->{$locus+1}{condition};
-    $far = grep(($_ ne $locus-1 and $_ ne $locus and $_ ne $locus+1), $rule->indices('condition'));
+    my $far = grep(($_ ne $locus-1 and $_ ne $locus and $_ ne $locus+1), $rule->indices('condition'));
+
+    if (defined $rule->{filter}) {
+      $precondition = $FS->union($rule->{filter}{condition}, $precondition);
+      $old_pre = $pre = $FS->union($rule->{filter}{condition}, $pre);
+      $old_post = $post = $FS->union($rule->{filter}{condition}, $post);
+    }
+
     # Try to simplify assimilations, taking advantage of enrichments.
     for my $i (0..length($effect)-1) {
       substr($effect, $i, 1) = substr($pre, $i, 1)
@@ -1132,9 +1140,6 @@ sub describe_rules {
     }
 
     # The big one: get the new inventory.
-    
-    # FIXME: this way about it has a great flaw: there may be persistent sequence rules
-    # that *always* run after a given rule, but this won't notice them at all.
     my @new_inventory = @inventory;
     my $entailed_effect = $FS->add_entailments($effect);
     my %outcome;
@@ -1752,8 +1757,11 @@ sub describe_rules {
       $text .= $deviation_texts unless !$no_main_VP and ($all_all_deviates or $both_are_lists);
     }
 
-    # TEMPORARY!!!
-    $text .= ' FILTER' if defined $rule->{filter};
+    # TODO: (proximal)  Describe filter rules.
+    # On the whole, it should suffice to replace "after $foo" with "when the next $filter is $foo-described-as-a-kind-of-$filter", &s.
+    # But we'll need to have overwritten $foo with the filter in mind, way back.  
+    # If $foo is identical to the filter as a set, a better wording is "if there is a $foo later in the word".  
+    $text .= ' FILTER' if defined $rule->{filter}; # TEMPORARY
 
     $text =~ s/^ *//;
     $descriptions{$i}{rule} = ucfirst $text . '. ';

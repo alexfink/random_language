@@ -113,6 +113,16 @@ sub compatible {
   return 1;
 }
 
+# Takes the setwise union of two phones, returning the 'x' thing if it's empty.
+sub union {
+  my ($self, $a, $b) = @_;
+  if ($self->compatible($a, $b)) {
+    return overwrite($a, $b);
+  } else {
+    return 'x' x @{$self->{features}};
+  }
+}
+
 sub add_requirements {
   my ($self, $reqd) = @_;
   for my $i (0..length($reqd)-1) {
