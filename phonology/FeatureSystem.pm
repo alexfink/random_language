@@ -113,8 +113,8 @@ sub compatible {
   return 1;
 }
 
-# Takes the setwise union of two phones, returning the 'x' thing if it's empty.
-sub union {
+# Takes the setwise intersection of two phones, returning the 'x' thing if it's empty.
+sub intersection {
   my ($self, $a, $b) = @_;
   if ($self->compatible($a, $b)) {
     return overwrite($a, $b);

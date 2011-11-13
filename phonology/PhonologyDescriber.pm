@@ -1063,9 +1063,9 @@ sub describe_rules {
     my $far = grep(($_ ne $locus-1 and $_ ne $locus and $_ ne $locus+1), $rule->indices('condition'));
 
     if (defined $rule->{filter}) {
-      $precondition = $FS->union($rule->{filter}{condition}, $precondition);
-      $old_pre = $pre = $FS->union($rule->{filter}{condition}, $pre);
-      $old_post = $post = $FS->union($rule->{filter}{condition}, $post);
+      $precondition = $FS->intersection($rule->{filter}{condition}, $precondition);
+      $old_pre = $pre = $FS->intersection($rule->{filter}{condition}, $pre);
+      $old_post = $post = $FS->intersection($rule->{filter}{condition}, $post);
     }
 
     # Try to simplify assimilations, taking advantage of enrichments.
