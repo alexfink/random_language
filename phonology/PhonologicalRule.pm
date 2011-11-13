@@ -133,6 +133,8 @@ sub deep_copy_indexed {
   bless $a;
   for my $i (grep /^-?[0-9]*$/, keys %$self) {
     $a->{$i} = { %{$self->{$i}} };
+    delete $a->{$i}{condition_ar};
+    delete $a->{$i}{outcome};
   }
   $a->{filter} = $self->{filter} if defined $self->{filter};
   $a;
@@ -175,26 +177,9 @@ sub strip_feed_annotation {
 }
 
 # Given two rules ri, rj, can the execution of ri cause rj to be applicable
-# where it wasn't before?
-#
-# One wrinkle is rule priorities. 
-# Featuresets have priorities to accommodate strippings: when a phone meets the condition
-# of a stripping, the effects of the stripping should remain in effect even though
-# rules for generic phones might say otherwise.  Rules also have priorities,
-# which should equal the priorities of their preconditions.  
-# Priority is zero if not defined.
-# There are ramifications:
-# (1) a higher-priority rule does not feed a lower-priority rule;
-# (2) a lower-priority rule feeds a higher-priority rule if they're both
-#     trying to change the same thing, even if they aren't otherwise feedy;
-# (3) when a phone might have fallen out of its priority class, we need to rerun all the rules
-#     we'd been suppressing.  
-# Thankfully, the latter case does not arise all that often, as the only stripping
-# we presently use sets features off which are not often turned on.
-#
-# Heed that strippings do not vary with the language!  They belong transcendingly to the feature system.
+# where it wasn't before?  This can yield false positives.
 
-# This had been somewhat of a bottleneck, still.  Can we speed it up?
+# This had been somewhat of a bottleneck, but I haven't checked for a long time.
 
 # TODO: account for except.
 
@@ -202,29 +187,13 @@ sub feeds {
   my ($ri, $rj, %args) = (shift, shift, @_);
   my $FS = $ri->{FS}; # shd check that they're the same
 
-  # Sequence-type rationales overrule ramification (1).
   # TODO: update this as we get new rule types
   # an insertion means we have to look at everything (whereas a fission might be okay with less); etc.
   return 1 if scalar $ri->indices('deletions') and 
       (scalar $ri->indices('condition') > 1) or scalar $ri->indices('or_pause');
 
-  # ramification (1)
-  #return 0 if (defined $ri->{priority} ? $ri->{priority} : 0) >
-  #            (defined $rj->{priority} ? $rj->{priority} : 0); 
-
   for my $i_displ ($ri->indices('effects')) {
     for my $j_displ ($rj->indices('condition')) {
-      # ramification (2)
-      #return 1 if (defined $ri->{priority} ? $ri->{priority} : 0) <
-      #            (defined $rj->{priority} ? $rj->{priority} : 0) and
-      #            defined $rj->{$j_displ}{effects} and
-      #            !$FS->compatible($ri->{$i_displ}{effects}, $rj->{$j_displ}{effects});
-      # ramification (3)
-      #for my $str (@{$FS->{strippings}}) {
-      #  return 1 if $FS->compatible($ri->{$i_displ}{condition}, $str->{condition_parsed}) and
-      #             !$FS->compatible($ri->{$i_displ}{effects}, $str->{condition_parsed}); 
-      #}
-      
       # this is costly enough that it's slightly worth putting it in here.  klugily, assume index 0 has a condition
       $ri->feed_annotate() if !defined $ri->{0}{condition_ar};
       $rj->feed_annotate() if !defined $rj->{0}{condition_ar};
@@ -261,15 +230,17 @@ sub feeds {
 # outcomes are incompatible.
 
 sub conflicts_with {
-  my ($ri, $rj) = (shift, shift);
+  my ($ri, $rj, %args) = (shift, shift, @_);
   my $FS = $ri->{FS}; # shd check if they're the same
   my (@pij, @pji);
   return 0 unless $ri->feeds($rj, pairs => \@pij) and $rj->feeds($ri, pairs => \@pji);
-  return 1 unless @pij and @pji; # since it's some priority ramification thing.  shouldn't arise
   for my $dij (@pij) {
     for my $dji (@pji) {
-      next unless $dij->[0] eq $dji->[1] and $dij->[1] eq $dji->[0];
-      return 1 if !$FS->compatible($ri->{$dji->[1]}{effects}, $rj->{$dij->[1]}{effects});
+      my ($i, $j) = ($dij->[0], $dji->[0]);
+      next unless $i eq $dji->[1] and $j eq $dij->[1];
+      @{$args{indices}} = ($i, $j) if defined $args{indices};
+      next if !$FS->compatible($ri->{$j}{condition}, $rj->{$i}{condition});
+      return 1 if !$FS->compatible($ri->{$j}{effects}, $rj->{$i}{effects});
     }
   }
   return 0;
@@ -306,7 +277,6 @@ sub run {
   my $word;
   my (@inverse_filter, @surviving);
   if (defined $rule->{filter}) {
-    # TODO: these invocations of {filter} will become matching by the filter objects.
     @inverse_filter = grep $rule->{filter}->matches($unfiltered_word->[$_]), 0..@$unfiltered_word-1;
     $word = [grep $rule->{filter}->matches($_), @$unfiltered_word];
     @surviving = (1,) x @$word;
@@ -331,7 +301,7 @@ sub run {
       # Handle the assimilation characters. 
       if ($effects =~ /[<>]/) {
         my ($next_before, $next_after) = (undef, undef);
-        for ($rule->indices('condition')) { # TODO: use the actual offsets when distance rules exist
+        for ($rule->indices('condition')) {
           $next_before = $_ if (!defined $next_before or $next_before < $_) and $_ < $displ;
           $next_after = $_ if (!defined $next_after or $next_after > $_) and $_ > $displ;
         }
@@ -375,7 +345,6 @@ sub run {
     }
   } 
 
-  # CURRENT: making this testable.  HEREHEREHERE
   if (defined $rule->{filter}) {
     my $j = 0;
     for my $i (0..$#inverse_filter) {
@@ -393,61 +362,79 @@ sub run {
   $changed;
 }
 
-# Create two variants of this rule, one persistent, one not.  Weight appropriately.
+# Record on this rule that rule $rj, whose number is $j, should be inactivated if this one is taken.
+sub mark_to_inactivate {
+  my ($self, $rj, $j) = (shift, shift);
+  push @{$self->{inactivate}}, $j;
+  # For now, don't regenerate split-off pieces of split rules, since they'll come back without the base part of their condition.
+  # this is an ugly kluge, but few rules have more than one effect
+  if (defined $rj->{tag} and $rj->{tag} !~ /_split/) {
+    my $evitands = join '|', map($rj->{$_}{effects}, $rj->indices('effects'));
+    push @{$self->{broken_tags}}, $rj->{tag} . ' ' . $evitands;
+  }
+}
+
+# Create persistent and impersistent variants of this rule, one persistent, one not.  Weight appropriately.
+# In fact, there are two kinds of persistent variants; one tries to redo every rule it conflicts with,
+# while one takes on their conditions as excepts in many cases (if this rule is recastable enough).
 sub persistence_variants {
   my ($self, $base_weight, $pd, $persistence_weight, $no_persist, $generable_val) = 
-      (shift, shift, shift, shift, shift);
+      (shift, shift, shift, shift, shift, shift);
   my $phonology = $pd->{phonology};
   my @makings;
 
-  for my $persistent (0..1) {
-    next if $persistent and $no_persist;
-    my $rule = {%$self};
-    $rule->{inactive} = scalar @$phonology if !$persistent; # TODO: check if this is really the right convention
+  my $impersistent = $self->deep_copy_indexed();
+  $impersistent->{inactive} = scalar @$phonology;
+  push @makings, [$impersistent, $base_weight * (1 - $persistence_weight)];
 
-    # Loopbreaks and the like.  Only a worry if you want to be persistent.
-    # If an older persistent rule is looping you, there's trouble;
-    # in this situation, break and regenerate the older rule.
-    my $loopbreak_penalty = 1;
-    if ($persistent) {
-      # The test for looping we do here was at one point the most expensive thing
-      # in the phonology generation.  By way of cutting down, only check rules
-      # which set something the (potential) opposite of this rule.
-      my @potential_conflicts;
-      bless $rule; # kluge, but whatever
-      for my $displ ($rule->indices('effects')) {
-        for my $i (0..@{$pd->{FS}{features}}-1) {
-          push @potential_conflicts, @{$generable_val->[1-substr($rule->{$displ}{effects}, $i, 1)][$i]}
-              if substr($rule->{$displ}{effects}, $i, 1) =~ /[01]/
-                  and defined($generable_val->[1-substr($rule->{$displ}{effects}, $i, 1)][$i]);
-          if (substr($rule->{$displ}{effects}, $i, 1) =~ /[<>]/) {
-            push @potential_conflicts, @{$generable_val->[0][$i]} if defined($generable_val->[0][$i]);
-            push @potential_conflicts, @{$generable_val->[1][$i]} if defined($generable_val->[1][$i]);
-          }
+  unless ($no_persist) {
+    my $redo = $self->deep_copy_indexed();
+    my $loopbreak_penalty = 1 - $self->{recastability};
+    my $redo_and_except = $self->deep_copy_indexed();
+    my $loopbreak_penalty_and_except = $self->{recastability};
+    # The test for looping we do here was at one point the most expensive thing
+    # in the phonology generation.  By way of cutting down, only check rules
+    # which set something the (potential) opposite of this rule.
+    my @potential_conflicts;
+    for my $displ ($redo->indices('effects')) {
+      for my $i (0..@{$pd->{FS}{features}}-1) {
+        push @potential_conflicts, @{$generable_val->[1-substr($redo->{$displ}{effects}, $i, 1)][$i]}
+            if substr($redo->{$displ}{effects}, $i, 1) =~ /[01]/
+                and defined($generable_val->[1-substr($redo->{$displ}{effects}, $i, 1)][$i]);
+        if (substr($redo->{$displ}{effects}, $i, 1) =~ /[<>]/) {
+          push @potential_conflicts, @{$generable_val->[0][$i]} if defined($generable_val->[0][$i]);
+          push @potential_conflicts, @{$generable_val->[1][$i]} if defined($generable_val->[1][$i]);
         }
       }
-      my %pch = map(($_ => 1), @potential_conflicts);
-      @potential_conflicts = keys %pch; 
-      for my $j (@potential_conflicts) {
-        next if defined $phonology->[$j]{inactive} and $phonology->[$j]{inactive} < @$phonology;
-        if ($rule->conflicts_with($phonology->[$j])) {
-#              print "$reqd > $effects and\n$jreqd > $phonology->[$j]{$displ}{effects} [$j] clash\n"; # debug
-          push @{$rule->{inactivate}}, $j;
-          # this is an ugly kluge, but few rules have more than one effect
-          if (defined $phonology->[$j]{tag}) {
-            my $evitands = join '|', map($phonology->[$j]{$_}{effects}, $phonology->[$j]->indices('effects'));
-            push @{$rule->{broken_tags}}, $phonology->[$j]{tag} . ' ' . $evitands;
-          }
-          $loopbreak_penalty *= $phonology->[$j]{recastability} if defined $phonology->[$j]{recastability};
+    }
+#print STDERR join(', ', @potential_conflicts) . "   persistence weight: $persistence_weight\n"; #gdgd
+    my %pch = map(($_ => 1), @potential_conflicts);
+    @potential_conflicts = keys %pch; # uniq
+
+    my @conflict_indices;
+    for my $j (@potential_conflicts) {
+      next if defined $phonology->[$j]{inactive} and $phonology->[$j]{inactive} < @$phonology;
+      if ($self->conflicts_with($phonology->[$j], indices => \@conflict_indices)) {
+        #print STDERR "\nclash:\n" . $phonology->[$j]->debug_dump() . $redo->debug_dump(); # debug
+        my $recastability = 1;
+        $recastability = $phonology->[$j]{recastability} if defined $phonology->[$j]{recastability};
+        
+        $redo->mark_to_inactivate($phonology->[$j], $j);
+        $loopbreak_penalty *= $recastability;
+        
+        if ($recastability <= $self->{recastability}) { # is this sensible?
+          $redo_and_except->{$conflict_indices[0]}{except} .= ' ' if defined $redo_and_except->{$conflict_indices[0]}{except};
+          $redo_and_except->{$conflict_indices[0]}{except} .= $phonology->[$j]{$conflict_indices[1]}{condition};
+        } else {
+          $redo_and_except->mark_to_inactivate($phonology->[$j], $j);
+          $loopbreak_penalty_and_except *= $recastability;
         }
       }
-    } # if $persistent
-
-    push @makings, [$rule,
-                    $base_weight *
-                    ($persistent ? $persistence_weight : 1 - $persistence_weight) *
-                    $loopbreak_penalty];
-  }
+    }
+    push @makings, [$redo, $base_weight * $persistence_weight * $loopbreak_penalty];
+    push @makings, [$redo_and_except, $base_weight * $persistence_weight * $loopbreak_penalty_and_except];
+  } # unless ($no_persist)
+  
   @makings;
 }
 
@@ -704,7 +691,6 @@ sub generate {
         recastability => 1 - $weight,
       };
       # Default-provision rules shouldn't run where a stripping exists.  
-      # This could be made more general later.
       for (@{$FS->{strippings}}) {
         if ($_->{strip} =~ /(^| )$FS->{features}[$k]{name}( |$)/) {
           $rule->{0}{except} = $FS->parse($_->{condition});
@@ -736,7 +722,6 @@ sub generate {
     my $rule = {
       0 => {condition => $precondition, effects => $effects},
       recastability => 0,
-      priority => $FS->{strippings}[$k]{priority},
       tag => $tag,
       FS => $FS,
     };
@@ -758,6 +743,7 @@ sub generate {
     $base_rule->{recastability} = 1 - $d->{prob};
     $base_rule->{tag} = $tag;
     $base_rule->{cede} = 1 - $threshold;
+    $base_rule->{FS} = $FS;
 
     if (defined $d->{filter}) {
       $base_rule->{filter} = PhoneSet::parse($d->{filter}, 0, FS => $FS);
@@ -979,6 +965,7 @@ sub generate {
       $j = $_, $selected_rule = $resolutions[$_], last if (($w -= $weights[$_]) < 0);  
     }
 
+    return unless $selected_rule;
     bless $selected_rule;
     
     # Decorate the selected resolution by clearing features that now lack their requirements.
@@ -1038,7 +1025,7 @@ sub generate {
     }
   }
 
-  # Abandon this ruls if it does nothing now.
+  # Abandon this rule if it does nothing now.
   # TODO: update these tests for rules that do nothing as needed
   return unless scalar $selected_rule->indices('effects') or scalar $selected_rule->indices('deletions'); 
 
@@ -1056,7 +1043,6 @@ sub generate {
   # just drop out when regenerated.
   $selected_rule->{tag} = $tag unless $add_a_condition;
   $selected_rule->{run_again} = 1 if ($add_a_condition and !$skip_me);
-  $selected_rule->{priority} = 0 if !defined $selected_rule->{priority};
   if (defined $selected_rule->{base_weight}) {
     $selected_rule->{recastability} = (1 - $selected_rule->{base_weight} / $total_base_weight);
     $selected_rule->{recastability} = 0 if $selected_rule->{recastability} < 0;

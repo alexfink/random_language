@@ -330,14 +330,6 @@ sub generate_new_rule {
     }
     delete $rule->{inactivate};
 
-    for my $displ ($rule->indices('effects')) {
-      for my $i (0..@{$self->{FS}{features}}-1) {
-        if (substr($rule->{$displ}{effects}, $i, 1) =~ /[01]/) {
-          push @{$args{generable_val}[substr($rule->{$displ}{effects}, $i, 1)][$i]}, scalar @$phonology;
-        }
-      }
-    }
-
     if (defined $rule->{splits}) {
       my @splits = @{$rule->{splits}};
       delete $rule->{splits};
@@ -379,21 +371,36 @@ sub generate_new_rule {
       }
     }
 
+    # This must be done after all mucking about with deleting rules.
+    for my $displ ($rule->indices('effects')) {
+      for my $i (0..@{$self->{FS}{features}}-1) {
+        if (substr($rule->{$displ}{effects}, $i, 1) =~ /[01]/) {
+          push @{$args{generable_val}[substr($rule->{$displ}{effects}, $i, 1)][$i]}, scalar @$phonology;
+        } elsif (substr($rule->{$displ}{effects}, $i, 1) eq '<') {
+
+        } elsif (substr($rule->{$displ}{effects}, $i, 1) eq '>') {
+
+        }
+      }
+    }
+
     push @$phonology, $rule;
 
     # Recurse to replace any other rule which we deactivated; make sure these don't resolve 
     # the same as the bad rule.
     # (Incidentally, we couldn't recurse before the push; it would break rule referencing by number.)
+    #
+    # Watch out: this mechanism will cause infinite recursions if there are two conflicting rules of prob 1 (=> recastability 0).
     for my $bt (@{$rule->{broken_tags}}) {
       $bt =~ /^(.*) ([01u.]*)$/;
       my ($tag, $avoid) = ($1, $2);
       my %otherargs = %args;
       delete $otherargs{avoid};
       delete $otherargs{dont_skip};
-  #    print "{\n"; # debug
+      #print "{\n"; # debug
       $args{avoid} = [] if !defined $args{avoid};
       $self->generate_new_rule($tag, avoid => [(split /\|/, $avoid), @{$args{avoid}}], %otherargs);
-  #    print "}\n"; # debug
+      #print "}\n"; # debug
     }
     delete $rule->{broken_tags};
 

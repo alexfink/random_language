@@ -77,6 +77,9 @@ sub parse_args {
     if ($arg eq '-D') {
       $Phonology::debug++;
     }
+    elsif ($arg eq '--noprune') {
+      $Phonology::noprune++;
+    }
     elsif ($arg eq '-r') {
       $seed = shift;
       die "-r expects an integer argument\n" if !defined $seed or ($seed !~ /^\-?[0-9]+$/);
