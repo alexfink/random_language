@@ -136,7 +136,8 @@ sub deep_copy_indexed {
     delete $a->{$i}{condition_ar};
     delete $a->{$i}{outcome};
   }
-  $a->{filter} = $self->{filter} if defined $self->{filter};
+  delete $a->{broken_tags};
+  $a->{filter} = { %{$self->{filter}} } if defined $self->{filter};
   $a;
 }
 
@@ -364,7 +365,7 @@ sub run {
 
 # Record on this rule that rule $rj, whose number is $j, should be inactivated if this one is taken.
 sub mark_to_inactivate {
-  my ($self, $rj, $j) = (shift, shift);
+  my ($self, $rj, $j) = (shift, shift, shift);
   push @{$self->{inactivate}}, $j;
   # For now, don't regenerate split-off pieces of split rules, since they'll come back without the base part of their condition.
   # this is an ugly kluge, but few rules have more than one effect
@@ -407,7 +408,6 @@ sub persistence_variants {
         }
       }
     }
-#print STDERR join(', ', @potential_conflicts) . "   persistence weight: $persistence_weight\n"; #gdgd
     my %pch = map(($_ => 1), @potential_conflicts);
     @potential_conflicts = keys %pch; # uniq
 
