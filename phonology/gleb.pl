@@ -15,6 +15,7 @@ use YAML::Any;
 use CGI;
 
 use FeatureSystem;
+use PhoneSet;
 use PhonologicalRule;
 use Phonology;
 use Transcription;
