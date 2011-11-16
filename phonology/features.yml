@@ -6,13 +6,12 @@ version: "5.0a"
 # proximal TODO: one or a couple (targetted resp. to coda & intervocalic) placelessising rules for coronals (affricates no) and dorsals (sometimes just uvulars). 
 # Also, test whether [?] etc. isn't surviving in the post-phoneme stage as much as it should.
 
-# one-time coronal palatalisation rule?
-
 # A way to make e.g. [M\_+] prefer to resolve according to frontness of a nearby vowel.  The trouble with this is that it has to come before the uniform resolution of [M\_+] to take effect.  That means it comes before the phoneme boundary, which is very problematic.  Or is it?  Maybe it only is for writing the rules up, and for that we should get by if we can project forward.  (It's the same problem that e.g. harmony can be expected to invoke.)
 # Probabilistic pre-strippings??  The trouble with this is changing them in diachrony.  I guess one has to change the whole cluster, and make it uninterruptable.
 # Coronals shouldn't front vowels, nor labials round them, etc., unless more obvious sources do too.
 
 # fricatives and unvoiced resonants sometimes becoming _aspirated_ stops
+# similarly, uvular fricatives sometimes going to [R] sooner than [7_^]
 
 # word-final lengthening.
 
@@ -150,9 +149,9 @@ features:
   - name: resonant
     families: manner manner_phonation
     generated:
-    # come back to syllabic Cs (assumptions throughout)
+    # TODO: come back to syllabic Cs (assumptions throughout)
       - {condition: "+syllabic", contrast: 1, prob: 1} # another kluge
-      - {condition: "-syllabic", contrast: 1, prob: 0.125} # should raise if we ever stop favouring resonants in generation.  (later) what?
+      - {condition: "-syllabic", contrast: 1, prob: 0.125}
     default:
       - {condition: "+syllabic", value: 1}
       - {condition: "", value: 0.6} # epenthetic /t k/ etc. are much rarer than continuants; and /? h/ are unmarked for resonant in this setup.  besides, features break off as resonants.  even so...
@@ -1372,33 +1371,33 @@ marked:
   # Lowering before rhotics.
   - condition: "dorsal +resonant -lateral -tap_or_trill -high, +resonant"
     except: {1: "-coronal -tap_or_trill | +lateral -tap_or_trill"}
-    prob: 0.022222
+    prob: 0.027778
     extras: {"-labial 1": 0.5, "+tap_or_trill 1": 0.333333, "coronal -tap_or_trill 1": 0.166667, "-ATR 0": 0.8}
     resolve: {"r +low 0": 1}
 
   - condition: "dorsal +resonant -lateral -tap_or_trill +high, +resonant"
     except: {1: "-coronal -tap_or_trill | +lateral -tap_or_trill"}
-    prob: 0.022222
+    prob: 0.027778
     extras: {"-labial 1": 0.5, "+tap_or_trill 1": 0.333333, "coronal -tap_or_trill 1": 0.166667}
     resolve: {"r -high 0": 1}
 
   - condition: "dorsal +resonant -lateral -tap_or_trill +ATR, +resonant"
     except: {1: "-coronal -tap_or_trill | +lateral -tap_or_trill"}
-    prob: 0.022222
+    prob: 0.027778
     extras: {"-labial 1": 0.5, "+tap_or_trill 1": 0.333333, "coronal -tap_or_trill 1": 0.166667}
     resolve: {"r -ATR 0": 1}
 
   # Raising before nasals.
   - condition: "dorsal +resonant -lateral -tap_or_trill +low, -syllabic +nasal"
-    prob: 0.022222
+    prob: 0.027778
     resolve: {"r -low 0": 1}
 
   - condition: "dorsal +resonant -lateral -tap_or_trill -low, -syllabic +nasal"
-    prob: 0.022222
+    prob: 0.027778
     resolve: {"r +high 0": 1}
 
   - condition: "dorsal +resonant -lateral -tap_or_trill -ATR, -syllabic +nasal"
-    prob: 0.022222
+    prob: 0.027778
     resolve: {"r +ATR 0": 1}
 
   # a rare resolution of [G\i]!
@@ -1956,6 +1955,18 @@ marked:
     prob: 0.9
     resolve: {"r -ATR 1": 1}
 
+
+
+## TESTING TESTING TESTING TESTING   repair 170
+#  - condition: ", "
+#    filter:
+#      condition: "+syllabic dorsal +resonant -lateral -tap_or_trill"
+#    prob: 1
+#    resolve: {"r >ATR 0": 1}
+#  # when this rule is actually in: use } rather than >; sometimes low doesn't trigger, or is transparent; other height conditions?; glides occasionally too
+
+
+
   - condition: "dorsal +resonant -lateral -tap_or_trill, -syllabic +pharyngealised"
     prob: 0.666667
     extras: {"+low 0": 0.25, "-front 0": 0.975}
@@ -2025,7 +2036,6 @@ marked:
 
 # msd -- here begin single-phoneme conditions
 
-  # HERE: is this in fact working?
   # Glottals often have nasality passthrough, but they don't go nasal themselves.  Thus this shouldn't be phonemic_only.
   # Split resolution for the product of nasals that go placeless (per Blevins this is often [N], or a nasal glide.)
   - condition: "-dorsal -coronal -labial +nasal"
@@ -2051,18 +2061,20 @@ marked:
   - condition: "-dorsal -coronal -labial +front"
     prob: 0.925
     extras: {"-constricted_glottis -spread_glottis 0": 0.666667}
-    flip:
-      dorsal: 4
-      front: 0.01
-    univalent_addition: "+resonant"
+    resolve: {"r +dorsal +resonant 0": 1}
+    split: # colored [h] has a special tendency to go to _fricatives_
+      - condition: "+spread_glottis 0"
+        prob: 0.6
+        resolve: {"r +dorsal +fricative 0": 1}
 
   - condition: "-dorsal -coronal -labial +round"
     prob: 0.925
     extras: {"-constricted_glottis -spread_glottis 0": 0.666667}
-    flip:
-      dorsal: 4
-      round: 0.01
-    univalent_addition: "+resonant"
+    resolve: {"r +dorsal +resonant 0": 1}
+    split:
+      - condition: "+spread_glottis 0"
+        prob: 0.6
+        resolve: {"r +dorsal +fricative 0": 1}
 
   - condition: "coronal dorsal"
     prob: 0.99
@@ -2358,6 +2370,8 @@ marked:
     prob: 0.9975
     flip:
       implosive: 0.1
+    related_weight:
+      "+fricative": 0
 
   - condition: "+implosive +fricative"
     prob: 0.9975
@@ -2370,7 +2384,7 @@ marked:
   - condition: "+implosive +voice -constricted_glottis"
     prob: 0
     contrast_probs:
-      "-constricted_glottis, +constricted_glottis": 0.95
+      "-constricted_glottis, +constricted_glottis": 0.983333
     resolve: {"r +constricted_glottis 0": 1}
 
   # impossible radicals.  first the nothing-at-all consonant.
@@ -2590,6 +2604,7 @@ marked:
 
   - condition: "+long +tap_or_trill -trill"
     prob: 1
+    resolve: {"r +trill 0": 1}
 
   - condition: "labial +tap_or_trill"
     prob: 0.966667
@@ -2610,7 +2625,7 @@ marked:
     prob: 0.333333
 
   - condition: "dorsal +tap_or_trill"
-    prob: 0.75 # not higher 'cause, by the below, we don't get them if we haven't hit uvular
+    prob: 0.666667 # not higher 'cause, by the below, we don't get them if we haven't hit uvular
 
   - condition: "dorsal +tap_or_trill +high"
     prob: 1
@@ -2953,6 +2968,10 @@ marked:
     flip:
       voice: 0.033333
       fricative: 4
+
+  - condition: "coronal +voice -resonant -nasal" # low-frequency [d] gap
+    prob: 0.006667
+    resolve: {"r +resonant 1": 1}
 
   - condition: "dorsal +voice -fricative -nasal" # the [g] gap
     prob: 0.111111
