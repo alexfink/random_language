@@ -143,8 +143,7 @@ sub conflicts_with {
       my ($i, $j) = ($dij->[0], $dji->[0]);
       next unless $i eq $dji->[1] and $j eq $dij->[1];
       @{$args{indices}} = ($i, $j) if defined $args{indices};
-      next if !$FS->compatible($ri->{$j}{condition}, $rj->{$i}{condition});
-      return 1 if !$FS->compatible($ri->{$j}{effects}, $rj->{$i}{effects});
+      return 1 if !$FS->compatible($ri->{$i}{effects}, $rj->{$j}{effects});
     }
   }
   return 0;
@@ -319,6 +318,7 @@ sub persistence_variants {
       next if defined $phonology->[$j]{inactive} and $phonology->[$j]{inactive} < @$phonology;
       if ($self->conflicts_with($phonology->[$j], indices => \@conflict_indices)) {
         #print STDERR "\nclash:\n" . $phonology->[$j]->debug_dump() . $redo->debug_dump(); # debug
+        #print STDERR "clash with $j\n"; #debug
         my $recastability = 1;
         $recastability = $phonology->[$j]{recastability} if defined $phonology->[$j]{recastability};
         
@@ -326,8 +326,10 @@ sub persistence_variants {
         $loopbreak_penalty *= $recastability;
         
         if ($recastability <= $self->{recastability}) { # is this sensible?
+          my $clash = $pd->{FS}->overwrite($phonology->[$j]{$conflict_indices[1]}{condition}, $phonology->[$j]{$conflict_indices[1]}{effects});
+          $clash =~ s/u/./g; # in case e.g. of forcing undefined
           $redo_and_except->{$conflict_indices[0]}{except} .= ' ' if defined $redo_and_except->{$conflict_indices[0]}{except};
-          $redo_and_except->{$conflict_indices[0]}{except} .= $phonology->[$j]{$conflict_indices[1]}{condition};
+          $redo_and_except->{$conflict_indices[0]}{except} .= $clash;
         } else {
           $redo_and_except->mark_to_inactivate($phonology->[$j], $j);
           $loopbreak_penalty_and_except *= $recastability;
