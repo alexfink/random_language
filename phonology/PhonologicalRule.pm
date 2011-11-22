@@ -36,11 +36,15 @@ sub deep_copy_indexed {
   bless $a;
   for my $i (grep /^-?[0-9]*$/, keys %$self) {
     $a->{$i} = { %{$self->{$i}} };
+    bless $a->{$i}, 'PhoneSet';
     delete $a->{$i}{condition_ar};
     delete $a->{$i}{outcome};
   }
+  if (defined $self->{filter}) {
+    $a->{filter} = { %{$self->{filter}} };
+    bless $a->{filter}, 'PhoneSet';
+  }
   delete $a->{broken_tags};
-  $a->{filter} = { %{$self->{filter}} } if defined $self->{filter};
   $a;
 }
 
@@ -103,15 +107,35 @@ sub feeds {
       $rj->feed_annotate() if !defined $rj->{0}{condition_ar};
       next if !$FS->compatible($ri->{$i_displ}{outcome}, $rj->{$j_displ}{condition_ar});
 
-      # The wrinkle-free cases.
       # We might have rules which unnecessarily set features identically
       # to their precondition (antithetical, I'm thinking of you); this can't feed, of course.
-      # Either-value assimilation characters can always feed.
       for my $f (0..@{$FS->{features}}-1) {
         if (substr($ri->{$i_displ}{effects}, $f, 1) =~ /[<>]/ and
             substr($rj->{$j_displ}{condition}, $f, 1) ne '.') {
+          # Don't count this assimilation as feeding another rule if it can't create the precondition
+          # _in a word that lacked it before_.  
+          my $effects = $ri->{$i_displ}{effects};
+          if ($effects =~ />/ and $effects =~ /</) {
+            return 1 unless defined $args{pairs};
+            push @{$args{pairs}}, [$i_displ, $j_displ]; next;
+          }
+          my $direction = ($effects =~ />/) ? 1 : -1;
+          my $condition = $rj->{$j_displ}{condition};
+          my $trigger = '.' x @{$FS->{features}};
+          for (0..$#{$FS->{features}}) {
+            substr($trigger, $_, 1) = substr($condition, $_, 1) if substr($effects, $_, 1) =~ /[<>]/;
+          }
+          $trigger = $FS->add_entailments($FS->add_requirements($FS->intersect($trigger, $ri->{$i_displ+$direction}{condition})));
+          next if $trigger =~ /^$condition$/;
+
           return 1 unless defined $args{pairs};
-          push @{$args{pairs}}, [$i_displ, $j_displ];
+          push @{$args{pairs}}, [$i_displ, $j_displ]; next;
+        }
+        # or, this rule could force the assimilation to apply again.  kluge out undefineds
+        if (substr($rj->{$j_displ}{effects}, $f, 1) =~ /[<>]/ and
+            substr($ri->{$i_displ}{condition}, $f, 1) !~ /[.u]/) {
+          return 1 unless defined $args{pairs};
+          push @{$args{pairs}}, [$i_displ, $j_displ]; next;
         }
         if (substr($ri->{$i_displ}{effects}, $f, 1) eq 
               substr($rj->{$j_displ}{condition}, $f, 1) and
@@ -119,7 +143,7 @@ sub feeds {
               substr($ri->{$i_displ}{condition}, $f, 1) and 
             substr($ri->{$i_displ}{effects}, $f, 1) ne '.') {
           return 1 unless defined $args{pairs};
-          push @{$args{pairs}}, [$i_displ, $j_displ];
+          push @{$args{pairs}}, [$i_displ, $j_displ]; next;
         }
 
       }
@@ -234,7 +258,6 @@ sub run {
     if (scalar $rule->indices('deletions')) {
       $changed = 1;
       push @{$args{changes}}, 'd' if defined $args{changes};
-      # Note that deletions are always sorted decreasing!
       splice @$word, $i+$_, 1 for sort {$b <=> $a} $rule->indices('deletions');
       if (defined $rule->{filter}) {
         $surviving[$i+$_] = 0 for grep(($i+$_ >= 0 and $i+$_ < @surviving), sort {$b <=> $a} $rule->indices('deletions'));
@@ -265,7 +288,7 @@ sub run {
   $changed;
 }
 
-# Record on this rule that rule $rj, whose number is $j, should be inactivated if this one is taken.
+# Record on this rule that rule $rj, whose number is $j, should be inactivated if this one is chosen.
 sub mark_to_inactivate {
   my ($self, $rj, $j) = (shift, shift, shift);
   push @{$self->{inactivate}}, $j;
@@ -277,7 +300,7 @@ sub mark_to_inactivate {
   }
 }
 
-# Create persistent and impersistent variants of this rule, one persistent, one not.  Weight appropriately.
+# Create persistent and impersistent variants of this rule.  Weight appropriately.
 # In fact, there are two kinds of persistent variants; one tries to redo every rule it conflicts with,
 # while one takes on their conditions as excepts in many cases (if this rule is recastable enough).
 sub persistence_variants {
@@ -295,6 +318,9 @@ sub persistence_variants {
     my $loopbreak_penalty = 1 - $self->{recastability};
     my $redo_and_except = $self->deep_copy_indexed();
     my $loopbreak_penalty_and_except = $self->{recastability};
+#    # Favour multiple-phone rules doing the except thing, for more lively allophony.   TESTING or not?
+#    $loopbreak_penalty_and_except = (1 + $self->{recastability}) / 2 if scalar $self->indices() > 1;
+
     # The test for looping we do here was at one point the most expensive thing
     # in the phonology generation.  By way of cutting down, only check rules
     # which set something the (potential) opposite of this rule.
@@ -317,15 +343,15 @@ sub persistence_variants {
     for my $j (@potential_conflicts) {
       next if defined $phonology->[$j]{inactive} and $phonology->[$j]{inactive} < @$phonology;
       if ($self->conflicts_with($phonology->[$j], indices => \@conflict_indices)) {
-        #print STDERR "\nclash:\n" . $phonology->[$j]->debug_dump() . $redo->debug_dump(); # debug
-        #print STDERR "clash with $j\n"; #debug
+# FIXME: (proximal proximal proximal) it is now finding too many conflicts.
+        #print STDERR "clash of $self->{tag} with $j\n"; #debug
         my $recastability = 1;
         $recastability = $phonology->[$j]{recastability} if defined $phonology->[$j]{recastability};
         
         $redo->mark_to_inactivate($phonology->[$j], $j);
         $loopbreak_penalty *= $recastability;
         
-        if ($recastability <= $self->{recastability}) { # is this sensible?
+        if (1) { # I had   $recastability <= $self->{recastability}  but that might be stupid.
           my $clash = $pd->{FS}->overwrite($phonology->[$j]{$conflict_indices[1]}{condition}, $phonology->[$j]{$conflict_indices[1]}{effects});
           $clash =~ s/u/./g; # in case e.g. of forcing undefined
           $redo_and_except->{$conflict_indices[0]}{except} .= ' ' if defined $redo_and_except->{$conflict_indices[0]}{except};
@@ -339,7 +365,7 @@ sub persistence_variants {
     push @makings, [$redo, $base_weight * $persistence_weight * $loopbreak_penalty];
     push @makings, [$redo_and_except, $base_weight * $persistence_weight * $loopbreak_penalty_and_except];
   } # unless ($no_persist)
-  
+
   @makings;
 }
 
@@ -595,6 +621,7 @@ sub generate {
         0 => {condition => $precondition, effects => $effects},
         recastability => 1 - $weight,
       };
+      bless $rule->{0}, 'PhoneSet';
       # Default-provision rules shouldn't run where a stripping exists.  
       for (@{$FS->{strippings}}) {
         if ($_->{strip} =~ /(^| )$FS->{features}[$k]{name}( |$)/) {
@@ -936,13 +963,6 @@ sub generate {
 
   # Choose a directionality.  
   $selected_rule->{direction} = rand(2) >= 1.0 ? -1 : 1;
-
-  # Adding {except} conditions if this might newly set a feature which a stripping takes out
-  # would be nice if it worked, but there are problems if the feature being set is a side effect;
-  # we don't want to block the whole rule on its account, then.  So in place of this,
-  # we play an underhanded game with which_preconditions.  This is *very very naughty* of us,
-  # it means the semantics of which_preconditions aren't straightforward and will
-  # likely lead to pain in the future.
 
   # It's correct for extra condition rules to have no tag, so that they
   # just drop out when regenerated.

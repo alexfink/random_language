@@ -114,13 +114,22 @@ sub compatible {
 }
 
 # Takes the setwise intersection of two phones, returning the 'x' thing if it's empty.
-sub intersection {
+sub intersect {
   my ($self, $a, $b) = @_;
   if ($self->compatible($a, $b)) {
-    return overwrite($a, $b);
+    return $self->overwrite($a, $b);
   } else {
     return 'x' x @{$self->{features}};
   }
+}
+
+# Returns the features that $a has but $b doesn't.
+sub subtract_features {
+  my ($self, $a, $b) = @_;
+  for my $i (0..(length $b)-1) {
+    substr($a, $i, 1) = '.' if substr($a, $i, 1) eq substr($b, $i, 1);
+  }  
+  $a;
 }
 
 sub add_requirements {

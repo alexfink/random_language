@@ -21,7 +21,7 @@ use Phonology;
 use Transcription;
 use PhonologyDescriber;
 
-my $version = '0.3.1a';
+my $version = '0.3.1b';
 my $credits = 'Gleb, a phonology generator, by Alex Fink' . 
               (' ' x (29 - length($version))) . # for a total length of 78
               "version $version";
