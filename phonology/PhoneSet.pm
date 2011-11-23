@@ -91,4 +91,71 @@ sub matches {
   return 1;
 }
 
+# Simplify a phoneset.
+# This could use more testing.
+# Possible improvements: consolidate pairs of excepts; handle 'u' values.  
+sub simplify {
+  my ($self, $FS) = (shift, shift);
+  
+  if (defined $self->{condition} and $self->{except}) {
+    my $condition = $FS->add_entailments($FS->add_requirements($self->{condition}));
+    $condition = $FS->intersect($condition, $self->{enriched_condition}) if defined $self->{enriched_condition};
+    my @except = split / /, $self->{except};
+    { # loop if the condition has changed, so we need to retest the excepts
+      my $must_redo = 0;
+      for (my $i = 0; $i < @except; ++$i) {
+        # x out the condition, and return, if everything's excepted.
+        if ($condition =~ /^$except[$i]$/) {
+          $self->{condition} = 'x' x @{$FS->{features}};
+          delete $self->{except};
+          return;
+        }
+
+        # Remove excepts that don't matter.
+        if (!$FS->compatible($condition, $FS->add_entailments($FS->add_requirements($except[$i])) )) {
+          splice @except, $i, 1;
+          redo;
+        }
+
+        # For excepts that only set one feature further to the condition, remove them and set a feature
+        # in the condition if the prerequisites are all there, and a stripping doesn't preclude that.
+        my $excess_feature = undef;
+        my $just_one = 1;
+        for (0..length($condition)-1) {
+          if (substr($except[$i], $_, 1) =~ /[01]/ and substr($condition, $_, 1) eq '.') {
+            if (defined $excess_feature) {
+              $just_one = 0; last;
+            } else {
+              $excess_feature = $_;
+            }
+          }
+        }
+        if ($just_one and defined $excess_feature) {
+          $_ = $FS->parse($FS->{features}[$excess_feature]{requires});
+          if ($condition =~ /^$_$/) {
+            my $cant_be_stripped = 1; 
+            for my $str (@{$FS->{strippings}}) {
+              $_ = $FS->parse($str->{strip});
+              if ($FS->compatible($condition, $str->{condition_parsed})) {
+                $cant_be_stripped = 0; last;
+              }
+            }
+            if ($cant_be_stripped) {
+              # now we know that things matching the condition will not be 'u' in this position.
+              substr($self->{condition}, $excess_feature, 1) = 1 - substr($except[$i], $excess_feature, 1);              
+              $must_redo = 1;
+              splice @except, $i, 1;
+              redo;
+            }
+          }          
+        }
+      } # $i
+
+      redo if $must_redo;
+    } 
+    $self->{except} = join ' ', @except;
+    delete $self->{except} unless @except;
+  }
+}
+
 1;

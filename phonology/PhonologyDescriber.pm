@@ -669,6 +669,25 @@ sub name_natural_class {
   return $name; 
 }
 
+# As name_natural_class, but for a phoneset structure. 
+sub name_phoneset {
+  my ($self, $phoneset, $inventory, %args) = (shift, shift, @_);
+  my $FS = $self->{FS};
+
+  my $condition = defined $phoneset->{condition} ? $phoneset->{condition} : ('.' x @{$FS->{features}});
+  my $name = $self->name_natural_class($condition, $inventory, %args);
+  return $name if (!$name) or ($name =~ /^no phones?$/); # kluge
+  my @exceptions = split / /, $phoneset->{except};
+  my @exception_texts = map $self->name_natural_class($FS->overwrite($condition, $_), 
+          $inventory, %args, significant => $_, no_nothing => 1), 
+      # don't state exceptions that don't actually exclude anything
+      grep { my $a = $_; grep /^$a$/ && /^$condition$/, @$inventory; } @exceptions;
+  @exception_texts = grep $_, @exception_texts;
+  my $conj = $args{morpho} eq 'indef' ? ' or ' : ' and ';
+  $name .= ' except ' . join $conj, @exception_texts if @exception_texts;
+  $name;
+}
+
 # Given a list of phones, figure out a good feature-systematic name for it,
 # with the minimum complexity in some heuristic sense.
 # Roughly, the model is this: minimise the cost, where
@@ -684,6 +703,8 @@ sub name_natural_class {
 # rather than trying to name the set of phones, it tries to return the analogous
 # subset of $args{extend}.
 # It's far from perfect at this: it will ignore exceptions.
+
+# TODO: shd nobase be a kind of morpho?
 
 sub describe_set {
   my ($self, $orig_phones, $inventory, %args) = (shift, shift, @_);
@@ -865,7 +886,7 @@ sub describe_set {
     }
   }
 
-  my $main_name = $self->name_natural_class($pattern, $inventory, str => $str, morpho => $morpho, 
+  my $main_name = $self->name_natural_class($pattern, $inventory, %args, str => $str, morpho => $morpho, 
       base => $base, significant => $significant);
   # Get rid of the antipattern in question if it made it in as the base.
   @antipatterns = grep $_ != $base_antipattern, @antipatterns if $base and $main_name =~ /\b$base/; # kluge!
@@ -1058,14 +1079,14 @@ sub describe_rules {
     my $old_effect = $effect;
     my $precondition = $rule->{$locus}{condition};
     my ($pre, $old_pre, $post, $old_post);
-    $old_pre = $pre = $rule->{$locus-1}{condition} if defined $rule->{$locus-1}{condition};
-    $old_post = $post = $rule->{$locus+1}{condition} if defined $rule->{$locus+1}{condition};
+    $old_pre = $pre = $rule->{$locus-1}{condition} if defined $rule->{$locus-1} and defined $rule->{$locus-1}{condition};
+    $old_post = $post = $rule->{$locus+1}{condition} if defined $rule->{$locus+1} and defined $rule->{$locus+1}{condition};
     my $far = grep(($_ ne $locus-1 and $_ ne $locus and $_ ne $locus+1), $rule->indices('condition'));
 
     if (defined $rule->{filter}) {
-      $precondition = $FS->intersection($rule->{filter}{condition}, $precondition);
-      $old_pre = $pre = $FS->intersection($rule->{filter}{condition}, $pre);
-      $old_post = $post = $FS->intersection($rule->{filter}{condition}, $post);
+      $precondition = $FS->intersect($rule->{filter}{condition}, $precondition);
+      $old_pre = $pre = $FS->intersect($rule->{filter}{condition}, $pre) if defined $pre;
+      $old_post = $post = $FS->intersect($rule->{filter}{condition}, $post) if defined $post;
     }
 
     # Try to simplify assimilations, taking advantage of enrichments.
@@ -1085,13 +1106,8 @@ sub describe_rules {
     # Some rules are being missed; is it this thing's fault?
     my %matcheds;
     for my $displ ($rule->indices('condition')) {
-      @{$matcheds{$displ}} = grep $_ =~ /^$rule->{$displ}{condition}$/, @inventory;
-      if (defined $rule->{$displ}{except}) {
-        my @exceptions = split / /, $rule->{$displ}{except};
-        for my $exception (@exceptions) {
-          @{$matcheds{$displ}} = grep $_ !~ /^$exception$/, @{$matcheds{$displ}};
-        }
-      }
+      @{$matcheds{$displ}} = grep $rule->{$displ}->matches($_), @inventory;
+      @{$matcheds{$displ}} = grep $rule->{filter}->matches($_), @{$matcheds{$displ}} if defined $rule->{filter};
       # Rules aren't pointless if they trigger _only_ at word boundary.
       unless (@{$matcheds{$displ}} or $rule->{$displ}{or_pause}) {
         $rule->{pointless} = 1;
@@ -1400,6 +1416,13 @@ sub describe_rules {
       }
     }
 
+
+    my $filter_text;
+    if (defined $rule->{filter}) {
+      $filter_text = $self->name_phoneset($rule->{filter}, \@inventory);
+    }
+
+
     for my $frame (keys %kept_deviations) {
       # This frame might be a consolidated one.  We need to make an actual representative of it
       # to look things up in %outcome.
@@ -1414,8 +1437,15 @@ sub describe_rules {
         # assimilation.  We only want the latter here.  
         # Modifying the below to handle bidirectional assimilation is straightforward;
         # I just haven't bothered since we generate no bidirectional assimilation yet.
-        $frame_text = $effect !~ />/ ? 'After ' : 
-                        ($effect !~ /</ ? 'Before ' : 'Assimilating to ');
+        my $filter_insig = undef;
+        if (defined $rule->{filter}) {
+          $frame_text = $effect !~ />/ ? "When the previous $filter_text is " : 
+                          ($effect !~ /</ ? "When the next $filter_text is " : 'Assimilating to ');
+          $filter_insig = $rule->{filter}{condition};
+        } else {
+          $frame_text = $effect !~ />/ ? 'After ' : 
+                          ($effect !~ /</ ? 'Before ' : 'Assimilating to ');
+        }
         my $phone = $frame;
         for (0..length($phone)-1) {
           substr($phone, $_, 1) = '.' unless substr($effect, $_, 1) =~ /[<>]/;
@@ -1429,7 +1459,9 @@ sub describe_rules {
         for my $phone (@exceptions) {
             @_ = grep $_ !~ /^$phone$/, @_;
         }
-        $frame_text .= $self->describe_set(\@_, \@inventory, morpho => 'indef', bar_nons => 1, etic => 1); 
+        $frame_text .= $self->describe_set(\@_, \@inventory, morpho => defined($filter_insig) ? 'bare' : 'indef', 
+            bar_nons => 1, etic => 1,
+            nobase => defined($filter_insig), insignificant => $filter_insig); #HERE
             # disallowing nons isn't right, but it makes the thing readable
         if ($effect =~ /</) {
           $frame_text .= ' or pause' if defined $rule->{$locus-1}{or_pause} and $rule->{or_pause} =~ /^$frame$/;
@@ -1543,6 +1575,37 @@ sub describe_rules {
       
       $deviation_texts .= '. ' . ucfirst $frame_text;
     } # frame
+    
+
+    my $environment_text = '';
+    my ($pre_text, $post_text);
+    my ($pre_phoneset, $post_phoneset);
+    my ($pre_filter_nontrivial, $post_filter_nontrivial);
+    # the 'or word-finally' aren't quite right, since the main rule might be a between.
+    # FIXME: there is too much 'no phone' for the word-extremal stuff.
+    if (defined $pre) {
+      $pre_phoneset = { %{$rule->{$locus-1}} };
+      $pre_phoneset->{condition} = $pre;
+      $pre_phoneset->{enriched_condition} = enrich($pre,\@inventory);
+      bless $pre_phoneset, 'PhoneSet';
+      $pre_phoneset->simplify($FS);
+      $pre_text = $self->name_phoneset($pre_phoneset, \@inventory, morpho => 'indef', no_nothing => 1);
+    }
+    if (defined $post) {
+      $post_phoneset = { %{$rule->{$locus+1}} };
+      $post_phoneset->{condition} = $post;
+      $post_phoneset->{enriched_condition} = enrich($post,\@inventory);
+      bless $post_phoneset, 'PhoneSet';
+      $post_phoneset->simplify($FS);
+      $post_text = $self->name_phoneset($post_phoneset, \@inventory, morpho => 'indef', no_nothing => 1);
+    }
+    if (defined $rule->{filter}) {
+      $pre_filter_nontrivial = grep((!$pre_phoneset->matches($_) and $rule->{filter}->matches($_)), @inventory)
+          if defined $pre;
+      $post_filter_nontrivial = grep((!$post_phoneset->matches($_) and $rule->{filter}->matches($_)), @inventory)
+          if defined $post;
+    }
+    
 
     my $main_clause = '';
     # It is friendliest not to describe rules which survive till before the _next_ rule as persistent.
@@ -1626,6 +1689,7 @@ sub describe_rules {
           }
         }
       } # $effect =~ /[01]/
+      # FIXME: 'or word-finally' etc. is wrong when an assimilation only has one frame.  also, ' and become foo word-finally' has been wrong
       if ($effect =~ /</) {
         $_ = $effect;
         y/01u<>/...1./;
@@ -1634,15 +1698,26 @@ sub describe_rules {
         $main_VP .= ' assimilate in ' .
             $self->name_natural_class($_, undef, scheme => 'nominalised', nobase => 1);
         if (!defined($old_post) and !$far) {
-          $main_VP .= ' to a preceding ';
+          my $filter_insig = undef;
+          if (defined $rule->{filter}) {
+            if ($pre_filter_nontrivial) {
+              $main_VP .= " to the previous $filter_text when it is ";k
+              $filter_insig = $rule->{filter}{condition};
+            } else {
+              $main_VP .= ' to the previous ';
+            }
+          } else {
+            $main_VP .= ' to a preceding ';
+          }
           @_ = grep /^$pre$/, @inventory;
           for my $phone (split / /, $rule->{$locus-1}{except}) {
             @_ = grep $_ !~ /^$phone$/, @_;
           }
-          $main_VP .= $self->describe_set(\@_, \@inventory, morpho => 'bare', etic => 1);
+          $main_VP .= $self->describe_set(\@_, \@inventory, morpho => 'bare', etic => 1, 
+              nobase => defined($filter_insig), insignificant => $filter_insig);
           $pre = undef;
         } else {
-          $main_VP .= ' to the previous phone';
+          $main_VP .= ' to the previous ' . defined $rule->{filter} ? $filter_text : 'phone';
         }
         if (defined $rule->{$locus-1}{or_pause}) { # word-initial
           my $pausal_effect = $effect;
@@ -1653,8 +1728,8 @@ sub describe_rules {
           my $modified = $FS->overwrite($precondition, $pausal_effect); 
           $modified =~ s/u/./g;
           $main_VP .= ' and become ' . 
-                      $self->name_natural_class($modified, \@new_inventory, significant => $pausal_effect, morpho => 'plural', nobase => 1) .
-                      ' word-initially';
+                      $self->name_natural_class($modified, \@new_inventory, significant => $pausal_effect, morpho => 'plural', nobase => 1);
+          $main_VP .= defined $rule->{filter} ? (" if no $filter_text precedes") : ' word-initially';
         }
       }
       if ($effect =~ />/) {
@@ -1665,15 +1740,26 @@ sub describe_rules {
         $main_VP .= ' assimilate in ' .
             $self->name_natural_class($_, undef, scheme => 'nominalised', nobase => 1);
         if (!defined($old_pre) and !$far) {
-          $main_VP .= ' to a following ';
+          my $filter_insig = undef;
+          if (defined $rule->{filter}) {
+            if ($pre_filter_nontrivial) {
+              $main_VP .= " to the next $filter_text when it is ";
+              $filter_insig = $rule->{filter}{condition};
+            } else {
+              $main_VP .= ' to the next ';
+            }
+          } else {
+            $main_VP .= ' to a following ';
+          }
           @_ = grep /^$post$/, @inventory;
           for my $phone (split / /, $rule->{$locus+1}{except}) {
             @_ = grep $_ !~ /^$phone$/, @_;
           }
-          $main_VP .= $self->describe_set(\@_, \@inventory, morpho => 'bare', etic => 1);
+          $main_VP .= $self->describe_set(\@_, \@inventory, morpho => 'bare', etic => 1,
+              nobase => defined($filter_insig), insignificant => $filter_insig);          
           $post = undef;
         } else {
-          $main_VP .= ' to the next phone';
+          $main_VP .= ' to the next ' . defined $rule->{filter} ? $filter_text : 'phone';
         }
         if (defined $rule->{$locus+1}{or_pause}) { # word-final
           my $pausal_effect = $effect;
@@ -1684,71 +1770,94 @@ sub describe_rules {
           my $modified = $FS->overwrite($precondition, $pausal_effect); 
           $modified =~ s/u/./g;
           $main_VP .= ' and become ' . 
-                      $self->name_natural_class($modified, \@new_inventory, significant => $pausal_effect, morpho => 'plural', nobase => 1) .
-                      ' word-finally';
+                      $self->name_natural_class($modified, \@new_inventory, significant => $pausal_effect, morpho => 'plural', nobase => 1);
+          $main_VP .= defined $rule->{filter} ? (" if no $filter_text follows") : ' word-finally';
         }
       }
       $main_clause .= $main_VP;
     } # modified is not deletion
 
-    my $environment_text = '';
-    my ($pre_text, $post_text);
-    my ($no_segmental_pre, $no_segmental_post);
-    # the 'or word-finally' aren't quite right, since the main rule might be a between.
-    # FIXME: 'or word-finally' etc. is wrong when an assimilation only runs one way
-    # FIXME: there is too much 'no phone' for the word-extremal stuff.
+
+    my $envbit;
     if (defined $pre) {
-      $pre_text = $self->name_natural_class($pre, \@inventory, morpho => 'indef', no_nothing => 1);
-      $no_segmental_pre = 1 unless $pre_text;
-      my @exceptions = split / /, $rule->{$locus-1}{except};
-      my @exception_texts = map $self->name_natural_class($FS->overwrite($precondition, $_), 
-              \@inventory, significant => $_, no_nothing => 1, morpho => 'indef'), 
-          # don't state exceptions that don't actually exclude anything
-          grep { my $a = $_; grep /^$a$/ && /^$pre$/, @inventory; } @exceptions;
-      @exception_texts = grep $_, @exception_texts;
-      $pre_text .= ' except for ' . join ' and ', @exception_texts if @exception_texts;
-      $pre_text .= ',' if (scalar @exception_texts) and $rule->{$locus-1}{or_pause};
-      $pre_text .= ($pre_text ? ' or ' : '') . 'word-initially' if $rule->{$locus-1}{or_pause};
-    }
+      $envbit = '';
+      if ($pre_text) {
+        if (defined $rule->{filter}) {
+          if ($pre_filter_nontrivial) {
+            $environment_text .= " if the previous $filter_text is";
+            # recompute, for significant
+            $pre_text = $self->name_phoneset($pre_phoneset, \@inventory, morpho => 'bare', no_nothing => 1, 
+                nobase => 1, significant => $FS->subtract_features($pre_phoneset->{condition}, $rule->{filter}{condition}) );
+          } else {
+            $environment_text .= ' if there is ';
+            $envbit .= ' earlier in the word';
+          }
+        } else {
+          $environment_text .= ($post_text ? ' between' : ' after');
+        }
+        $environment_text .= " $pre_text" . $envbit;
+      } else {
+        $pre = undef;
+      }
+      if ($rule->{$locus-1}{or_pause}) {
+        if (defined $rule->{filter}) {
+          if ($pre_text) {
+            $environment_text .= ' or there is none';
+          } else {
+            $environment_text .= " when it is the first $filter_text in the word";
+          }
+        } else {
+          $environment_text .= ' or' if $pre_text;
+          $environment_text .= ' word-initially';
+        }
+      }
+    } 
     if (defined $post) {
-      $post_text = $self->name_natural_class($post, \@inventory, morpho => 'indef', no_nothing => 1);
-      $no_segmental_post = 1 unless $post_text;
-      my @exceptions = split / /, $rule->{$locus+1}{except};
-      my @exception_texts = map $self->name_natural_class($FS->overwrite($precondition, $_), 
-              \@inventory, significant => $_, no_nothing => 1, morpho => 'indef'), 
-          # don't state exceptions that don't actually exclude anything
-          grep { my $a = $_; grep /^$a$/ && /^$post$/, @inventory; } @exceptions;
-      @exception_texts = grep $_, @exception_texts;
-      $post_text .= ' except for ' . join ' and ', @exception_texts if @exception_texts;
-      $post_text .= ',' if (scalar @exception_texts) and $rule->{$locus+1}{or_pause};
-      $post_text .= ($post_text ? ' or ' : '') . 'word-finally' if $rule->{$locus+1}{or_pause};
-    }
-    if ($no_segmental_pre) {
-      $environment_text .= " $pre_text";
-      $pre = undef;
-    }
-    if ($no_segmental_post) {
-      $environment_text .= " $post_text";
-      $post = undef;
-    }
-    if (defined $pre and defined $post) {
-      $environment_text .= " between $pre_text and $post_text";
-    } elsif (defined $pre) {
-      $environment_text .= " after $pre_text";
-    } elsif (defined $post) {
-      $environment_text .= " before $post_text";
+      $envbit = '';
+      if ($post_text) {
+        if (defined $rule->{filter}) {
+          if ($post_filter_nontrivial) {
+            # FIXME: "... is high or high semivowel"
+            $environment_text .= " if the next $filter_text is";
+            # recompute, for significant
+            $post_text = $self->name_phoneset($post_phoneset, \@inventory, morpho => 'bare', no_nothing => 1, 
+                nobase => 1, significant => $FS->subtract_features($post_phoneset->{condition}, $rule->{filter}{condition}) );
+          } else {
+            $environment_text .= ' if there is ';
+            $envbit .= ' later in the word';
+          }
+        } else {
+          $environment_text .= ($pre_text ? ' and' : ' before');
+        }
+        $environment_text .= " $post_text" . $envbit;
+      } else {
+        $post = undef;
+      }
+      if ($rule->{$locus+1}{or_pause}) {
+        if (defined $rule->{filter}) {
+          if ($pre_text) {
+            $environment_text .= ' or there is none';
+          } else {
+            $environment_text .= " when it is the last $filter_text in the word";
+          }
+        } else {
+          $environment_text .= ' or' if $post_text;
+          $environment_text .= ' word-finally';
+        }
+      }
     }
     if ($far) {
       $environment_text .= ' under some conditions on nonadjacent phones'; # FIXME
     }
+
     # Again, rules which survive one rule shouldn't be described as persistent.
     if (defined $rule->{inactive} and $rule->{inactive} > $i + 1) {
       $to_be_numbered{$i} = 1;
       push @{$descriptions{$rule->{inactive}}{pre}}, "Rule ($i) becomes inactive.";
     }
 
-    # FIXME: "persistently" is lost if $no_main_VP
     $text .= $main_clause unless $no_main_VP;
+    $text .= 'persistently, ' if $no_main_VP and $persistent;
     $text .= $environment_text unless $no_main_VP and $frames_start_with_PP;
     if ($deviation_texts) {
       if ($no_main_VP) {
@@ -1756,12 +1865,6 @@ sub describe_rules {
       }
       $text .= $deviation_texts unless !$no_main_VP and ($all_all_deviates or $both_are_lists);
     }
-
-    # TODO: (proximal)  Describe filter rules.
-    # On the whole, it should suffice to replace "after $foo" with "when the next $filter is $foo-described-as-a-kind-of-$filter", &s.
-    # But we'll need to have overwritten $foo with the filter in mind, way back.  
-    # If $foo is identical to the filter as a set, a better wording is "if there is a $foo later in the word".  
-    $text .= ' FILTER' if defined $rule->{filter}; # TEMPORARY
 
     $text =~ s/^ *//;
     $descriptions{$i}{rule} = ucfirst $text . '. ';
