@@ -397,6 +397,7 @@ sub generate_new_rule {
       my %otherargs = %args;
       delete $otherargs{avoid};
       delete $otherargs{dont_skip};
+      delete $otherargs{unsplit_rule};
       #print "{\n"; # debug
       $args{avoid} = [] if !defined $args{avoid};
       $self->generate_new_rule($tag, avoid => [(split /\|/, $avoid), @{$args{avoid}}], %otherargs);
