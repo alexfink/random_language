@@ -720,7 +720,7 @@ sub generate {
           $parsed_effect =~ y/{}/<>/;
 
           # In case of assimilation, both the things being spread from and to need to support the feature,
-          # unless assimilation in that feature as well assures that this is unnecessary.  
+          # unless assimilating or setting that feature as well assures that this is unnecessary.  
           for (0..length($parsed_effect)-1) {
             if (substr($parsed_effect, $_, 1) ne '.') {
               my $requirements = $FS->parse($FS->{features}[$_]{requires});
@@ -728,11 +728,12 @@ sub generate {
                 substr($requirements, $i, 1) = '.'
                     if substr($parsed_effect, $_, 1) =~ /[<>]/ 
                     and substr($parsed_effect, $i, 1) eq substr($parsed_effect, $_, 1);
+                substr($requirements, $i, 1) = '.' if substr($parsed_effect, $i, 1) eq substr($requirements, $i, 1);
               }
-              $rule->{$target}{condition} = $FS->overwrite($rule->{$target}{condition}, $requirements);
+              $rule->{$target}{condition} = $FS->intersect($rule->{$target}{condition}, $requirements);
               if (substr($parsed_effect, $_, 1) =~ /[<>]/) {
                 my $source = (substr($parsed_effect, $_, 1) eq '>') ? $target + 1 : $target - 1;
-                $rule->{$source}{condition} = $FS->overwrite($rule->{$source}{condition}, $requirements);
+                $rule->{$source}{condition} = $FS->intersect($rule->{$source}{condition}, $requirements);
               }
             }
           }
