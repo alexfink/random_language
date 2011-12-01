@@ -1,5 +1,6 @@
 package PhonologicalRule;
 use strict;
+use constant INF => 9**9**9; # is there really nothing sensible better?
 
 # Each rule is a hash.  In the simplest case, it has hashes that
 # contain hashes with keys including {condition} and {effects},
@@ -191,6 +192,35 @@ sub matches_word {
 
 
 
+# Return a left-right reversed copy of this rule.
+sub reverse_rule {
+  my $self = shift;
+  my $a = { %$self };
+  bless $a;
+  my @indices = $self->indices();
+  my $max = -1 * INF;
+  for (@indices) {
+    delete $a->{$_};
+    $max = $_ if $_ > $max;
+  }
+  for (@indices) {
+    $a->{$max - $_} = $self->{$_};
+  }
+  for ($a->indices()) {
+    if (defined $a->{$_}{effects}) {
+      $a->{$_}{effects} =~ y/<>/></;
+    }
+  }
+  if (defined $self->{direction}) {
+    $a->{direction} = -$self->{direction};
+  } else {
+    $a->{direction} = -1;
+  }
+  $a;
+}
+
+
+
 # If %args includes a list {changes}, tags describing the particular changes caused
 # will be pushed.  These tags are:
 # "c $v $f" -- feature $f was changed to value $v
@@ -199,92 +229,110 @@ sub matches_word {
 sub run {
   my ($rule, $unfiltered_word, %args) = (shift, shift, @_);
   my $changed = 0;
-  my $syllable_position = defined $args{syllable_position} ? $args{syllable_position} : 0;
 
-  my $word;
-  my (@inverse_filter, @surviving);
-  if (defined $rule->{filter}) {
-    @inverse_filter = grep $rule->{filter}->matches($unfiltered_word->[$_]), 0..@$unfiltered_word-1;
-    $word = [grep $rule->{filter}->matches($_), @$unfiltered_word];
-    @surviving = (1,) x @$word;
-  } else {
-    $word = $unfiltered_word;
-  }
+  my $original_word = [@$unfiltered_word];
+  my $reversed = 0;
+  {
+    my $word = $unfiltered_word;
+    my $operating_on_subword = 0;
+    my @inverse_filter = 0..@$unfiltered_word-1; 
+    if ($reversed) {
+      $operating_on_subword = 1;
+      @inverse_filter = reverse @inverse_filter;
+      $word = [reverse @$word];
+    }
+    if (defined $rule->{filter}) {
+      $operating_on_subword = 1;
+      @inverse_filter = grep $rule->{filter}->matches($unfiltered_word->[$_]), @inverse_filter;
+      $word = [grep $rule->{filter}->matches($_), @$word];
+    }
+    my @surviving = (1,) x @$word;
 
-  # iterate in the direction specified
-  my @displs = -1..@$word-1;   # start at -1 for assimilations to word-initial pause;
-      # will need to be larger if rules can have non-canonical indices
-  @displs = reverse @displs if (defined $rule->{direction} and $rule->{direction} < 0);
-  for my $i (@displs) {
-    next unless $rule->matches_word($word, $i, nopause => $args{nopause});
+    # iterate in the direction specified
+    my @displs = -1..@$word-1;   # start at -1 for assimilations to word-initial pause;
+        # will need to be larger if rules can have non-canonical indices
+    @displs = reverse @displs if (defined $rule->{direction} and $rule->{direction} < 0);
+    for my $i (@displs) {
+      next unless $rule->matches_word($word, $i, nopause => $args{nopause});
 
-    for my $displ ($rule->indices('effects')) {
-      next if ($i + $displ < 0 or $i + $displ >= @$word);
-      my $effects = $rule->{$displ}{effects};
-      if (defined $args{alternate_effects}) {
-        $effects = $rule->{$displ}{alternate_effects} if $args{alternate_effects};
+      for my $displ ($rule->indices('effects')) {
+        next if ($i + $displ < 0 or $i + $displ >= @$word);
+        my $effects = $rule->{$displ}{effects};
+        if (defined $args{alternate_effects}) {
+          $effects = $rule->{$displ}{alternate_effects} if $args{alternate_effects};
+        }
+        
+        # Handle the assimilation characters. 
+        if ($effects =~ /[<>]/) {
+          my ($next_before, $next_after) = (undef, undef);
+          for ($rule->indices('condition')) {
+            $next_before = $_ if (!defined $next_before or $next_before < $_) and $_ < $displ;
+            $next_after = $_ if (!defined $next_after or $next_after > $_) and $_ > $displ;
+          }
+          while ($effects =~ /</) {
+            my $c = index($effects, '<');
+            substr($effects, $c, 1) = 
+                substr($i+$next_before >= 0 ? $word->[$i+$next_before] : $rule->{$next_before}{or_pause}, $c, 1);
+          }
+          while ($effects =~ />/) {
+            my $c = index($effects, '>');
+            substr($effects, $c, 1) =
+                substr($i+$next_after < @$word ? $word->[$i+$next_after] : $rule->{$next_after}{or_pause}, $c, 1);
+          }
+          # We must entail the effects, not just the overwritten phone, since otherwise
+          # jumps over the middle point on an antithetical scale won't always work.
+          $effects = $rule->{FS}->add_entailments($effects);
+        }
+        my $newphone = $rule->{FS}->overwrite($word->[$i+$displ], $effects);
+        
+        if ($word->[$i+$displ] ne $newphone) {
+          $changed = 1;
+          push @{$args{changes}}, FeatureSystem::change_record($word->[$i+$displ], $newphone) if defined $args{changes};
+        }
+        $word->[$i+$displ] = $newphone;
       }
       
-      # Handle the assimilation characters. 
-      if ($effects =~ /[<>]/) {
-        my ($next_before, $next_after) = (undef, undef);
-        for ($rule->indices('condition')) {
-          $next_before = $_ if (!defined $next_before or $next_before < $_) and $_ < $displ;
-          $next_after = $_ if (!defined $next_after or $next_after > $_) and $_ > $displ;
-        }
-        while ($effects =~ /</) {
-          my $c = index($effects, '<');
-          substr($effects, $c, 1) = 
-              substr($i+$next_before >= 0 ? $word->[$i+$next_before] : $rule->{$next_before}{or_pause}, $c, 1);
-        }
-        while ($effects =~ />/) {
-          my $c = index($effects, '>');
-          substr($effects, $c, 1) =
-              substr($i+$next_after < @$word ? $word->[$i+$next_after] : $rule->{$next_after}{or_pause}, $c, 1);
-        }
-        # We must entail the effects, not just the overwritten phone, since otherwise
-        # jumps over the middle point on an antithetical scale won't always work.
-        $effects = $rule->{FS}->add_entailments($effects);
-      }
-      my $newphone = $rule->{FS}->overwrite($word->[$i+$displ], $effects);
-      
-      if ($word->[$i+$displ] ne $newphone) {
+      if (scalar $rule->indices('deletions')) {
         $changed = 1;
-        push @{$args{changes}}, FeatureSystem::change_record($word->[$i+$displ], $newphone) if defined $args{changes};
+        push @{$args{changes}}, 'd' if defined $args{changes};
+        splice @$word, $i+$_, 1 for sort {$b <=> $a} $rule->indices('deletions');
+        if ($operating_on_subword) {
+          $surviving[$i+$_] = 0 for grep(($i+$_ >= 0 and $i+$_ < @surviving), sort {$b <=> $a} $rule->indices('deletions'));
+        } else {
+          # can only do this if it's not a subword
+          if (defined $args{sources}) {
+            splice @{$args{sources}}, $i+$_, 1 for sort {$b <=> $a} $rule->indices('deletions');
+          }
+        }
+        $i -= scalar $rule->indices('deletions');
       }
-      $word->[$i+$displ] = $newphone;
+    } 
+
+    if ($operating_on_subword) {
+      my $j = 0;
+      for my $i (0..$#inverse_filter) {
+        if ($surviving[$i]) {
+          $unfiltered_word->[$inverse_filter[$i]] = $word->[$j++];
+        } else {
+          splice @$unfiltered_word, $inverse_filter[$i], 1;
+          if (defined $args{sources}) {
+            splice @{$args{sources}}, $inverse_filter[$i], 1;
+          }
+        }
+      } # i
     }
     
-    if (scalar $rule->indices('deletions')) {
-      $changed = 1;
-      push @{$args{changes}}, 'd' if defined $args{changes};
-      splice @$word, $i+$_, 1 for sort {$b <=> $a} $rule->indices('deletions');
-      if (defined $rule->{filter}) {
-        $surviving[$i+$_] = 0 for grep(($i+$_ >= 0 and $i+$_ < @surviving), sort {$b <=> $a} $rule->indices('deletions'));
-      } else {
-        # can only do this if it's not a subword
-        if (defined $args{sources}) {
-          splice @{$args{sources}}, $i+$_, 1 for sort {$b <=> $a} $rule->indices('deletions');
-        }
-      }
-      $i -= scalar $rule->indices('deletions');
+    if ($rule->{bidirectional} and !$reversed) {
+      $reversed = 1;
+      redo;
     }
-  } 
+  } # block for reverse iteration
 
-  if (defined $rule->{filter}) {
-    my $j = 0;
-    for my $i (0..$#inverse_filter) {
-      if ($surviving[$i]) {
-        $unfiltered_word->[$inverse_filter[$i]] = $word->[$j++];
-      } else {
-        splice @$unfiltered_word, $inverse_filter[$i], 1;
-        if (defined $args{sources}) {
-          splice @{$args{sources}}, $inverse_filter[$i], 1;
-        }
-      }
-    } # i
+  # Cases in which we might have found changes that weren't actually changes.
+  if ($rule->{bidirectional}) {
+    $changed = 0 if join(' ', @$original_word) eq join(' ', @$unfiltered_word); #kluge
   }
-  
+
   $changed;
 }
 
@@ -318,8 +366,6 @@ sub persistence_variants {
     my $loopbreak_penalty = 1 - $self->{recastability};
     my $redo_and_except = $self->deep_copy_indexed();
     my $loopbreak_penalty_and_except = $self->{recastability};
-#    # Favour multiple-phone rules doing the except thing, for more lively allophony.   TESTING or not?
-#    $loopbreak_penalty_and_except = (1 + $self->{recastability}) / 2 if scalar $self->indices() > 1;
 
     # The test for looping we do here was at one point the most expensive thing
     # in the phonology generation.  By way of cutting down, only check rules
@@ -343,7 +389,6 @@ sub persistence_variants {
     for my $j (@potential_conflicts) {
       next if defined $phonology->[$j]{inactive} and $phonology->[$j]{inactive} < @$phonology;
       if ($self->conflicts_with($phonology->[$j], indices => \@conflict_indices)) {
-# FIXME: (proximal proximal proximal) it is now finding too many conflicts.
         #print STDERR "clash of $self->{tag} with $j\n"; #debug
         my $recastability = 1;
         $recastability = $phonology->[$j]{recastability} if defined $phonology->[$j]{recastability};
@@ -351,7 +396,7 @@ sub persistence_variants {
         $redo->mark_to_inactivate($phonology->[$j], $j);
         $loopbreak_penalty *= $recastability;
         
-        if (1) { # I had   $recastability <= $self->{recastability}  but that might be stupid.
+        if (1) {
           my $clash = $pd->{FS}->overwrite($phonology->[$j]{$conflict_indices[1]}{condition}, $phonology->[$j]{$conflict_indices[1]}{effects});
           $clash =~ s/u/./g; # in case e.g. of forcing undefined
           $redo_and_except->{$conflict_indices[0]}{except} .= ' ' if defined $redo_and_except->{$conflict_indices[0]}{except};
@@ -683,6 +728,16 @@ sub generate {
 
     my @unsplit_phones = map $FS->parse($_), split /, */, $unsplit_d->{condition}, -1;
 
+    # Do choice of direction outside of the resolution selection for now, for laziness.
+    if (defined $d->{direction}) {
+      my $direction = weighted_one_of %{$d->{direction}};
+      if ($direction eq 'reverse') {
+        $base_rule->{reverse} = 1;
+      } elsif ($direction eq 'both') {
+        $base_rule->{bidirectional} = 1;
+      }
+    }
+
     # {resolve} is a weight-hash of possible resolutions, whose keys are of the form "$operation $argument".
     # 
     # If the resolution part isn't written, we will resolve phone 0 freely.
@@ -962,7 +1017,13 @@ sub generate {
   # TODO: update these tests for rules that do nothing as needed
   return unless scalar $selected_rule->indices('effects') or scalar $selected_rule->indices('deletions'); 
 
-  # Choose a directionality.  
+  # Reverse this rule if it needs that.
+  if ($selected_rule->{reverse}) {
+    delete $selected_rule->{reverse};
+    $selected_rule = $selected_rule->reverse_rule();
+  }
+
+  # Choose an application direction.  
   $selected_rule->{direction} = rand(2) >= 1.0 ? -1 : 1;
 
   # It's correct for extra condition rules to have no tag, so that they

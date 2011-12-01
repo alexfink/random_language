@@ -1439,12 +1439,14 @@ sub describe_rules {
         # I just haven't bothered since we generate no bidirectional assimilation yet.
         my $filter_insig = undef;
         if (defined $rule->{filter}) {
-          $frame_text = $effect !~ />/ ? "When the previous $filter_text is " : 
-                          ($effect !~ /</ ? "When the next $filter_text is " : 'Assimilating to ');
+          $frame_text = $rule->{bidirectional} ? "When the nearest $filter_text to either side is " :
+                          ($effect !~ />/ ? "When the previous $filter_text is " : 
+                          ($effect !~ /</ ? "When the next $filter_text is " : 'Assimilating to '));
           $filter_insig = $rule->{filter}{condition};
         } else {
-          $frame_text = $effect !~ />/ ? 'After ' : 
-                          ($effect !~ /</ ? 'Before ' : 'Assimilating to ');
+          $frame_text = $rule->{bidirectional} ? 'Next to ':
+                          ($effect !~ />/ ? 'After ' : 
+                          ($effect !~ /</ ? 'Before ' : 'Assimilating to '));
         }
         my $phone = $frame;
         for (0..length($phone)-1) {
@@ -1461,7 +1463,7 @@ sub describe_rules {
         }
         $frame_text .= $self->describe_set(\@_, \@inventory, morpho => defined($filter_insig) ? 'bare' : 'indef', 
             bar_nons => 1, etic => 1,
-            nobase => defined($filter_insig), insignificant => $filter_insig); #HERE
+            nobase => defined($filter_insig), insignificant => $filter_insig); 
             # disallowing nons isn't right, but it makes the thing readable
         if ($effect =~ /</) {
           $frame_text .= ' or pause' if defined $rule->{$locus-1}{or_pause} and $rule->{or_pause} =~ /^$frame$/;
@@ -1699,15 +1701,20 @@ sub describe_rules {
             $self->name_natural_class($_, undef, scheme => 'nominalised', nobase => 1);
         if (!defined($old_post) and !$far) {
           my $filter_insig = undef;
+          my $appendage = '';
           if (defined $rule->{filter}) {
             if ($pre_filter_nontrivial) {
-              $main_VP .= " to the previous $filter_text when it is ";k
+              $main_VP .= ' to the ' . 
+                  ($rule->{bidirectional} ? 'nearest' : 'previous') . 
+                  " $filter_text on either side when it is ";
               $filter_insig = $rule->{filter}{condition};
             } else {
-              $main_VP .= ' to the previous ';
+              $main_VP .= ' to the ' . 
+                  ($rule->{bidirectional} ? 'nearest ' : 'previous ') . 
+              $appendage .= ' on either side' if $rule->{bidirectional};
             }
           } else {
-            $main_VP .= ' to a preceding ';
+            $main_VP .= ' to a' . ($rule->{bidirectional} ? 'n adjacent ' : ' preceding ');
           }
           @_ = grep /^$pre$/, @inventory;
           for my $phone (split / /, $rule->{$locus-1}{except}) {
@@ -1715,9 +1722,12 @@ sub describe_rules {
           }
           $main_VP .= $self->describe_set(\@_, \@inventory, morpho => 'bare', etic => 1, 
               nobase => defined($filter_insig), insignificant => $filter_insig);
+          $main_VP .= $appendage;
           $pre = undef;
         } else {
-          $main_VP .= ' to the previous ' . defined $rule->{filter} ? $filter_text : 'phone';
+          $main_VP .= ' to the ' . 
+              ($rule->{bidirectional} ? 'nearest ' : 'previous ') . 
+              defined $rule->{filter} ? $filter_text : 'phone';
         }
         if (defined $rule->{$locus-1}{or_pause}) { # word-initial
           my $pausal_effect = $effect;
@@ -1729,7 +1739,8 @@ sub describe_rules {
           $modified =~ s/u/./g;
           $main_VP .= ' and become ' . 
                       $self->name_natural_class($modified, \@new_inventory, significant => $pausal_effect, morpho => 'plural', nobase => 1);
-          $main_VP .= defined $rule->{filter} ? (" if no $filter_text precedes") : ' word-initially';
+          $main_VP .= defined $rule->{filter} ? (" if no $filter_text " . ($rule->{bidirectional} ? 'is present' : 'precedes')) 
+              : ($rule->{bidirectional} ? ' word-extremally' : ' word-initially');
         }
       }
       if ($effect =~ />/) {
@@ -1741,25 +1752,33 @@ sub describe_rules {
             $self->name_natural_class($_, undef, scheme => 'nominalised', nobase => 1);
         if (!defined($old_pre) and !$far) {
           my $filter_insig = undef;
+          my $appendage = '';
           if (defined $rule->{filter}) {
             if ($pre_filter_nontrivial) {
-              $main_VP .= " to the next $filter_text when it is ";
+              $main_VP .= ' to the ' . 
+                  ($rule->{bidirectional} ? 'nearest' : 'next') . 
+                  " $filter_text on either side when it is ";
               $filter_insig = $rule->{filter}{condition};
             } else {
-              $main_VP .= ' to the next ';
+              $main_VP .= ' to the ' . 
+                  ($rule->{bidirectional} ? 'nearest ' : 'next ') . 
+              $appendage .= ' on either side' if $rule->{bidirectional};
             }
           } else {
-            $main_VP .= ' to a following ';
+            $main_VP .= ' to a' . ($rule->{bidirectional} ? 'n adjacent ' : ' following ');
           }
           @_ = grep /^$post$/, @inventory;
           for my $phone (split / /, $rule->{$locus+1}{except}) {
             @_ = grep $_ !~ /^$phone$/, @_;
           }
           $main_VP .= $self->describe_set(\@_, \@inventory, morpho => 'bare', etic => 1,
-              nobase => defined($filter_insig), insignificant => $filter_insig);          
+              nobase => defined($filter_insig), insignificant => $filter_insig);  
+          $main_VP .= $appendage;
           $post = undef;
         } else {
-          $main_VP .= ' to the next ' . defined $rule->{filter} ? $filter_text : 'phone';
+          $main_VP .= ' to the ' . 
+              ($rule->{bidirectional} ? 'nearest ' : 'next ') . 
+              defined $rule->{filter} ? $filter_text : 'phone';
         }
         if (defined $rule->{$locus+1}{or_pause}) { # word-final
           my $pausal_effect = $effect;
@@ -1771,7 +1790,8 @@ sub describe_rules {
           $modified =~ s/u/./g;
           $main_VP .= ' and become ' . 
                       $self->name_natural_class($modified, \@new_inventory, significant => $pausal_effect, morpho => 'plural', nobase => 1);
-          $main_VP .= defined $rule->{filter} ? (" if no $filter_text follows") : ' word-finally';
+          $main_VP .= defined $rule->{filter} ? (" if no $filter_text " . ($rule->{bidirectional} ? 'is present' : 'follows')) 
+              : ($rule->{bidirectional} ? ' word-extremally' : ' word-finally');
         }
       }
       $main_clause .= $main_VP;
@@ -1784,16 +1804,18 @@ sub describe_rules {
       if ($pre_text) {
         if (defined $rule->{filter}) {
           if ($pre_filter_nontrivial) {
-            $environment_text .= " if the previous $filter_text is";
+            $environment_text .= ' if ' . 
+                ($rule->{bidirectional} ? "the nearest $filter_text on either side" : "the previous $filter_text") . 
+                ' is';
             # recompute, for significant
             $pre_text = $self->name_phoneset($pre_phoneset, \@inventory, morpho => 'bare', no_nothing => 1, 
                 nobase => 1, significant => $FS->subtract_features($pre_phoneset->{condition}, $rule->{filter}{condition}) );
           } else {
             $environment_text .= ' if there is ';
-            $envbit .= ' earlier in the word';
+            $envbit .= ($rule->{bidirectional} ? ' earlier' : ' elsewhere') . ' in the word';
           }
         } else {
-          $environment_text .= ($post_text ? ' between' : ' after');
+          $environment_text .= ($post_text ? ' between' : ($rule->{bidirectional} ? ' next to' : ' after'));
         }
         $environment_text .= " $pre_text" . $envbit;
       } else {
@@ -1804,11 +1826,13 @@ sub describe_rules {
           if ($pre_text) {
             $environment_text .= ' or there is none';
           } else {
-            $environment_text .= " when it is the first $filter_text in the word";
+            $environment_text .= ' when it is the ' . 
+                ($rule->{bidirectional} ? 'only' : 'first') . 
+                " $filter_text in the word";
           }
         } else {
           $environment_text .= ' or' if $pre_text;
-          $environment_text .= ' word-initially';
+          $environment_text .= $rule->{bidirectional} ? ' word-extremally' : ' word-initially';
         }
       }
     } 
@@ -1818,18 +1842,21 @@ sub describe_rules {
         if (defined $rule->{filter}) {
           if ($post_filter_nontrivial) {
             # FIXME: "... is high or high semivowel"
-            $environment_text .= " if the next $filter_text is";
+            $environment_text .= ' if ' . 
+                ($rule->{bidirectional} ? "the nearest $filter_text on either side" : "the next $filter_text") . 
+                ' is';
             # recompute, for significant
             $post_text = $self->name_phoneset($post_phoneset, \@inventory, morpho => 'bare', no_nothing => 1, 
                 nobase => 1, significant => $FS->subtract_features($post_phoneset->{condition}, $rule->{filter}{condition}) );
           } else {
             $environment_text .= ' if there is ';
-            $envbit .= ' later in the word';
+            $envbit .= ($rule->{bidirectional} ? ' later' : ' elsewhere') . ' in the word';
           }
         } else {
-          $environment_text .= ($pre_text ? ' and' : ' before');
+          $environment_text .= ($pre_text ? ' and' : ($rule->{bidirectional} ? ' next to' : ' before'));
         }
         $environment_text .= " $post_text" . $envbit;
+        $environment_text .= ' in either order' if ($pre_text and $rule->{bidirectional} and !defined $rule->{filter});
       } else {
         $post = undef;
       }
@@ -1838,11 +1865,13 @@ sub describe_rules {
           if ($pre_text) {
             $environment_text .= ' or there is none';
           } else {
-            $environment_text .= " when it is the last $filter_text in the word";
+            $environment_text .= ' when it is the ' . 
+                ($rule->{bidirectional} ? 'only' : 'last') . 
+                " $filter_text in the word";
           }
         } else {
           $environment_text .= ' or' if $post_text;
-          $environment_text .= ' word-finally';
+          $environment_text .= $rule->{bidirectional} ? ' word-extremally' : ' word-finally';
         }
       }
     }
