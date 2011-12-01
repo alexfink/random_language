@@ -1044,15 +1044,22 @@ marked:
 
   - condition: ", -resonant"
     prob: 0.04
-    extras: {"-resonant 0": 0.5, "+voice 1": 0.5, "!+resonant -nasal 0": 0.975, "+nasal 0": 0.5} # different +nasal 0 prob
+    extras: {"-resonant 0": 0.5, "+voice 1": 0.5, "!+resonant -nasal 0": 0.975, "+nasal 0": 0.5, "-nasal 0": 0.25} # different +nasal 0 prob.  remember, - overwrites later
     resolve: {"r <nasal 1": 1}
+
+  # special nasal > resonant after nonnasal
+  - condition: "-nasal, +nasal"
+    except: {0: "dorsal +resonant -lateral -tap_or_trill"}
+    prob: 0.045
+    extras: {"-syllabic 1": 0.875, "-resonant 0": 0.833333, "+fricative 0": 0.166667, "!-labial -dorsal 1": 0.2}
+    resolve: {"r +resonant 1": 1}
 
   - condition: ", +nasal"
     except: {0: "-resonant"} # for radicals
     prob: 0.3875
     extras: {"+resonant 1": 0.333333, "+syllabic 0": 0.75, "dorsal -lateral -tap_or_trill 0": 0.666667, "!-syllabic +resonant 0": 0.2}
-    direction: {"": 0.2625, reverse: 0.0875, both: 0.0375}
-    resolve: {"r >nasal 0": 1}
+    direction: {"": 0.315, reverse: 0.0875, both: 0.045}
+    resolve: {"r +nasal 0": 1}
 
   # FIXME: the below change wasn't very good.  Really what we just want is some kind of total assimilation among sonorants, often constrained to the same POA.  (What about syllabics?  Surely [in] > [n=n] is freak.)
   # Given homorganicity, should (C or V) epenthesis be an option of this change as well?  Should the primary locus of those things be elsewhere?
@@ -1332,7 +1339,7 @@ marked:
 
   # [h] realised as voiceless glide
   - condition: "-dorsal -coronal -labial -constricted_glottis, dorsal +resonant -lateral -tap_or_trill"
-    prob: 0.1
+    prob: 0.075
     extras: {"-voice 0": 0.5}
     direction: {"": 1, reverse: 0.083333, both: 0.5}
     resolve: {"r dorsal +resonant -lateral -tap_or_trill >low >high >front >back >ATR >round 0": 1}
@@ -1511,8 +1518,8 @@ marked:
   - condition: "-syllabic, dorsal +resonant -lateral -tap_or_trill"
     prob: 0
     contrast_probs:
-      "-syllabic -dorsal -front, -syllabic -dorsal +front": 0.38
-      "-syllabic -resonant -front, -syllabic -resonant +front": 0.1
+      "-syllabic -dorsal -resonant -front, -syllabic -dorsal -resonant +front": 0.285
+      "-syllabic -resonant -front, -syllabic -resonant +front": 0.035625
     extras: {"-back 1": 0.8}
     direction: {"": 1, reverse: 1, both: 0.333333}
     resolve: {"r {front 1": 1}
@@ -1750,21 +1757,21 @@ marked:
   # Counterstripping spread for [?].
   - condition: "-dorsal -coronal -labial +constricted_glottis, -resonant"
     except: {1: "-dorsal -coronal -labial"}
-    prob: 0.025
+    prob: 0.0375
     extras: {"-nasal 1": 0.8, "-fricative 1": 0.5, "-voice 0": 0.75}
     resolve: {"r -resonant -fricative >dorsal >coronal >labial >front >back >round >retroflex >labiodental >anterior >laminal >high >palatalised_velar 0": 1}
 
   # Counterstripping spread for [h].
   - condition: "-dorsal -coronal -labial +spread_glottis, -resonant"
     except: {1: "-dorsal -coronal -labial"}
-    prob: 0.1
+    prob: 0.125
     extras: {"-labial 1": 0.25, "-coronal -labial 1": 0.25, "-nasal 1": 0.5, "-fricative 1": 0.333333, "-voice 0": 0.75}
     resolve: {"r -resonant -fricative >dorsal >coronal >labial >front >back >round >retroflex >labiodental >anterior >laminal >high >palatalised_velar 0": 1}
 
   # Dorsal variant.
   - condition: "-dorsal -coronal -labial +spread_glottis, -resonant"
     except: {1: "-dorsal -coronal -labial"}
-    prob: 0.15 
+    prob: 0.175 
     extras: {"-labial 1": 0.25, "-coronal -labial 1": 0.25, "-nasal 1": 0.5, "-fricative 1": 0.333333, "-voice 0": 0.75, "-voice 1": 0.75, "# 1": 0.166667}
     resolve: {"r -resonant +fricative dorsal +back 0": 1}
 
@@ -1792,8 +1799,8 @@ marked:
   # also gliding form
 
   - condition: "+resonant, -long -resonant, +resonant" 
-    prob: 0.202273
-    extras: {"dorsal -lateral -tap_or_trill 0": 0.7, "dorsal -lateral -tap_or_trill 2": 0.7, "-nasal 1": 0.875, "+voice 1": 0.875, "-constricted_glottis 1": 0.875, "dorsal 1": 0.125, "# 2": 0.125, "## 2": 0.025, "-prenasalised 1": 0.5}
+    prob: 0.224748
+    extras: {"dorsal -lateral -tap_or_trill 0": 0.7, "dorsal -lateral -tap_or_trill 2": 0.7, "-nasal 1": 0.875, "+voice 1": 0.875, "-constricted_glottis 1": 0.875, "dorsal 1": 0.125, "# 2": 0.125, "## 2": 0.025, "-prenasalised 1": 0.5, "+affricate 1": 0.1}
     resolve: {"r +fricative 1": 1}
 
   # another rhotacism
@@ -2043,10 +2050,11 @@ marked:
   # Here, I suppose, start the changes not viewable as assimilations.
 
   # Gestural hiding.
-  # FIXME: I don't think this is working
-  - condition: "-resonant, -resonant -fricative, -resonant"
-    prob: 0.166667
-    extras: {"!+sibilant 1": 0.975, "coronal 1": 0.666667, "-nasal 0": 0.333333, "-fricative 0": 0.75, "-nasal 2": 0.25, "-fricative 2": 0.75}
+  # FIXME: this isn't being written down.
+  - condition: "-resonant, -nasal, -resonant"
+    except: {1: "+resonant | +fricative | +affricate"}
+    prob: 0.416666 # raised for the radical-only form
+    extras: {"-dorsal -labial 1": 0.666667, "-dorsal -coronal -labial 1": 0.6, "-nasal 0": 0.333333, "-fricative 0": 0.5, "-nasal 2": 0.25, "-fricative 2": 0.5, "# 0": 0.333333, "# 2": 0.333333}
     resolve: {"delete 1": 1}
 
 
@@ -2948,6 +2956,15 @@ marked:
       resonant: 0.25 # 'cause this goes straight to stops
     related_weight:
       "": 0.5
+
+  # cheap one-off gap for non-front semivowels, since otherwise they're overfrequent in generation.  TESTINGTESTINGTESTING
+  - condition: "-syllabic dorsal +resonant -lateral -tap_or_trill -front"
+    initial_prob: 0.166667
+    prob: 0
+    contrast_probs: 
+      "-resonant -round, -resonant +round": 0 # -resonant for safety
+    resolve:
+      "delete 0": 1
 
   - condition: "dorsal +implosive"
     prob: 0.9
