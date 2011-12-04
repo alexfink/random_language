@@ -3,7 +3,6 @@ version: "5.2"
 
 # Also see end of file for more things TODO.
 
-# TODO: A way to make e.g. [M\_+], and even [M\], prefer to resolve according to the front-backness and rounding of a nearby vowel.  The trouble with this is that it has to come before the uniform resolution of [M\_+] to take effect.  That means it comes before the phoneme boundary, which is very problematic.  Or is it?  Maybe it only is for writing the rules up, and for that we should get by if we can project forward.  (It's the same problem that e.g. harmony can be expected to invoke.)
 # Probabilistic pre-strippings??  The trouble with this is changing them in diachrony.  I guess one has to change the whole cluster, and make it uninterruptable.
 # Coronals shouldn't front vowels, nor labials round them, etc., unless more obvious sources do too.
 
@@ -959,7 +958,7 @@ marked:
   # a repeat, for extra weight of [t] assimilating before things where other stops don't
   - condition: "-nasal coronal -fricative -resonant, -syllabic"
     except: {1: "-dorsal -coronal -labial"}
-    prob: 0.044444
+    prob: 0.1
     extras: {"-resonant 1": 0.875, "!+sibilant 0": 0.5, "-nasal 1": 0.166667, "coronal -sibilant 0": 0.181818, "# 1": 0.25} 
     pause_phone: "-dorsal -coronal -labial" 
     resolve: {"r >dorsal >coronal >labial >front >back >round >retroflex >labiodental >anterior >laminal >high >palatalised_velar -affricate 0": 1}
@@ -967,7 +966,7 @@ marked:
   # rightward place assimilation, like w/ German CN=.
   - condition: "-syllabic, -resonant, -syllabic -resonant"
     except: {0: "-dorsal -coronal -labial"}
-    prob: 0.1
+    prob: 0.125
     extras: {"# 2": 1, "-resonant 0": 0.966667, "+nasal 1": 0.833333, "-fricative 1": 0.833333, "!+sibilant 1": 0.5} 
     resolve: {"r <dorsal <coronal <labial <front <back <round <retroflex <labiodental <anterior <laminal <high <palatalised_velar -affricate 1": 1}
 
@@ -1013,11 +1012,11 @@ marked:
     extras: {"+voice 1": 0.975, "!+sibilant +anterior 1": 0.25}
     resolve: {"r +resonant 1": 1}
 
-  # to tie labial fricatives to labialisation more
-  - condition: "-resonant, labial -resonant"
-    prob: 0.055556
+  # to tie labial fricatives to labialisation more.  TODO: other places
+  - condition: "-resonant, labial +fricative"
+    prob: 0.041667
     direction: {"": 1, reverse: 0.0625, both: 0.125}
-    extras: {"-nasal 0": 0.666667, "-labial 0": 0.333333, "+fricative 1": 0.875, "!-fricative -nasal 1": 0.6}
+    extras: {"-nasal 0": 0.666667, "-labial 0": 0.333333}
     resolve: {"r +resonant 1": 1}
 
   # _Homorganic_ resonant spread rules exist; that's a good model for this [ln] > [ll] type behaviour.  But I haven't done it for dorsal, 'cause semivowels are the overwhelmingly dominant resonant there.
@@ -1372,8 +1371,8 @@ marked:
   # vowelÊlowering near uvulars
   - condition: "dorsal +resonant -lateral -tap_or_trill, -high dorsal"
     except: {1: "dorsal +resonant -lateral -tap_or_trill"}
-    prob: 0.876543
-    extras: {"-tap_or_trill 1": 0.666667}
+    prob: 0.657407 # raise when glide formation is in?
+    extras: {"!+tap_or_trill 1": 0.666667}
     direction: {"": 35, reverse: 8, both: 32}
     resolve: {"r -high 0": 1}
   # chance of glide formation, high at that.  since I've made the changes apply to semivowels too, glidings will have to have enough knowledge for that
@@ -1772,7 +1771,7 @@ marked:
   - condition: "-dorsal -coronal -labial +spread_glottis, -resonant"
     except: {1: "-dorsal -coronal -labial"}
     prob: 0.175 
-    extras: {"-labial 1": 0.25, "-coronal -labial 1": 0.25, "-nasal 1": 0.5, "-fricative 1": 0.333333, "-voice 0": 0.75, "-voice 1": 0.75, "# 1": 0.166667}
+    extras: {"-labial 1": 0.25, "-coronal -labial 1": 0.25, "-nasal 1": 0.5, "-fricative 1": 0.333333, "-voice 0": 0.75, "-voice 1": 0.75, "# 1": 0.285714}
     resolve: {"r -resonant +fricative dorsal +back 0": 1}
 
   # And for after an obstruent.  Together with splitting this achieves [t_h] > [tx] sorts of things.
@@ -1857,16 +1856,16 @@ marked:
 
   # frication in [ka]
   - condition: "dorsal -resonant, dorsal +resonant -lateral -tap_or_trill -high"
-    prob: 0.006667
+    prob: 0.00625
     extras: {"+low 1": 0.666667, "-ATR 1": 0.75} 
     direction: {"": 1, reverse: 1, both: 0.333333}
     resolve: {"r +fricative 0": 1, "r +affricate 0": 0.4} # well, affricate isn't that good if it's after V
       # TODO: matchedness in front-backness for the above
 
   # rhinoglottophilia
-  - condition: "+resonant, -dorsal -coronal -labial"
+  - condition: "+voice, -dorsal -coronal -labial"
     prob: 0.025
-    extras: {"+syllabic 0": 0.75, "dorsal 0": 0.666667}
+    extras: {"+resonant 0": 0.5, "dorsal +resonant -lateral -tap_or_trill 0": 0.666667, "+syllabic 0": 0.2}
     direction: {"": 1, reverse: 1, both: 0.5}
     resolve: {"r +nasal 0": 1}
 
@@ -2051,10 +2050,10 @@ marked:
 
   # Gestural hiding.
   # FIXME: this isn't being written down.
-  - condition: "-resonant, -nasal, -resonant"
+  - condition: "-resonant, -nasal, "
     except: {1: "+resonant | +fricative | +affricate"}
     prob: 0.416666 # raised for the radical-only form
-    extras: {"-dorsal -labial 1": 0.666667, "-dorsal -coronal -labial 1": 0.6, "-nasal 0": 0.333333, "-fricative 0": 0.5, "-nasal 2": 0.25, "-fricative 2": 0.5, "# 0": 0.333333, "# 2": 0.333333}
+    extras: {"-dorsal -labial 1": 0.666667, "-dorsal -coronal -labial 1": 0.6, "-nasal 0": 0.333333, "-fricative 0": 0.5, "-resonant 2": 0.9, "-nasal 2": 0.25, "-fricative 2": 0.5, "# 0": 0.333333, "# 2": 0.333333}
     resolve: {"delete 1": 1}
 
 
@@ -2233,7 +2232,7 @@ marked:
       "+nasal": 0
       "+fricative": 0
       "coronal": 0.01
-    split:
+    split: # TODO: does the other rule against this stuff suffice?
       - condition: "-syllabic"
         prob: 0.25 
         flip:
@@ -2284,7 +2283,7 @@ marked:
     # This used to have a related_weight, but that blocked the pharyngealisation outcome, and I don't know what it was good for.
 
   # Cast for vowels separately.  TODO: unify and split-resolve.
-  - condition: "-syllabic +front +round"
+  - condition: "-syllabic +front +round"#HERE
     prob: 0.6
     flip:
       front: 2
@@ -2926,10 +2925,9 @@ marked:
 
   # the [M\] gap.  loss and +front and +round are the favoured resolutions
   # See also the analogous change above which doesn't care about syllabicity.
-  # And see above for a split this should eventually have.  
   - condition: "-syllabic dorsal +resonant -lateral -tap_or_trill -front -round" 
     prob: 0.925
-    extras: {"-low 0": 0.9} # [a] glides aren't bad for _this_ reason
+    extras: {"-low 0": 0.9, "+high 0": 0.142857} # [a] glides aren't bad for _this_ reason
     resolve:
       "free 0": 1
       "delete 0": 0.8
@@ -2944,6 +2942,17 @@ marked:
     related_weight:
       "+fricative": 0.2 # times 2
       "coronal": 0.2
+    split:
+      # Next to a vowel, secondary [M\] frequently assimilates.
+      # Note that, since we short-circuit generation of the set of phonemes,
+      # this has no effect on that set, as is desirable.
+      # FIXME: this is often being given a fatal except by persistence_variants
+      - unless_deletion: 0
+        offset: -1
+        condition: "dorsal +resonant -lateral -tap_or_trill, "
+        prob: 0.833333
+        direction: {"": 1, reverse: 0.083333, both: 0.583333}
+        resolve: {"r <front <back <round 0": 1}
 
   # the gap for semivowels of all sorts.
   - condition: "-syllabic dorsal +resonant -lateral -tap_or_trill"
@@ -3024,7 +3033,7 @@ marked:
   # See comments on "labial +lateral" above.
   - condition: "dorsal +lateral -coronal"
     initial_prob: 0.995 # there should be very little generated [L\], but getting [L] from palatoalv lateral shd be okay.
-    prob: 0.833333
+    prob: 0.925
     flip:
       lateral: 10
       dorsal: 2

@@ -4,21 +4,27 @@ use strict;
 # If $multi is 0, parse into $s a description of a phone set given in $d by {condition}, {except}, {extras}.
 # If $multi is 1, parse into $s a hash of the same for multiple indexed phones.
 # 
-# If $s already has stuff in it, overwrite that rather than trampling it.
+# If passed a hash in {base}, overwrite that.
 sub parse {
   my ($d, $multi, %args) = (shift, shift, shift, @_);
   my $FS = $args{FS};
   my $s = {};
   $s = $args{base} if (defined $args{base});
 
+  # If e.g. offset = -1, then the phone at the beginning of the commaed list of conditions is phone -1.  
+  # This is necessary e.g. for split rules that want to add a left environment.
+  # Beware: rules may not work if none of their indices is 0.
+  my $offset = 0;
+  $offset = $d->{offset} if defined $d->{offset};
+
   my @phones = map $FS->parse($_), split /, */, $d->{condition}, -1;
   for (0..$#phones) {
-    if (defined $s->{$_}) {
-      $s->{$_}{condition} = $FS->overwrite($s->{$_}{condition}, $phones[$_]);
+    if (defined $s->{$_+$offset}) {
+      $s->{$_+$offset}{condition} = $FS->intersect($s->{$_+$offset}{condition}, $phones[$_]);
     } else {
-      $s->{$_}{condition} = $phones[$_];
+      $s->{$_+$offset}{condition} = $phones[$_];
     }
-    bless $s->{$_};
+    bless $s->{$_+$offset};
   }
 
   if (defined $d->{except}) {
@@ -31,8 +37,8 @@ sub parse {
     } else {
       my @exceptions = map $FS->parse($_), split /, */, $d->{except}, -1;
       for my $displ (0..$#exceptions) {
-        $s->{$displ}{except} .= ' ' if defined $s->{$displ}{except};
-        $s->{$displ}{except} .= join ' ', map $FS->parse($_), split / *\| */, $d->{except}{$displ};
+        $s->{$displ+$offset}{except} .= ' ' if defined $s->{$displ}{except};
+        $s->{$displ+$offset}{except} .= join ' ', map $FS->parse($_), split / *\| */, $d->{except}{$displ};
       }
     }
   }

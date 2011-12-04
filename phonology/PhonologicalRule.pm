@@ -231,7 +231,7 @@ sub run {
   my $changed = 0;
 
   my $original_word = [@$unfiltered_word];
-  my $reversed = 0;
+  my $reversed = $rule->{bidirectional} ? 1 : 0;
   {
     my $word = $unfiltered_word;
     my $operating_on_subword = 0;
@@ -250,7 +250,7 @@ sub run {
 
     # iterate in the direction specified
     my @displs = -1..@$word-1;   # start at -1 for assimilations to word-initial pause;
-        # will need to be larger if rules can have non-canonical indices
+        # will need to be changed if there can be rules whose indices are all strictly of the same sign
     @displs = reverse @displs if (defined $rule->{direction} and $rule->{direction} < 0);
     for my $i (@displs) {
       next unless $rule->matches_word($word, $i, nopause => $args{nopause});
@@ -322,8 +322,8 @@ sub run {
       } # i
     }
     
-    if ($rule->{bidirectional} and !$reversed) {
-      $reversed = 1;
+    if ($rule->{bidirectional} and $reversed) {
+      $reversed = 0;
       redo;
     }
   } # block for reverse iteration
@@ -351,6 +351,9 @@ sub mark_to_inactivate {
 # Create persistent and impersistent variants of this rule.  Weight appropriately.
 # In fact, there are two kinds of persistent variants; one tries to redo every rule it conflicts with,
 # while one takes on their conditions as excepts in many cases (if this rule is recastable enough).
+
+# FIXME: 'repair_split 252 0' is getting an except that kills it entirely, namely '01..1................0.0......'.
+# In cases which do this, that string seems to appear nowhere else in the phonology...
 sub persistence_variants {
   my ($self, $base_weight, $pd, $persistence_weight, $no_persist, $generable_val) = 
       (shift, shift, shift, shift, shift, shift);
@@ -929,6 +932,9 @@ sub generate {
             my ($condition, $target) = ($1, $2);
             $condition = $FS->parse($condition);
             next unless $rule->{$target}{effects} =~ /^$condition$/;
+          }
+          if (defined $d->{split}[$i]{unless_deletion}) { # code duplication...
+            next if $rule->{$d->{split}[$i]{unless_deletion}}{deletions};
           }
           next if grep $_ eq "${kind}_split $k $i", @{$rule->{splits}}; #kluge? 
           push @{$rule->{splits}}, "${kind}_split $k $i";
