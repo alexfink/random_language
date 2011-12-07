@@ -1028,7 +1028,7 @@ sub describe_syllable_structure {
 # Not that we do any such folding yet.
 
 # TODO: update for these rule types and features:
-# - directionality
+# - LtR vs. RtL
 # - {except} without a {condition}???  (unused probably)
 
 # FIXME: More current issues:
@@ -1059,6 +1059,9 @@ sub describe_rules {
     warn "unimplemented start time in describe_rules!";
   }
   @inventory = grep $_, @inventory;
+  # TODO: (proximal) some single phones might have resolutions with an environment!
+  # Probably, rather than trying to shove it all into the triggering rule, write down a new rule
+  # and mark the phone as hypothetical where it occurs.
   %phone_resolutions = (map(($_ => $_), @inventory));
 
   my %sortkey = map(($_ => $self->table_sortkey($_, $self->{classes}{table_structure})), @inventory);
@@ -1068,20 +1071,20 @@ sub describe_rules {
     my $rule = $pd->{phonology}[$i];
 
     # For now, assume there's only one change.  
-    if ($rule->indices('effects') > 1) {
+    my @loci = ($rule->indices('effects'), $rule->indices('deletions'));
+    if (@loci > 1) {
       $descriptions{$i}{rule} = '(some rule where multiple phones change at once)';
       next;
     }
 
-    @_ = $rule->indices('effects');
-    my $locus = $_[0];
-    my $effect = $rule->{$locus}{effects};
+    my $locus = $loci[0];
+    my $effect = defined $rule->{$locus}{effects} ? $rule->{$locus}{effects} : '.' x @{$FS->{features}};
     my $old_effect = $effect;
     my $precondition = $rule->{$locus}{condition};
     my ($pre, $old_pre, $post, $old_post);
     $old_pre = $pre = $rule->{$locus-1}{condition} if defined $rule->{$locus-1} and defined $rule->{$locus-1}{condition};
     $old_post = $post = $rule->{$locus+1}{condition} if defined $rule->{$locus+1} and defined $rule->{$locus+1}{condition};
-    my $far = grep(($_ ne $locus-1 and $_ ne $locus and $_ ne $locus+1), $rule->indices('condition'));
+    my $far = grep(($_ != $locus-1 and $_ != $locus and $_ != $locus+1), $rule->indices('condition'));
 
     if (defined $rule->{filter}) {
       $precondition = $FS->intersect($rule->{filter}{condition}, $precondition);
@@ -1090,11 +1093,11 @@ sub describe_rules {
     }
 
     # Try to simplify assimilations, taking advantage of enrichments.
-    for my $i (0..length($effect)-1) {
-      substr($effect, $i, 1) = substr($pre, $i, 1)
-        if substr($effect, $i, 1) eq '<' and substr($pre, $i, 1) ne '.';
-      substr($effect, $i, 1) = substr($post, $i, 1)
-        if substr($effect, $i, 1) eq '>' and substr($post, $i, 1) ne '.';
+    for my $j (0..length($effect)-1) {
+      substr($effect, $j, 1) = substr($pre, $j, 1)
+        if substr($effect, $j, 1) eq '<' and substr($pre, $j, 1) ne '.';
+      substr($effect, $j, 1) = substr($post, $j, 1)
+        if substr($effect, $j, 1) eq '>' and substr($post, $j, 1) ne '.';
     }
 
     # TODO: put pointless persistent rules into some kind of holding tank,
@@ -1145,7 +1148,7 @@ sub describe_rules {
       }
     }
     # Drop rules that visibly do nothing, now.
-    if ($precondition =~ /^$effect$/) {
+    if ($precondition =~ /^$effect$/ and !$rule->{$locus}{deletions}) {
       $rule->{pointless} = 1;
       next RULE;
     }
@@ -1176,21 +1179,26 @@ sub describe_rules {
       $frames_examined{$frame} = 1;
  
       for my $phone (@{$matcheds{$locus}}) {
-        my $changed = $FS->add_entailments($FS->overwrite($phone, $frame));
-        if (!defined $phone_resolutions{$changed}) {
-          my $word = [$changed];
-          my $expiry = [];
-          $pd->run($word,
-                   cleanup => $i, 
-                   change_record => [FeatureSystem::change_record($phone, $changed)],
-                   track_expiry => $expiry,
-                   nopause => 1);
-          $phone_resolutions{$changed} = join ' ', @$word;
-          push @{$resolution_expiries{$expiry->[0]}}, $changed if $expiry->[0] < INF;
-          push @new_inventory, @$word; 
-          $sortkey{$_} = $self->table_sortkey($_, $self->{classes}{table_structure}) for @$word;
+        my $outcome;
+        if (defined $rule->{$locus}{deletions} and $rule->{$locus}{deletions}) {
+          $outcome = '';
+        } else {
+          my $changed = $FS->add_entailments($FS->overwrite($phone, $frame));
+          if (!defined $phone_resolutions{$changed}) {
+            my $word = [$changed];
+            my $expiry = [];
+            $pd->run($word,
+                     cleanup => $i, 
+                     change_record => [FeatureSystem::change_record($phone, $changed)],
+                     track_expiry => $expiry,
+                     nopause => 1);
+            $phone_resolutions{$changed} = join ' ', @$word;
+            push @{$resolution_expiries{$expiry->[0]}}, $changed if $expiry->[0] < INF;
+            push @new_inventory, @$word; 
+            $sortkey{$_} = $self->table_sortkey($_, $self->{classes}{table_structure}) for @$word;
+          }
+          $outcome = $phone_resolutions{$changed};
         }
-        my $outcome = $phone_resolutions{$changed};
         $pointless = 0 unless ($phone eq $outcome and $phone !~ /^$effect$/);
         $outcome{$frame}{$phone} = $outcome;
         $frame_is_worthwhile = 1 if $outcome ne $phone;
@@ -1205,7 +1213,7 @@ sub describe_rules {
     # If only one frame causes change, rewrite to a non-assimilatory rule.  
     # We need to fix the values of both effect and influencer.
     if (keys %outcome <= 1) {
-      $rule->{pointless} = 1, next RULE if keys %outcome <= 0;
+      $rule->{pointless} = 1, next RULE if keys %outcome <= 0 and !defined $rule->{$locus}{deletions};
       if (keys %frames_examined > 1) {
         my($frame, $dummy) = each %outcome;
         for (0..length($effect)-1) {
@@ -1406,7 +1414,7 @@ sub describe_rules {
           if ($dev ne '') { # deviation can be deletion
             $modified = $FS->overwrite($modified, $dev);
           } else {
-            $modified = '';
+            $modified = ''; # this has a special meaning
           }
         } else {
           $no_main_VP = 1;
@@ -1624,7 +1632,7 @@ sub describe_rules {
       $main_clause .= $self->name_natural_class($precondition, \@inventory, morpho => 'plural');
       $get_str_pattern[0] = $self->str_part($precondition);
     }
-    $modified = $FS->overwrite($get_str_pattern[0], $modified);
+    $modified = $FS->overwrite($get_str_pattern[0], $modified) if length($modified);
     my $subject_is_list = ($main_clause =~ /^\[.*\]$/); # klugy
     my $both_are_lists = 0; # don't need deviations if both subj and obj are lists
     my @example_sounds;
@@ -1710,7 +1718,7 @@ sub describe_rules {
               $filter_insig = $rule->{filter}{condition};
             } else {
               $main_VP .= ' to the ' . 
-                  ($rule->{bidirectional} ? 'nearest ' : 'previous ') . 
+                  ($rule->{bidirectional} ? 'nearest ' : 'previous ');
               $appendage .= ' on either side' if $rule->{bidirectional};
             }
           } else {
@@ -1761,7 +1769,7 @@ sub describe_rules {
               $filter_insig = $rule->{filter}{condition};
             } else {
               $main_VP .= ' to the ' . 
-                  ($rule->{bidirectional} ? 'nearest ' : 'next ') . 
+                  ($rule->{bidirectional} ? 'nearest ' : 'next ');
               $appendage .= ' on either side' if $rule->{bidirectional};
             }
           } else {
