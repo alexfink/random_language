@@ -202,7 +202,6 @@ sub run {
     my $iterations = 0;
     while (keys %agenda) {
       my %new_agenda;
-#      print "|" if $iterations == STEPS_TO_LOOP; # debug
       for my $i (sort {$a <=> $b} keys %agenda) {
         next if $i > $k;
         # if this is the first time through, let rules run even if they've marked themselves inactive
@@ -255,6 +254,9 @@ sub run {
         }
       }
       %agenda = %new_agenda;
+      # if this rule is supposed to run with the next as a block, don't check previous rules now
+      %agenda = () if $phonology->[$k]{inseparable};
+
       # fwiw I saw this tripped wrongly once when the bound was 8.
       (print STDERR "*** unceded loop!\n"), last if (++$iterations >= STEPS_TO_DIE); 
     } # while (keys %agenda)
@@ -275,7 +277,7 @@ sub generatedly_contrast {
   # If the contrast isn't in just one feature, default to false for now.
   my $f = -1;
   for(my $i = 0; $i < scalar @{$self->{FS}{features}}; ++$i) {
-    if (substr($phone0, $i, 1) ne substr($phone1, $i, 1)) {
+    if (substr($phone0, $i, 1) ne substr($phone1, $i, 1) and substr($phone0, $i, 1) ne '.' and substr($phone1, $i, 1) ne '.') {
       if ($f == -1) {
         $f = $i;
       } else {

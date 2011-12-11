@@ -351,9 +351,6 @@ sub mark_to_inactivate {
 # Create persistent and impersistent variants of this rule.  Weight appropriately.
 # In fact, there are two kinds of persistent variants; one tries to redo every rule it conflicts with,
 # while one takes on their conditions as excepts in many cases (if this rule is recastable enough).
-
-# FIXME: 'repair_split 252 0' is getting an except that kills it entirely, namely '01..1................0.0......'.
-# In cases which do this, that string seems to appear nowhere else in the phonology...
 sub persistence_variants {
   my ($self, $base_weight, $pd, $persistence_weight, $no_persist, $generable_val) = 
       (shift, shift, shift, shift, shift, shift);
@@ -622,12 +619,14 @@ sub generate {
     $threshold = $FS->{features}[$k]{default}[$rest]{value};
   } elsif ($kind eq 'repair') {
     $threshold = $FS->{marked}[$k]{prob};
+    # TODO: (proximal) better system for contrast_probs, one that fits in with change loss-of-contrast detecting
     if (defined $FS->{marked}[$k]{contrast_probs}) {
       while (my ($cp, $prob) = each %{$FS->{marked}[$k]{contrast_probs}}) {
-        my ($phone0, $phone1) = split /, */, $cp;
-        $phone0 = $FS->parse($phone0);
-        $phone1 = $FS->parse($phone1);
-        if ($args{initial} and $args{phonology}->generatedly_contrast($phone0, $phone1)) {
+        my ($cp_pre, $cp_outcome) = split /; */, $cp;
+        $cp_pre = $FS->parse($cp_pre);
+        $cp_outcome = $FS->parse($cp_outcome);
+        $cp_outcome = $FS->add_entailments($FS->overwrite($cp_pre, $cp_outcome));
+        if ($args{initial} and $args{phonology}->generatedly_contrast($cp_pre, $cp_outcome)) {
           $threshold = $prob;
           last;
         }
