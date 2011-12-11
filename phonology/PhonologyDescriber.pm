@@ -1029,7 +1029,8 @@ sub describe_syllable_structure {
 
 # TODO: update for these rule types and features:
 # - LtR vs. RtL
-# - {except} without a {condition}???  (unused probably)
+# - {except} without a {condition} (unused probably)
+# - (future) formation of longs for moraic reasons.  Be sure to track this in the inventory.
 
 # FIXME: More current issues:
 # - There is a misstatement in 11598455.  It is a fundamental one: the rule as stated is
@@ -1092,14 +1093,6 @@ sub describe_rules {
       $old_post = $post = $FS->intersect($rule->{filter}{condition}, $post) if defined $post;
     }
 
-    # Try to simplify assimilations, taking advantage of enrichments.
-    for my $j (0..length($effect)-1) {
-      substr($effect, $j, 1) = substr($pre, $j, 1)
-        if substr($effect, $j, 1) eq '<' and substr($pre, $j, 1) ne '.';
-      substr($effect, $j, 1) = substr($post, $j, 1)
-        if substr($effect, $j, 1) eq '>' and substr($post, $j, 1) ne '.';
-    }
-
     # TODO: put pointless persistent rules into some kind of holding tank,
     # to check on creation of new phones.
     #
@@ -1111,8 +1104,9 @@ sub describe_rules {
     for my $displ ($rule->indices('condition')) {
       @{$matcheds{$displ}} = grep $rule->{$displ}->matches($_), @inventory;
       @{$matcheds{$displ}} = grep $rule->{filter}->matches($_), @{$matcheds{$displ}} if defined $rule->{filter};
-      # Rules aren't pointless if they trigger _only_ at word boundary.
-      unless (@{$matcheds{$displ}} or $rule->{$displ}{or_pause}) {
+      # triggering at word boundary counts too:
+      push @{$matcheds{$displ}}, $rule->{$displ}{or_pause} if defined $rule->{$displ}{or_pause};
+      unless (@{$matcheds{$displ}}) {
         $rule->{pointless} = 1;
         next RULE;
       }
@@ -1122,26 +1116,26 @@ sub describe_rules {
     # It would be at least as sensible to do this one assimilation at a time, in theory,
     # but that would throw off the naming.
     if ($effect =~ /</) {
-      my $not_pointless = 0;
+      my $not_variable = 0;
       my @indices = grep substr($effect, $_, 1) eq '<', 0..length($effect)-1;
       for my $j (@indices) {
-        $not_pointless = 1, last if grep substr($_, $j, 1) eq '0', @{$matcheds{$locus-1}}
+        $not_variable = 1, last if grep substr($_, $j, 1) eq '0', @{$matcheds{$locus-1}}
                                 and grep substr($_, $j, 1) eq '1', @{$matcheds{$locus-1}};
       }
-      unless ($not_pointless) {
+      unless ($not_variable) {
         for (0..length($effect)-1) {
           substr($effect, $_, 1) = substr($matcheds{$locus-1}[0], $_, 1) if substr($effect, $_, 1) eq '<';
         }
       }
     }
     if ($effect =~ />/) {
-      my $not_pointless = 0;
+      my $not_variable = 0;
       my @indices = grep substr($effect, $_, 1) eq '>', 0..length($effect)-1;
       for my $j (@indices) {
-        $not_pointless = 1, last if grep substr($_, $j, 1) eq '0', @{$matcheds{$locus+1}}
+        $not_variable = 1, last if grep substr($_, $j, 1) eq '0', @{$matcheds{$locus+1}}
                                 and grep substr($_, $j, 1) eq '1', @{$matcheds{$locus+1}};
       }
-      unless ($not_pointless) {
+      unless ($not_variable) {
         for (0..length($effect)-1) {
           substr($effect, $_, 1) = substr($matcheds{$locus+1}[0], $_, 1) if substr($effect, $_, 1) eq '>';
         }
@@ -1205,24 +1199,29 @@ sub describe_rules {
       }
       delete $outcome{$frame} unless $frame_is_worthwhile;
     }
-
-    if ($pointless) {
+      if ($pointless) {
       $rule->{pointless} = 1; 
       next RULE;
     }
+
+    # whether or_pause specifications in the rule can actually happen
+    my ($pre_pause, $post_pause) = (defined $rule->{$locus-1}{or_pause}, defined $rule->{$locus+1}{or_pause});
     # If only one frame causes change, rewrite to a non-assimilatory rule.  
     # We need to fix the values of both effect and influencer.
     if (keys %outcome <= 1) {
       $rule->{pointless} = 1, next RULE if keys %outcome <= 0 and !defined $rule->{$locus}{deletions};
       if (keys %frames_examined > 1) {
         my($frame, $dummy) = each %outcome;
+        my ($pre_frame, $post_frame) = ($frame, $frame);
         for (0..length($effect)-1) {
-          if (substr($effect, $_, 1) =~ /[<>]/) {
-            substr($pre, $_, 1) = substr($frame, $_, 1) if substr($effect, $_, 1) eq '<';
-            substr($post, $_, 1) = substr($frame, $_, 1) if substr($effect, $_, 1) eq '>';
-            substr($effect, $_, 1) = substr($frame, $_, 1);
-          }
+          substr($pre_frame, $_, 1) = '.' if substr($effect, $_, 1) ne '<';
+          substr($post_frame, $_, 1) = '.' if substr($effect, $_, 1) ne '>';
+          substr($effect, $_, 1) = substr($frame, $_, 1);
         }
+        $pre = $FS->intersect($pre, $pre_frame);
+        $post = $FS->intersect($post, $post_frame);
+        $pre_pause = undef unless $FS->compatible($rule->{$locus-1}{or_pause}, $pre_frame);
+        $post_pause = undef unless $FS->compatible($rule->{$locus+1}{or_pause}, $post_frame);
       }
     }
 
@@ -1474,10 +1473,10 @@ sub describe_rules {
             nobase => defined($filter_insig), insignificant => $filter_insig); 
             # disallowing nons isn't right, but it makes the thing readable
         if ($effect =~ /</) {
-          $frame_text .= ' or pause' if defined $rule->{$locus-1}{or_pause} and $rule->{or_pause} =~ /^$frame$/;
+          $frame_text .= ' or pause' if $pre_pause and $rule->{or_pause} =~ /^$frame$/;
         }
         if ($effect =~ />/) {
-          $frame_text .= ' or pause' if defined $rule->{$locus+1}{or_pause} and $rule->{or_pause} =~ /^$frame$/;
+          $frame_text .= ' or pause' if $post_pause and $rule->{or_pause} =~ /^$frame$/;
         }
         $frame_text .= ', ';
       }
@@ -1737,7 +1736,7 @@ sub describe_rules {
               ($rule->{bidirectional} ? 'nearest ' : 'previous ') . 
               defined $rule->{filter} ? $filter_text : 'phone';
         }
-        if (defined $rule->{$locus-1}{or_pause}) { # word-initial
+        if ($pre_pause) { # word-initial
           my $pausal_effect = $effect;
           for (0..length($pausal_effect)-1) {
             substr($pausal_effect, $_, 1) = substr($rule->{$locus-1}{or_pause}, $_, 1)
@@ -1788,7 +1787,7 @@ sub describe_rules {
               ($rule->{bidirectional} ? 'nearest ' : 'next ') . 
               defined $rule->{filter} ? $filter_text : 'phone';
         }
-        if (defined $rule->{$locus+1}{or_pause}) { # word-final
+        if ($post_pause) { # word-final
           my $pausal_effect = $effect;
           for (0..length($pausal_effect)-1) {
             substr($pausal_effect, $_, 1) = substr($rule->{$locus+1}{or_pause}, $_, 1)
@@ -1829,7 +1828,7 @@ sub describe_rules {
       } else {
         $pre = undef;
       }
-      if ($rule->{$locus-1}{or_pause}) {
+      if ($pre_pause) {
         if (defined $rule->{filter}) {
           if ($pre_text) {
             $environment_text .= ' or there is none';
@@ -1849,7 +1848,7 @@ sub describe_rules {
       if ($post_text) {
         if (defined $rule->{filter}) {
           if ($post_filter_nontrivial) {
-            # FIXME: "... is high or high semivowel"
+            # FIXME: "... is high or high semivowel".  Also: be less hung up on excepts!
             $environment_text .= ' if ' . 
                 ($rule->{bidirectional} ? "the nearest $filter_text on either side" : "the next $filter_text") . 
                 ' is';
@@ -1868,7 +1867,7 @@ sub describe_rules {
       } else {
         $post = undef;
       }
-      if ($rule->{$locus+1}{or_pause}) {
+      if ($post_pause) {
         if (defined $rule->{filter}) {
           if ($pre_text) {
             $environment_text .= ' or there is none';
@@ -1894,7 +1893,7 @@ sub describe_rules {
     }
 
     $text .= $main_clause unless $no_main_VP;
-    $text .= 'persistently, ' if $no_main_VP and $persistent;
+    $text .= ' persistently' if $no_main_VP and $persistent;
     $text .= $environment_text unless $no_main_VP and $frames_start_with_PP;
     if ($deviation_texts) {
       if ($no_main_VP) {
