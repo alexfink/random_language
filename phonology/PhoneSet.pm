@@ -1,4 +1,4 @@
-package PhoneSet;  # putting this here for now
+package PhoneSet;
 use strict;
 
 # If $multi is 0, parse into $s a description of a phone set given in $d by {condition}, {except}, {extras}.
