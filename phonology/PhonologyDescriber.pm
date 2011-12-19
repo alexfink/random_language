@@ -1038,8 +1038,12 @@ sub describe_syllable_structure {
 #   what would otherwise be the resolution of the resulting segment.  
 # - In 634146154, nasality spreads across high V but doesn't latch on.  Describe that when it happens?
 
+sub describe_rule {
+  my ($self, $rule, $sstate, %args) = @_;
+}
+
 sub describe_rules {
-  my ($self, $pd, %args) = (shift, @_);
+  my ($self, $pd, %args) = @_;
   my $FS = $self->{FS};
   my %descriptions;
   my %to_be_numbered;
@@ -1048,28 +1052,22 @@ sub describe_rules {
   $args{start} = $pd->{start_sequences} unless defined $args{start};
   $args{end} = @{$pd->{phonology}} unless defined $args{end};
 
-  my @inventory;
-  my %phone_resolutions;
-  my %resolution_expiries;
-  if (defined @{$args{inventory}}) {
-    @inventory = @{$args{inventory}};
-  } elsif ($args{start} == $pd->{start_sequences}) {
-    @inventory = keys %{$pd->{gen_inventory}};
-  } else {
-    # FIXME: else we have to run to update the inventory to the starting point
-    warn "unimplemented start time in describe_rules!";
-  }
-  @inventory = grep $_, @inventory;
-  # TODO: (proximal) some single phones might have resolutions with an environment!
-  # Probably, rather than trying to shove it all into the triggering rule, write down a new rule
-  # and mark the phone as hypothetical where it occurs.
-  %phone_resolutions = (map(($_ => $_), @inventory));
-
-  my %sortkey = map(($_ => $self->table_sortkey($_, $self->{classes}{table_structure})), @inventory);
+  my $sstate = PhonologySynchronicState::initialise($pd, $FS, $args{start}, %args);
 
   RULE: for my $i ($args{start}..$args{end}-1) {
     printf STDERR "describing rule $i\n" if $Phonology::debug;
-    my $rule = $pd->{phonology}[$i];
+    my $unsimplified_rule = $pd->{phonology}[$i];
+
+    # Perhaps we discard pointless things too aggressively, given the chance for remaining active.
+    my %matcheds = $sstate->find_matches($unsimplified_rule);
+    my $rule = $sstate->simplify($unsimplified_rule, matches => \%matcheds);
+    next RULE if ($rule->{pointless});
+    my @update_data = $sstate->update($rule, $i, matches => \%matcheds, record_old_inventory => 1);
+    next RULE if ($rule->{pointless});
+
+  # TODO: (proximal) some single phones might have resolutions with an environment!
+  # Probably, rather than trying to shove it all into the triggering rule, write down a new rule
+  # and mark the phone as hypothetical where it occurs.
 
     # For now, assume there's only one change.  
     my @loci = ($rule->indices('effects'), $rule->indices('deletions'));
@@ -1079,6 +1077,8 @@ sub describe_rules {
     }
 
     my $locus = $loci[0];
+    my %outcome = %{$update_data[0]{$locus}};
+    my %frames_examined = %{$update_data[1]{$locus}};
     my $effect = defined $rule->{$locus}{effects} ? $rule->{$locus}{effects} : '.' x @{$FS->{features}};
     my $old_effect = $effect;
     my $precondition = $rule->{$locus}{condition};
@@ -1091,117 +1091,6 @@ sub describe_rules {
       $precondition = $FS->intersect($rule->{filter}{condition}, $precondition);
       $old_pre = $pre = $FS->intersect($rule->{filter}{condition}, $pre) if defined $pre;
       $old_post = $post = $FS->intersect($rule->{filter}{condition}, $post) if defined $post;
-    }
-
-    # TODO: put pointless persistent rules into some kind of holding tank,
-    # to check on creation of new phones.
-    #
-    # Actually, quite a lot of stuff for persistent rules potentially needs rewriting 
-    # when new phones are around.  Ick.  I'm happy to just ignore this for now.
-    #
-    # Some rules are being missed; is it this thing's fault?
-    my %matcheds;
-    for my $displ ($rule->indices('condition')) {
-      @{$matcheds{$displ}} = grep $rule->{$displ}->matches($_), @inventory;
-      @{$matcheds{$displ}} = grep $rule->{filter}->matches($_), @{$matcheds{$displ}} if defined $rule->{filter};
-      # triggering at word boundary counts too:
-      push @{$matcheds{$displ}}, $rule->{$displ}{or_pause} if defined $rule->{$displ}{or_pause};
-      unless (@{$matcheds{$displ}}) {
-        $rule->{pointless} = 1;
-        next RULE;
-      }
-    }
-    # Drop the assimilatory parts of the rule if there aren't multiple values among the things being
-    # assimilated to.
-    # It would be at least as sensible to do this one assimilation at a time, in theory,
-    # but that would throw off the naming.
-    if ($effect =~ /</) {
-      my $not_variable = 0;
-      my @indices = grep substr($effect, $_, 1) eq '<', 0..length($effect)-1;
-      for my $j (@indices) {
-        $not_variable = 1, last if grep substr($_, $j, 1) eq '0', @{$matcheds{$locus-1}}
-                                and grep substr($_, $j, 1) eq '1', @{$matcheds{$locus-1}};
-      }
-      unless ($not_variable) {
-        for (0..length($effect)-1) {
-          substr($effect, $_, 1) = substr($matcheds{$locus-1}[0], $_, 1) if substr($effect, $_, 1) eq '<';
-        }
-      }
-    }
-    if ($effect =~ />/) {
-      my $not_variable = 0;
-      my @indices = grep substr($effect, $_, 1) eq '>', 0..length($effect)-1;
-      for my $j (@indices) {
-        $not_variable = 1, last if grep substr($_, $j, 1) eq '0', @{$matcheds{$locus+1}}
-                                and grep substr($_, $j, 1) eq '1', @{$matcheds{$locus+1}};
-      }
-      unless ($not_variable) {
-        for (0..length($effect)-1) {
-          substr($effect, $_, 1) = substr($matcheds{$locus+1}[0], $_, 1) if substr($effect, $_, 1) eq '>';
-        }
-      }
-    }
-    # Drop rules that visibly do nothing, now.
-    if ($precondition =~ /^$effect$/ and !$rule->{$locus}{deletions}) {
-      $rule->{pointless} = 1;
-      next RULE;
-    }
-
-    # There should be no resolutions whose expiry is _strictly less than_ $i.
-    if (defined $resolution_expiries{$i}) {
-      delete $phone_resolutions{$_} for @{$resolution_expiries{$i}};
-    }
-
-    # The big one: get the new inventory.
-    my @new_inventory = @inventory;
-    my $entailed_effect = $FS->add_entailments($effect);
-    my %outcome;
-    my $pointless = 1;
-    my %frames_examined;
-    my @template_set;
-    push @template_set, @{$matcheds{$locus-1}} if $entailed_effect =~ /</;
-    push @template_set, @{$matcheds{$locus+1}} if $entailed_effect =~ />/;
-    push @template_set, '.' x length($entailed_effect) unless @template_set;
-    for my $template (@template_set) {
-      my $frame = $entailed_effect; # why?  this seems only to be important for antitheticals
-      my $frame_is_worthwhile = 0;
-      for (0..length($frame)-1) {
-        # unlikely issue: not right for both directions at once.   and below
-        substr($frame, $_, 1) = substr($template, $_, 1) if substr($frame, $_, 1) =~ /[<>]/;
-      }
-      next if defined $frames_examined{$frame};
-      $frames_examined{$frame} = 1;
- 
-      for my $phone (@{$matcheds{$locus}}) {
-        my $outcome;
-        if (defined $rule->{$locus}{deletions} and $rule->{$locus}{deletions}) {
-          $outcome = '';
-        } else {
-          my $changed = $FS->add_entailments($FS->overwrite($phone, $frame));
-          if (!defined $phone_resolutions{$changed}) {
-            my $word = [$changed];
-            my $expiry = [];
-            $pd->run($word,
-                     cleanup => $i, 
-                     change_record => [FeatureSystem::change_record($phone, $changed)],
-                     track_expiry => $expiry,
-                     nopause => 1);
-            $phone_resolutions{$changed} = join ' ', @$word;
-            push @{$resolution_expiries{$expiry->[0]}}, $changed if $expiry->[0] < INF;
-            push @new_inventory, @$word; 
-            $sortkey{$_} = $self->table_sortkey($_, $self->{classes}{table_structure}) for @$word;
-          }
-          $outcome = $phone_resolutions{$changed};
-        }
-        $pointless = 0 unless ($phone eq $outcome and $phone !~ /^$effect$/);
-        $outcome{$frame}{$phone} = $outcome;
-        $frame_is_worthwhile = 1 if $outcome ne $phone;
-      }
-      delete $outcome{$frame} unless $frame_is_worthwhile;
-    }
-      if ($pointless) {
-      $rule->{pointless} = 1; 
-      next RULE;
     }
 
     # whether or_pause specifications in the rule can actually happen
@@ -1426,7 +1315,7 @@ sub describe_rules {
 
     my $filter_text;
     if (defined $rule->{filter}) {
-      $filter_text = $self->name_phoneset($rule->{filter}, \@inventory);
+      $filter_text = $self->name_phoneset($rule->{filter}, $sstate->{old_inventory});
     }
 
 
@@ -1461,14 +1350,14 @@ sub describe_rules {
         }
         my $phone = $FS->overwrite(($effect !~ />/ ? $old_pre : 
                         ($effect !~ /</ ? $old_post : '.' x @{$FS->{features}})), $phone);
-        @_ = grep /^$phone$/, @inventory;
+        @_ = grep /^$phone$/, @{$sstate->{old_inventory}};
         my @exceptions;
         push @exceptions, split / /, $rule->{$locus-1}{except} if $effect =~ /</;
         push @exceptions, split / /, $rule->{$locus+1}{except} if $effect =~ />/;
         for my $phone (@exceptions) {
             @_ = grep $_ !~ /^$phone$/, @_;
         }
-        $frame_text .= $self->describe_set(\@_, \@inventory, morpho => defined($filter_insig) ? 'bare' : 'indef', 
+        $frame_text .= $self->describe_set(\@_, $sstate->{old_inventory}, morpho => defined($filter_insig) ? 'bare' : 'indef', 
             bar_nons => 1, etic => 1,
             nobase => defined($filter_insig), insignificant => $filter_insig); 
             # disallowing nons isn't right, but it makes the thing readable
@@ -1491,13 +1380,13 @@ sub describe_rules {
         my @undescribed_deviants = grep !defined $appeared_in_a_list{$_}, @deviants;
         next DEVIATION unless @undescribed_deviants;
 
-        my $subject = $self->describe_set(\@deviants, $no_main_VP ? \@inventory : \@susceptible,
+        my $subject = $self->describe_set(\@deviants, $no_main_VP ? $sstate->{old_inventory} : \@susceptible,
             morpho => 'plural', etic => 1, sort_phones => 1, get_str_pattern => \@get_str_pattern);
         # if the subject is a list, redo, dropping things that have already appeared in some list
         my $subject_is_list = ($subject =~ /^\[.*\]$/); # klugy
         if ($subject_is_list) { 
           @deviants = @undescribed_deviants;
-          $subject = $self->describe_set(\@deviants, $no_main_VP ? \@inventory : \@susceptible,
+          $subject = $self->describe_set(\@deviants, $no_main_VP ? $sstate->{old_inventory} : \@susceptible,
               morpho => 'plural', etic => 1, sort_phones => 1, get_str_pattern => \@get_str_pattern);
               # duplicated code, ick
         }
@@ -1569,7 +1458,7 @@ sub describe_rules {
               $significant = $deviation;
             }
 
-            $_ = $self->name_natural_class($phone, \@new_inventory,
+            $_ = $self->name_natural_class($phone, $sstate->{inventory},
                 significant => $significant,
                 morpho => 'plural', nobase => 1, accept_nothing => 1, use_dominant_str => 1); 
             $frame_text .= " become $_";
@@ -1595,23 +1484,23 @@ sub describe_rules {
     if (defined $pre) {
       $pre_phoneset = { %{$rule->{$locus-1}} };
       $pre_phoneset->{condition} = $pre;
-      $pre_phoneset->{enriched_condition} = enrich($pre,\@inventory);
+      $pre_phoneset->{enriched_condition} = enrich($pre, $sstate->{old_inventory});
       bless $pre_phoneset, 'PhoneSet';
       $pre_phoneset->simplify($FS);
-      $pre_text = $self->name_phoneset($pre_phoneset, \@inventory, morpho => 'indef', no_nothing => 1);
+      $pre_text = $self->name_phoneset($pre_phoneset, $sstate->{old_inventory}, morpho => 'indef', no_nothing => 1);
     }
     if (defined $post) {
       $post_phoneset = { %{$rule->{$locus+1}} };
       $post_phoneset->{condition} = $post;
-      $post_phoneset->{enriched_condition} = enrich($post,\@inventory);
+      $post_phoneset->{enriched_condition} = enrich($post, $sstate->{old_inventory});
       bless $post_phoneset, 'PhoneSet';
       $post_phoneset->simplify($FS);
-      $post_text = $self->name_phoneset($post_phoneset, \@inventory, morpho => 'indef', no_nothing => 1);
+      $post_text = $self->name_phoneset($post_phoneset, $sstate->{old_inventory}, morpho => 'indef', no_nothing => 1);
     }
     if (defined $rule->{filter}) {
-      $pre_filter_nontrivial = grep((!$pre_phoneset->matches($_) and $rule->{filter}->matches($_)), @inventory)
+      $pre_filter_nontrivial = grep((!$pre_phoneset->matches($_) and $rule->{filter}->matches($_)), @{$sstate->{old_inventory}})
           if defined $pre;
-      $post_filter_nontrivial = grep((!$post_phoneset->matches($_) and $rule->{filter}->matches($_)), @inventory)
+      $post_filter_nontrivial = grep((!$post_phoneset->matches($_) and $rule->{filter}->matches($_)), @{$sstate->{old_inventory}})
           if defined $post;
     }
     
@@ -1625,10 +1514,10 @@ sub describe_rules {
     # For impersistent rules, no point favouring a featural description to a list.
     if ($insusceptibles_exist or !$persistent) {
       # Note that sounds excluded by {$locus}{except} are already outside of \@susceptible.
-      $main_clause .= $self->describe_set(\@susceptible, \@inventory, within => $precondition, 
+      $main_clause .= $self->describe_set(\@susceptible, $sstate->{old_inventory}, within => $precondition, 
           morpho => 'plural', etic => 1, sort_phones => 1, get_str_pattern => \@get_str_pattern);
     } else {
-      $main_clause .= $self->name_natural_class($precondition, \@inventory, morpho => 'plural');
+      $main_clause .= $self->name_natural_class($precondition, $sstate->{old_inventory}, morpho => 'plural');
       $get_str_pattern[0] = $self->str_part($precondition);
     }
     $modified = $FS->overwrite($get_str_pattern[0], $modified) if length($modified);
@@ -1688,7 +1577,7 @@ sub describe_rules {
             for (0..length($modified)-1) {
               substr($modified, $_, 1) = '.' if substr($frame, $_, 1) eq '.' and substr($effect, $_, 1) =~ /[<>]/;
             }
-            $main_VP .= $self->name_natural_class($modified, \@new_inventory, significant => $simple_effect, 
+            $main_VP .= $self->name_natural_class($modified, $sstate->{inventory}, significant => $simple_effect, 
                 morpho => 'plural', nobase => 1, accept_nothing => 1, use_dominant_str => 1);
           }
           # examples
@@ -1702,7 +1591,7 @@ sub describe_rules {
       if ($effect =~ /</) {
         $_ = $effect;
         y/01u<>/...1./;
-        $_ = $FS->overwrite($self->str_part(enrich($precondition,\@inventory)), $_);
+        $_ = $FS->overwrite($self->str_part(enrich($precondition, $sstate->{old_inventory})), $_);
         $main_VP .= ' and' if $main_VP;
         $main_VP .= ' assimilate in ' .
             $self->name_natural_class($_, undef, scheme => 'nominalised', nobase => 1);
@@ -1723,11 +1612,11 @@ sub describe_rules {
           } else {
             $main_VP .= ' to a' . ($rule->{bidirectional} ? 'n adjacent ' : ' preceding ');
           }
-          @_ = grep /^$pre$/, @inventory;
+          @_ = grep /^$pre$/, @{$sstate->{old_inventory}};
           for my $phone (split / /, $rule->{$locus-1}{except}) {
             @_ = grep $_ !~ /^$phone$/, @_;
           }
-          $main_VP .= $self->describe_set(\@_, \@inventory, morpho => 'bare', etic => 1, 
+          $main_VP .= $self->describe_set(\@_, $sstate->{old_inventory}, morpho => 'bare', etic => 1, 
               nobase => defined($filter_insig), insignificant => $filter_insig);
           $main_VP .= $appendage;
           $pre = undef;
@@ -1745,7 +1634,7 @@ sub describe_rules {
           my $modified = $FS->overwrite($precondition, $pausal_effect); 
           $modified =~ s/u/./g;
           $main_VP .= ' and become ' . 
-                      $self->name_natural_class($modified, \@new_inventory, significant => $pausal_effect, morpho => 'plural', nobase => 1);
+                      $self->name_natural_class($modified, $sstate->{inventory}, significant => $pausal_effect, morpho => 'plural', nobase => 1);
           $main_VP .= defined $rule->{filter} ? (" if no $filter_text " . ($rule->{bidirectional} ? 'is present' : 'precedes')) 
               : ($rule->{bidirectional} ? ' word-extremally' : ' word-initially');
         }
@@ -1753,7 +1642,7 @@ sub describe_rules {
       if ($effect =~ />/) {
         $_ = $effect;
         y/01u<>/....1/;
-        $_ = $FS->overwrite($self->str_part(enrich($precondition,\@inventory)), $_);
+        $_ = $FS->overwrite($self->str_part(enrich($precondition, $sstate->{old_inventory})), $_);
         $main_VP .= ' and' if $main_VP;
         $main_VP .= ' assimilate in ' .
             $self->name_natural_class($_, undef, scheme => 'nominalised', nobase => 1);
@@ -1774,11 +1663,11 @@ sub describe_rules {
           } else {
             $main_VP .= ' to a' . ($rule->{bidirectional} ? 'n adjacent ' : ' following ');
           }
-          @_ = grep /^$post$/, @inventory;
+          @_ = grep /^$post$/, @{$sstate->{old_inventory}};
           for my $phone (split / /, $rule->{$locus+1}{except}) {
             @_ = grep $_ !~ /^$phone$/, @_;
           }
-          $main_VP .= $self->describe_set(\@_, \@inventory, morpho => 'bare', etic => 1,
+          $main_VP .= $self->describe_set(\@_, $sstate->{old_inventory}, morpho => 'bare', etic => 1,
               nobase => defined($filter_insig), insignificant => $filter_insig);  
           $main_VP .= $appendage;
           $post = undef;
@@ -1796,7 +1685,7 @@ sub describe_rules {
           my $modified = $FS->overwrite($precondition, $pausal_effect); 
           $modified =~ s/u/./g;
           $main_VP .= ' and become ' . 
-                      $self->name_natural_class($modified, \@new_inventory, significant => $pausal_effect, morpho => 'plural', nobase => 1);
+                      $self->name_natural_class($modified, $sstate->{inventory}, significant => $pausal_effect, morpho => 'plural', nobase => 1);
           $main_VP .= defined $rule->{filter} ? (" if no $filter_text " . ($rule->{bidirectional} ? 'is present' : 'follows')) 
               : ($rule->{bidirectional} ? ' word-extremally' : ' word-finally');
         }
@@ -1815,7 +1704,7 @@ sub describe_rules {
                 ($rule->{bidirectional} ? "the nearest $filter_text on either side" : "the previous $filter_text") . 
                 ' is';
             # recompute, for significant
-            $pre_text = $self->name_phoneset($pre_phoneset, \@inventory, morpho => 'bare', no_nothing => 1, 
+            $pre_text = $self->name_phoneset($pre_phoneset, $sstate->{old_inventory}, morpho => 'bare', no_nothing => 1, 
                 nobase => 1, significant => $FS->subtract_features($pre_phoneset->{condition}, $rule->{filter}{condition}) );
           } else {
             $environment_text .= ' if there is ';
@@ -1853,7 +1742,7 @@ sub describe_rules {
                 ($rule->{bidirectional} ? "the nearest $filter_text on either side" : "the next $filter_text") . 
                 ' is';
             # recompute, for significant
-            $post_text = $self->name_phoneset($post_phoneset, \@inventory, morpho => 'bare', no_nothing => 1, 
+            $post_text = $self->name_phoneset($post_phoneset, $sstate->{old_inventory}, morpho => 'bare', no_nothing => 1, 
                 nobase => 1, significant => $FS->subtract_features($post_phoneset->{condition}, $rule->{filter}{condition}) );
           } else {
             $environment_text .= ' if there is ';
@@ -1904,9 +1793,6 @@ sub describe_rules {
 
     $text =~ s/^ *//;
     $descriptions{$i}{rule} = ucfirst $text . '. ';
-
-    my %new_inventory = map(($_ => 1), @new_inventory);
-    @inventory = keys %new_inventory;
   }
 
   for my $i (keys %to_be_numbered) {

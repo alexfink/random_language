@@ -18,6 +18,7 @@ use FeatureSystem;
 use PhoneSet;
 use PhonologicalRule;
 use Phonology;
+use PhonologySynchronicState;
 use Transcription;
 use PhonologyDescriber;
 
@@ -229,7 +230,7 @@ if ($use_html and $num_words > 0) {
   print CGI::h2('Some words'),
         CGI::start_table();
 }
-
+print STDERR "generating sample words...\n" if $verbose;
 for (1..$num_words) {
   my $word = $pd->generate_form(12); # magic entropy value
   my $surface_word;
