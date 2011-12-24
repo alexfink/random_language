@@ -7,6 +7,10 @@ use constant INF => 9**9**9; # is there really nothing sensible better?
 # to others.
 # TODO: this is where the frequency table of bigrams will go.
 
+# If there is a conditioned outcome of one of the single phones that are supposed to be resolved,
+# that will be stored in {conditional_resolutions}, which is a hash from rule numbers to
+# resolutions that have applied up to before when that rule does.
+
 sub initialise {
   my ($pd, $FS, $start, %args) = @_;
   
@@ -27,9 +31,12 @@ sub initialise {
   my $s = {
       pd => $pd,
       FS => $FS,
+      start => $start,
       inventory => \@inventory, 
       resolutions => \%phone_resolutions,
       resolution_expiries => \%resolution_expiries,
+      conditional_resolutions => {},
+      conditional_resolution_expiries => {}
   };
   bless $s;
 }
@@ -135,6 +142,9 @@ sub update {
   if (defined $self->{resolution_expiries}{$i}) {
     delete $self->{resolutions}{$_} for @{$self->{resolution_expiries}{$i}};
   }
+  if (defined $self->{conditional_resolution_expiries}{$i}) {
+    delete $self->{conditional_resolutions}{$_} for @{$self->{conditional_resolution_expiries}{$i}};
+  }
 
   my @new_inventory = @{$self->{inventory}};
   my (%outcomes, %frames_examineds);
@@ -167,15 +177,26 @@ sub update {
           if (!defined $self->{resolutions}{$changed}) {
             my $word = [$changed];
             my $expiry = [];
+            my $context_dependent = {};
             $self->{pd}->run
                ($word,
                 cleanup => $i, 
                 change_record => [FeatureSystem::change_record($phone, $changed)],
                 track_expiry => $expiry,
-                nopause => 1);
+                nopause => 1,
+                context_dependent => $context_dependent);
             $self->{resolutions}{$changed} = join ' ', @$word;
             push @{$self->{resolution_expiries}{$expiry->[0]}}, $changed if $expiry->[0] < INF;
-            push @new_inventory, @$word; 
+            while (my ($k, $outcome_before) = each %$context_dependent) {
+              next if $k >= $self->{start};
+print STDERR join(' ', @$outcome_before) . " can have a conditional resolution at $k\n"; #gdgd
+              $self->{conditional_resolutions}{$k}{$changed} = join ' ', @$outcome_before;
+              if (defined $self->{pd}{phonology}[$k]{inactive}) {
+                push @{$self->{conditional_resolution_expiries}{$self->{pd}{phonology}[$k]{inactive}}}, $k;
+              }
+print STDERR $self->{pd}{phonology}[$k]->debug_dump(); #gdgd
+            }
+            push @new_inventory, @$word;             
           }
           $outcome = $self->{resolutions}{$changed};
         }

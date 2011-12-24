@@ -252,6 +252,12 @@ sub run {
             %new_agenda = map(($_ => 1), (0..$k));
           }
         }
+
+        # stick the ordinal on to label the context dependency, if it's being looked out for
+        if (defined $args{context_dependent} and defined $args{context_dependent}{''}) {
+          $args{context_dependent}{$i} = $args{context_dependent}{''}; # Does this work without being a multimap?
+          delete $args{context_dependent}{''};
+        }
       }
       %agenda = %new_agenda;
       # if this rule is supposed to run with the next as a block, don't check previous rules now

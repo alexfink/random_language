@@ -1040,6 +1040,7 @@ sub describe_syllable_structure {
 
 sub describe_rule {
   my ($self, $rule, $sstate, %args) = @_;
+  # TODO: move stuff in here
 }
 
 sub describe_rules {
@@ -1064,10 +1065,6 @@ sub describe_rules {
     next RULE if ($rule->{pointless});
     my @update_data = $sstate->update($rule, $i, matches => \%matcheds, record_old_inventory => 1);
     next RULE if ($rule->{pointless});
-
-  # TODO: (proximal) some single phones might have resolutions with an environment!
-  # Probably, rather than trying to shove it all into the triggering rule, write down a new rule
-  # and mark the phone as hypothetical where it occurs.
 
     # For now, assume there's only one change.  
     my @loci = ($rule->indices('effects'), $rule->indices('deletions'));

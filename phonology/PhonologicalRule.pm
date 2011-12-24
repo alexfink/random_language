@@ -177,15 +177,30 @@ sub conflicts_with {
 
 
 # Test a hash of phonesets against a word, at given displacement $i.
+#
+# If $args{context_dependent} is defined (assumed to be a hash), 
+# and this word could come to match (or fail to) if it were prefixed 
+# or suffixed, record this fact there, under the key ''.  
+# (Assumed to be use with nopause.)
+
 sub matches_word {
   my ($self, $word, $i, %args) = (shift, shift, shift, @_);
+  my $context_dependent = undef;
   for my $displ ($self->indices()) {
     if ($i + $displ < 0 or $i + $displ >= @$word) {
       next if !$args{nopause} and defined $self->{$displ}{or_pause};
-      return 0 if defined $self->{$displ}{condition};
+      if (defined $self->{$displ}{condition}) {
+        return 0 unless defined $args{context_dependent} and 
+          !(defined $self->{$displ}{effects} or defined $self->{$displ}{deletions});
+        $context_dependent = 1;
+      }
       next;
     }
     return 0 unless PhoneSet::matches($self->{$displ}, $word->[$i+$displ]);
+  }
+  if ($context_dependent) { # we haven't already returned thanks to a mismatch...
+    $args{context_dependent}{''} = [@$word] if scalar $self->indices() >= 2;
+    return 0;
   }
   return 1;
 }
@@ -249,11 +264,13 @@ sub run {
     my @surviving = (1,) x @$word;
 
     # iterate in the direction specified
-    my @displs = -1..@$word-1;   # start at -1 for assimilations to word-initial pause;
+    my @displs = -1..@$word;   # start at -1 for assimilations to word-initial pause, and end at @$word for word-final with {-1,0}
         # will need to be changed if there can be rules whose indices are all strictly of the same sign
     @displs = reverse @displs if (defined $rule->{direction} and $rule->{direction} < 0);
     for my $i (@displs) {
-      next unless $rule->matches_word($word, $i, nopause => $args{nopause});
+      next unless $rule->matches_word($word, $i, 
+          nopause => $args{nopause}, 
+          context_dependent => $args{context_dependent});
 
       for my $displ ($rule->indices('effects')) {
         next if ($i + $displ < 0 or $i + $displ >= @$word);
@@ -619,7 +636,6 @@ sub generate {
     $threshold = $FS->{features}[$k]{default}[$rest]{value};
   } elsif ($kind eq 'repair') {
     $threshold = $FS->{marked}[$k]{prob};
-    # TODO: (proximal) better system for contrast_probs, one that fits in with change loss-of-contrast detecting
     if (defined $FS->{marked}[$k]{contrast_probs}) {
       while (my ($cp, $prob) = each %{$FS->{marked}[$k]{contrast_probs}}) {
         my ($cp_pre, $cp_outcome) = split /; */, $cp;
