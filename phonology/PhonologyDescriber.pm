@@ -1043,11 +1043,17 @@ sub describe_rule {
   my $FS = $self->{FS};
 
   # Perhaps we discard pointless things too aggressively, given the chance for remaining active.
-  $sstate->find_matches($unsimplified_rule);
-  my $rule = $sstate->simplify($unsimplified_rule);
-  return '' if $rule->{pointless};
-  $sstate->update($rule, $args{i}, record_old_inventory => 1);
-  return '' if $rule->{pointless};
+  my $rule;
+  if ($args{fake_matches}) {
+    $rule = $unsimplified_rule;
+    %{$sstate->{matcheds}} = (0 => $args{fake_matches});
+  } else {
+    $sstate->find_matches($unsimplified_rule);
+    $rule = $sstate->simplify($unsimplified_rule);
+    return undef if $rule->{pointless};
+  }
+  $sstate->update($rule, $args{i}, record_old_inventory => 1, no_old_conditionals => $args{no_old_conditionals});
+  return undef if $rule->{pointless};
 
   # For now, assume there's only one change.  
   my @loci = ($rule->indices('effects'), $rule->indices('deletions'));
@@ -1056,7 +1062,7 @@ sub describe_rule {
   }
 
   my $locus = $loci[0];
-  my %outcome = %{$sstate->{outcomes}{$locus}}; # HERE
+  my %outcome = %{$sstate->{outcomes}{$locus}};
   my %frames_examined = %{$sstate->{frames_examineds}{$locus}};
   my %matcheds = %{$sstate->{matcheds}};
   my $effect = defined $rule->{$locus}{effects} ? $rule->{$locus}{effects} : '.' x @{$FS->{features}};
@@ -1787,11 +1793,36 @@ sub describe_rules {
 
     $descriptions{$i}{rule} = $self->describe_rule($rule, $sstate, %args, i => $i);
 
-    # Catch and describe the old conditional rules.
-    for my $j (keys %{$sstate->{conditional_resolutions}}) {
+    # Catch and describe the old conditional rules.  Fake the inventory.
+    my @remnants;
+    for my $j (sort {$a <=> $b} keys %{$sstate->{conditional_resolutions}}) {
       next if defined $old_conditional_resolutions{$j};      
-      push @{$descriptions{$i}{post}}, "(TEMPORARY $j) " . 
-          $self->describe_rule($pd->{phonology}[$j], $sstate, %args, i => $j);
+
+      my @true_inventory = @{$sstate->{inventory}};
+      my @true_old_inventory = @{$sstate->{old_inventory}};
+      @_ = keys %{$sstate->{conditional_resolutions}{$j}};
+      push @{$sstate->{inventory}}, @_;
+      push @{$sstate->{old_inventory}}, @_;
+      my $post_rule = $self->describe_rule($pd->{phonology}[$j], $sstate, %args, i => $j);
+      push @{$descriptions{$i}{post}}, $post_rule if $post_rule;
+      push @remnants, @_ if $post_rule;
+      $sstate->{inventory} = \@true_inventory;
+      $sstate->{old_inventory} = \@true_old_inventory;
+    }
+    if (@remnants) {
+      %_ = ();
+      @remnants = map $_{$_} ? () : ($_{$_} = 1 && $_), @remnants; # uniq
+      my @true_inventory = @{$sstate->{inventory}};
+      my @true_old_inventory = @{$sstate->{old_inventory}};  
+      push @{$sstate->{inventory}}, @remnants;
+      push @{$sstate->{old_inventory}}, @remnants;
+      my $placeholder_rule = PhonologicalRule::skeletal_rule($self->{FS});
+      $placeholder_rule->{inactive} = $rule->{inactive};
+      # Perhaps it would be nicer to stick in some wording like 'remaining' for these ones.
+      push @{$descriptions{$i}{post}}, $self->describe_rule($placeholder_rule, $sstate, %args, i => $i, 
+          fake_matches => \@remnants, no_old_conditionals => 1);
+      $sstate->{inventory} = \@true_inventory;
+      $sstate->{old_inventory} = \@true_old_inventory;
     }
     %old_conditional_resolutions = %{$sstate->{conditional_resolutions}};
 
@@ -1800,7 +1831,6 @@ sub describe_rules {
       $to_be_numbered{$i} = 1;
       push @{$descriptions{$rule->{inactive}}{pre}}, "Rule ($i) becomes inactive.";
     }
-    # TODO: (proximal) describe what happens to the remaining ones.
   }
 
   for my $i (keys %to_be_numbered) {

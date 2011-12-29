@@ -63,6 +63,16 @@ sub weighted_one_of {
 
 
 
+# Return a skeletal rule with essentially nothing in it.  Class method.
+sub skeletal_rule {
+  my $FS = shift;
+  my $rule = {
+    0 => {condition => $FS->parse(''), effects => $FS->parse('')},
+    FS => $FS,
+  };
+  bless $rule;
+}
+
 # Memoise a rule for the computations performed in feeds(!).
 # These things can be totally stripped out once the phonology is finalised. 
 sub feed_annotate {

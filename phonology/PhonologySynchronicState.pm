@@ -39,7 +39,7 @@ sub initialise {
       conditional_resolution_expiries => {},
 
       # These next things are data used by the describer, and are updated here on running one rule.
-      outcomes => {},
+      nearest_outcomes => {},
       frames_examineds => {},
       matcheds => {},
   };
@@ -72,7 +72,6 @@ sub clear_rule_data {
 sub find_matches {
   my ($self, $rule) = @_;
   my %matcheds;
-  $self->clear_rule_data();
   for my $displ ($rule->indices('condition')) {
     $matcheds{$displ} = [grep $rule->{$displ}->matches($_), @{$self->{inventory}}];
     @{$matcheds{$displ}} = grep $rule->{filter}->matches($_), @{$matcheds{$displ}} if defined $rule->{filter};
@@ -203,16 +202,22 @@ sub update {
             push @{$self->{resolution_expiries}{$expiry->[0]}}, $changed if $expiry->[0] < INF;
             while (my ($k, $outcome_before) = each %$context_dependent) {
               next if $k >= $self->{start};
-#print STDERR join(' ', @$outcome_before) . " can have a conditional resolution at $k\n"; #gdgd
               $self->{conditional_resolutions}{$k}{$changed} = join ' ', @$outcome_before;
               if (defined $self->{pd}{phonology}[$k]{inactive}) {
                 push @{$self->{conditional_resolution_expiries}{$self->{pd}{phonology}[$k]{inactive}}}, $k;
               }
-#print STDERR $self->{pd}{phonology}[$k]->debug_dump(); #gdgd
             }
             push @new_inventory, @$word;             
           }
+
+          # For description in rules we want not the ultimate outcome but the nearest one.
           $outcome = $self->{resolutions}{$changed};
+          unless ($args{no_old_conditionals}) {
+            for my $k (sort {$a <=> $b} keys %{$self->{conditional_resolutions}}) {
+              $outcome = $self->{conditional_resolutions}{$k}{$changed}, last 
+                  if defined $self->{conditional_resolutions}{$k}{$changed};
+            }
+          }
         }
         $pointless = 0 unless ($phone eq $outcome and $phone !~ /^$effect$/);
         $outcome{$frame}{$phone} = $outcome;
