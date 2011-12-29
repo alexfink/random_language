@@ -711,12 +711,12 @@ relations:
   # a labial effect of fronting.  TODO: when linguolabials are in, rethink this and the next couple
   - from: "labial +front"
     to: "+labiodental"
-    weight: 0.25
+    weight: 0.166667
 
   # Ohala says palatalised labials becoming coronals is common.  but _these_ coronals?
   - from: "labial +front"
     to: "+anterior -sibilant +fricative +laminal"
-    weight: 0.125
+    weight: 0.166667
 
   # [T] > [f]
   - from: "+anterior -sibilant +fricative" # Blevins suggests laminal only
@@ -1039,11 +1039,23 @@ marked:
     extras: {"+voice 1": 0.975, "!+sibilant +anterior 1": 0.25}
     resolve: {"r +resonant 1": 1}
 
-  # to tie labial fricatives to labialisation more.  TODO: other places
+  # to tie labial fricatives to labialisation more
+  # and below, for other variants
   - condition: "-resonant, labial +fricative"
     prob: 0.041667
     direction: {"": 1, reverse: 0.0625, both: 0.125}
-    extras: {"-nasal 0": 0.666667, "-labial 0": 0.333333}
+    extras: {"-nasal 0": 0.666667}
+    resolve: {"r +resonant 1": 1}
+
+  - condition: "-resonant, dorsal +fricative"
+    prob: 0.027778
+    direction: {"": 1, reverse: 0.0625, both: 0.125}
+    extras: {"-nasal 0": 0.666667}
+    resolve: {"r +resonant 1": 1}
+
+  - condition: "-resonant, +lateral +fricative"
+    prob: 0.055556 # lateral fricatives themselves are rarer
+    direction: {"": 1, reverse: 0.0625, both: 0.125}
     resolve: {"r +resonant 1": 1}
 
   # _Homorganic_ resonant spread rules exist; that's a good model for this [ln] > [ll] type behaviour.  But I haven't done it for dorsal, 'cause semivowels are the overwhelmingly dominant resonant there.
@@ -1170,7 +1182,7 @@ marked:
     except: {1: "+resonant"}
     prob: 0.005
     contrast_probs:
-      "+resonant -voice: +voice": 0.95
+      "+resonant -voice; +voice": 0.95
       # nasals too...  that's usually generated but destroyed though
     extras: {"-syllabic 1": 0.95, "-resonant 1": 0.375, "# 1": 0.4}
     pause_phone: "-voice"
@@ -1381,6 +1393,7 @@ marked:
     resolve: {"r }low 0": 1}
 
   # TODO: low dissimilation (things like /aj/ are favoured in fact)
+  # V feature dissimilation even in dinucleic sequences (e.g. Georgian /ie/ > /ia/, Basque /aa/ > /ea/)
 
   - condition: "dorsal, dorsal"
     except: {0: "dorsal +resonant -lateral -tap_or_trill", 1: "dorsal +resonant -lateral -tap_or_trill"}
@@ -1831,8 +1844,8 @@ marked:
   # intervocalic tapping
   - condition: "+resonant, -resonant -long, +resonant"
     prob: 0.06
-    extras: {"coronal 1": 0.833333, "!dorsal 1": 0.8, "-fricative 1": 0.975, "-affricate 1": 0.75, "+voice 1": 0.875, "dorsal -lateral -tap_or_trill 0": 0.333333, "dorsal -lateral -tap_or_trill 2": 0.333333}
-    resolve: {"r +resonant +tap_or_trill 1": 1}
+    extras: {"-nasal 1": 0.8, "coronal 1": 0.833333, "!dorsal 1": 0.8, "-fricative 1": 0.975, "-affricate 1": 0.95, "+voice 1": 0.9, "dorsal -lateral -tap_or_trill 0": 0.333333, "dorsal -lateral -tap_or_trill 2": 0.333333}
+    resolve: {"r +resonant +tap_or_trill -trill 1": 1}
 
   # trill weakening
   - condition: "+resonant, +trill -syllabic -long, +resonant"
@@ -2102,8 +2115,8 @@ marked:
 
   - condition: "+syllabic, -syllabic +voice"
     except: {1: "dorsal +resonant -lateral -tap_or_trill"}
-    prob: 0.008333
-    extras: {"!-resonant -nasal 1": 0.333333, "-resonant 1": 0.5, "-nasal 1": 0.166667, "+fricative 1": 0.333333}
+    prob: 0.0125
+    extras: {"!-resonant -nasal 1": 0.0625, "-resonant 1": 0.75, "-nasal 1": 0.5, "+fricative 1": 0.25, "-fricative 1": 0.125}
     resolve: {"r +long 0": 1}
 
 
@@ -3000,7 +3013,7 @@ marked:
     split:
       # It is conceivable that back ones could round while mid ones do their own thing.
       - condition: "+back"
-        prob: 0.125
+        prob: 0.166667
         resolve: {"r +round 0": 1}
       # Next to a vowel, secondary [M\] frequently assimilates.
       # Note that, since we short-circuit generation of the set of phonemes,
