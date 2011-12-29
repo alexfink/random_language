@@ -36,7 +36,12 @@ sub initialise {
       resolutions => \%phone_resolutions,
       resolution_expiries => \%resolution_expiries,
       conditional_resolutions => {},
-      conditional_resolution_expiries => {}
+      conditional_resolution_expiries => {},
+
+      # These next things are data used by the describer, and are updated here on running one rule.
+      outcomes => {},
+      frames_examineds => {},
+      matcheds => {},
   };
   bless $s;
 }
@@ -49,6 +54,13 @@ sub initialise {
 
 
 
+sub clear_rule_data {
+  my $self = shift;
+  $self->{outcomes} = {};
+  $self->{frames_examineds} = {};
+  $self->{matcheds} = {};
+}
+
 # Given a rule, produce the sets of phones in the current inventory that can match each of its positions.
 # If this position can match word boundary, then include the pause_phone.
 #
@@ -60,6 +72,7 @@ sub initialise {
 sub find_matches {
   my ($self, $rule) = @_;
   my %matcheds;
+  $self->clear_rule_data();
   for my $displ ($rule->indices('condition')) {
     $matcheds{$displ} = [grep $rule->{$displ}->matches($_), @{$self->{inventory}}];
     @{$matcheds{$displ}} = grep $rule->{filter}->matches($_), @{$matcheds{$displ}} if defined $rule->{filter};
@@ -68,15 +81,16 @@ sub find_matches {
       $rule->{pointless} = 1;
     }
   }
-  %matcheds;
+  $self->{matcheds} = \%matcheds;
+  return %matcheds;
 }
 
 # Simplify the rule assuming correctness of the current state.
 sub simplify {
   my ($self, $rule, %args) = @_;
   my %matcheds;
-  if ($args{matches}) {
-    %matcheds = %{$args{matches}};
+  if ($self->{matcheds}) {
+    %matcheds = %{$self->{matcheds}};
   } else {
     %matcheds = $self->find_matches($rule);
   }
@@ -127,8 +141,8 @@ sub simplify {
 sub update {
   my ($self, $rule, $i, %args) = @_;
   my %matcheds;
-  if ($args{matches}) {
-    %matcheds = %{$args{matches}};
+  if ($self->{matcheds}) {
+    %matcheds = %{$self->{matcheds}};
   } else {
     %matcheds = $self->find_matches($rule);
   }
@@ -189,12 +203,12 @@ sub update {
             push @{$self->{resolution_expiries}{$expiry->[0]}}, $changed if $expiry->[0] < INF;
             while (my ($k, $outcome_before) = each %$context_dependent) {
               next if $k >= $self->{start};
-print STDERR join(' ', @$outcome_before) . " can have a conditional resolution at $k\n"; #gdgd
+#print STDERR join(' ', @$outcome_before) . " can have a conditional resolution at $k\n"; #gdgd
               $self->{conditional_resolutions}{$k}{$changed} = join ' ', @$outcome_before;
               if (defined $self->{pd}{phonology}[$k]{inactive}) {
                 push @{$self->{conditional_resolution_expiries}{$self->{pd}{phonology}[$k]{inactive}}}, $k;
               }
-print STDERR $self->{pd}{phonology}[$k]->debug_dump(); #gdgd
+#print STDERR $self->{pd}{phonology}[$k]->debug_dump(); #gdgd
             }
             push @new_inventory, @$word;             
           }
@@ -215,7 +229,8 @@ print STDERR $self->{pd}{phonology}[$k]->debug_dump(); #gdgd
   %_ = map(($_ => 1), @new_inventory);
   @{$self->{inventory}} = keys %_; # uniq
 
-  return (\%outcomes, \%frames_examineds);
+  $self->{outcomes} = \%outcomes;
+  $self->{frames_examineds} = \%frames_examineds;
 }
 
 1;

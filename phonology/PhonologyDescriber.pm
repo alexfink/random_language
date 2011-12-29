@@ -1039,757 +1039,768 @@ sub describe_syllable_structure {
 # - In 634146154, nasality spreads across high V but doesn't latch on.  Describe that when it happens?
 
 sub describe_rule {
-  my ($self, $rule, $sstate, %args) = @_;
-  # TODO: move stuff in here
+  my ($self, $unsimplified_rule, $sstate, %args) = @_;
+  my $FS = $self->{FS};
+
+  # Perhaps we discard pointless things too aggressively, given the chance for remaining active.
+  $sstate->find_matches($unsimplified_rule);
+  my $rule = $sstate->simplify($unsimplified_rule);
+  return '' if $rule->{pointless};
+  $sstate->update($rule, $args{i}, record_old_inventory => 1);
+  return '' if $rule->{pointless};
+
+  # For now, assume there's only one change.  
+  my @loci = ($rule->indices('effects'), $rule->indices('deletions'));
+  if (@loci > 1) {
+    return '(some rule where multiple phones change at once)';
+  }
+
+  my $locus = $loci[0];
+  my %outcome = %{$sstate->{outcomes}{$locus}}; # HERE
+  my %frames_examined = %{$sstate->{frames_examineds}{$locus}};
+  my %matcheds = %{$sstate->{matcheds}};
+  my $effect = defined $rule->{$locus}{effects} ? $rule->{$locus}{effects} : '.' x @{$FS->{features}};
+  my $old_effect = $effect;
+  my $precondition = $rule->{$locus}{condition};
+  my ($pre, $old_pre, $post, $old_post);
+  $old_pre = $pre = $rule->{$locus-1}{condition} if defined $rule->{$locus-1} and defined $rule->{$locus-1}{condition};
+  $old_post = $post = $rule->{$locus+1}{condition} if defined $rule->{$locus+1} and defined $rule->{$locus+1}{condition};
+  my $far = grep(($_ != $locus-1 and $_ != $locus and $_ != $locus+1), $rule->indices('condition'));
+
+  if (defined $rule->{filter}) {
+    $precondition = $FS->intersect($rule->{filter}{condition}, $precondition);
+    $old_pre = $pre = $FS->intersect($rule->{filter}{condition}, $pre) if defined $pre;
+    $old_post = $post = $FS->intersect($rule->{filter}{condition}, $post) if defined $post;
+  }
+
+  # whether or_pause specifications in the rule can actually happen
+  my ($pre_pause, $post_pause) = (defined $rule->{$locus-1}{or_pause}, defined $rule->{$locus+1}{or_pause});
+  # If only one frame causes change, rewrite to a non-assimilatory rule.  
+  # We need to fix the values of both effect and influencer.
+  if (keys %outcome <= 1) {
+    $rule->{pointless} = 1, return undef if keys %outcome <= 0 and !defined $rule->{$locus}{deletions};
+    if (keys %frames_examined > 1) {
+      my($frame, $dummy) = each %outcome;
+      my ($pre_frame, $post_frame) = ($frame, $frame);
+      for (0..length($effect)-1) {
+        substr($pre_frame, $_, 1) = '.' if substr($effect, $_, 1) ne '<';
+        substr($post_frame, $_, 1) = '.' if substr($effect, $_, 1) ne '>';
+        substr($effect, $_, 1) = substr($frame, $_, 1);
+      }
+      $pre = $FS->intersect($pre, $pre_frame);
+      $post = $FS->intersect($post, $post_frame);
+      $pre_pause = undef unless $FS->compatible($rule->{$locus-1}{or_pause}, $pre_frame);
+      $post_pause = undef unless $FS->compatible($rule->{$locus+1}{or_pause}, $post_frame);
+    }
+  }
+
+  # Exceptionality describing time!  We are comparing to $FS->add_entailments $FS->overwrite($phone, $frame).
+  # Note that this doesn't have any particular handling of 
+  # "foos do A, except for bar foos, which do B instead".
+
+  my @susceptible;
+  my $insusceptibles_exist = 0;
+  my %any_nondeviates; # is there any phone which behaves normally?
+  my %dev_distilled; # %dev_distilled maps frames to maps from conditions to lists of phones.
+  for my $frame (keys %outcome) {
+    # %deviations maps deviations to the list of sounds that give them
+    my %deviations;
+
+    # Collect the deviations.
+    for my $phone (@{$matcheds{$locus}}) {
+      my $susceptible = 0;
+      my $outcome = $outcome{$frame}{$phone};
+      if ($outcome =~ / /) { 
+        warn "multiple sound outcome in finding deviations!"; # FIXME: multiple sound outcomes
+      }
+      my $changed = $FS->add_entailments($FS->overwrite($phone, $frame)); # duplicative :-/
+      if (length($outcome)) { # one phone
+        # Just filling in undefineds isn't good enough here, since it's not good enough below.
+        for (0..length($outcome)-1) {
+          substr($outcome, $_, 1) = '.' if substr($outcome, $_, 1) eq substr($changed, $_, 1)
+                                        or substr($changed, $_, 1) eq 'u';
+        }
+        push @{$deviations{$outcome}}, $phone;
+
+        # Only announce the main clause of this rule if there's a nondeviate that actually changes.
+        $any_nondeviates{$frame} = 1 if $outcome eq '.' x length($frame)
+                                    and $outcome{$frame}{$phone} ne $phone; 
+      } else { # no phones: deletion is a deviation
+        push @{$deviations{''}}, $phone;              
+      }
+
+      $susceptible = 1, push @susceptible, $phone # can't jump out or we might miss exceptionality
+          if $outcome{$frame}{$phone} ne $phone;
+      $insusceptibles_exist = 1 unless $susceptible;
+    } # phone
+
+    # Distill the deviations.  
+    #
+    # Deviations form a partial order, where D > D' if D makes every change D' makes.
+    # For D a deviation running smallest to largest, 
+    # as a general rule we want to handle the whole up-set of D, if we can.
+    # So we want to just name D within its down-set and transfer that naming to the up-set.
+    my $any_deviations;
+    do {
+      $any_deviations = 0;
+      for my $dev (sort {grep(1,($a =~ /[^.]/g)) <=> grep(1,($b =~ /[^.]/g))} keys %deviations) { # D
+        next if $dev !~ /[^.]/ and length($dev);
+        next unless @{$deviations{$dev}};
+        $any_deviations = 1;
+        
+        my @downset;
+        if (length($dev) > 0) { # deviation is not deletion
+          for (keys %deviations) {
+            push @downset, @{$deviations{$_}} if $dev =~ /^$_$/;
+          }
+        }
+        else { # deviation is deletion
+          @downset = @{$matcheds{$locus}};
+        }
+
+        my %extension = map(($_ => 1), 
+            $self->describe_set($deviations{$dev}, \@downset, extend => $matcheds{$locus}));
+        
+        my @covered;
+        for my $dev2 (keys %deviations) { # a member of the up-set of D
+          if ($dev2 =~ /^$dev$/ or length($dev2) == 0) {
+            push @covered, grep defined($extension{$_}), @{$deviations{$dev2}};
+            if (length($dev2) > 0) { 
+              # This aspect of the deviation is handled.  Don't remark on it again.
+              my $stripped_dev2 = $dev2;
+              for my $f (0..length($dev2)-1) {
+                if (substr($dev2, $f, 1) eq substr($dev, $f, 1)) {
+                  substr($stripped_dev2, $f, 1) = '.';
+                }
+              }
+              push @{$deviations{$stripped_dev2}}, grep defined($extension{$_}), @{$deviations{$dev2}};
+              @{$deviations{$dev2}} = grep !defined($extension{$_}), @{$deviations{$dev2}};
+            }
+          }
+        } # dev2
+        delete $deviations{''} if ($dev eq '');
+        
+        # Throw out distilled deviations which do nothing aside from fill in undefineds.
+        my $only_undefineds = 0;
+        if ($dev ne '') {
+          $only_undefineds = 1;
+          ONLY_UNDEF: for my $phone (@covered) {
+            for (0..length($phone)-1) {
+              $only_undefineds = 0, last ONLY_UNDEF if substr($dev, $_, 1) =~ /[01]/ and substr($phone, $_, 1) ne 'u';
+            }
+          }
+        }
+
+        push @{$dev_distilled{$frame}{$dev}}, @covered unless $only_undefineds;
+      } # dev
+    } while ($any_deviations);
+
+  } # frame
+
+  # Merge deviations with identical effects across frames.  
+  # We merge two at a time, but since the feature system is binary we can get away with that.
+  my @frames_to_merge = keys %dev_distilled;
+  for (my $i = 1; $i < @frames_to_merge; $i++) {
+    my $f0 = $frames_to_merge[$i];
+    next unless keys %{$dev_distilled{$f0}};
+    MERGE_DEV_J: for (my $j = 0; $j < $i; $j++) {
+      my $f1 = $frames_to_merge[$j];
+      next unless keys %{$dev_distilled{$f1}};
+
+      my $union = $f0;
+      for (0..length($f1)-1) {
+        substr($union, $_, 1) = '.' if substr($union, $_, 1) ne substr($f1, $_, 1);
+      }
+      # Don't merge if it would falsely subsume other frames.
+      for my $f (grep /^$union$/, keys %outcome) { 
+        next MERGE_DEV_J unless $f =~ /^$f0$/ or $f =~ /^$f1$/;
+      }
+
+      my $added_this_merge = 0;
+      for my $dev (keys %{$dev_distilled{$f0}}) {
+        next unless defined $dev_distilled{$f1}{$dev};
+        for (my $k = $#{$dev_distilled{$f0}{$dev}}; $k >= 0; --$k) {
+          my $phone = $dev_distilled{$f0}{$dev}[$k];
+          if (grep $_ eq $phone, @{$dev_distilled{$f1}{$dev}}) {
+            unless ($added_this_merge) {
+              push @frames_to_merge, $union;
+              $added_this_merge = 1;
+            }
+            push @{$dev_distilled{$union}{$dev}}, $phone;
+            @{$dev_distilled{$f1}{$dev}} = grep $_ ne $phone, @{$dev_distilled{$f1}{$dev}};
+            splice @{$dev_distilled{$f0}{$dev}}, $k, 1;
+          }
+        }
+        delete $dev_distilled{$f0}{$dev} unless @{$dev_distilled{$f0}{$dev}};
+        delete $dev_distilled{$f1}{$dev} unless @{$dev_distilled{$f1}{$dev}}; 
+      }
+    } # j
+  } # i
+  for (keys %dev_distilled) {
+    delete $dev_distilled{$_} unless keys %{$dev_distilled{$_}};
+  }
+
+  # Start to prepare the textual description.  First, what the change does.
+
+  # Some of the features may appear redundant to list in the rule, given the current inventory.
+  # But I leave them, just so that there isn't another thing to revise when persistence happens.
+  my $simple_effect = $effect;
+  $simple_effect =~ y/<>/../;
+  my $modified = $FS->add_entailments($FS->overwrite($precondition, $simple_effect)); 
+  # $FS->add_entailments there seems necessary to wipe out things that are forced undefined 
+  # when deviations allow them to be defined again.  I hope it doesn't break anything else.
+
+  my $text = '';
+
+  # Describe the deviations.
+  my $deviation_texts = '';
+  my $frames_start_with_PP = ($effect =~ /[<>]/);
+  my $all_all_deviates = 1;
+  my %kept_deviations; # maps frame to a list
+  for my $frame (keys %outcome) {
+    $all_all_deviates = 0 if $any_nondeviates{$frame};
+  } 
+  for my $frame (keys %dev_distilled) {
+    keys %{$dev_distilled{$frame}}; # reset each()
+    while (my ($deviation, $all_deviants) = each %{$dev_distilled{$frame}}) {
+      next unless grep $outcome{$frame}{$_} ne $_, @$all_deviants;
+      push @{$kept_deviations{$frame}}, $deviation;
+    }
+  }
+
+  # If all frames have all deviates, we don't want to use the default complement.
+  # If there is just one deviation, use it instead.
+  # If there is more than one, even after frame-merging and list-consolidation,
+  # it is best just not to have a main VP or subject, just the environment PP there.
+  my $no_main_VP = 0;
+  if (keys %kept_deviations and $all_all_deviates) {
+    if (keys %kept_deviations <= 1) {
+      @_ = keys %kept_deviations;
+      my $frame = $_[0];
+      if (@{$kept_deviations{$frame}} <= 1) {
+        my $dev = $kept_deviations{$frame}[0];
+        if ($dev ne '') { # deviation can be deletion
+          $modified = $FS->overwrite($modified, $dev);
+        } else {
+          $modified = ''; # this has a special meaning
+        }
+      } else {
+        $no_main_VP = 1;
+      }
+    } else {
+      $no_main_VP = 1;
+    }
+  }
+
+
+  my $filter_text;
+  if (defined $rule->{filter}) {
+    $filter_text = $self->name_phoneset($rule->{filter}, $sstate->{old_inventory});
+  }
+
+
+  for my $frame (keys %kept_deviations) {
+    # This frame might be a consolidated one.  We need to make an actual representative of it
+    # to look things up in %outcome.
+    my $frame_representative;
+    for (keys %outcome) {
+      $frame_representative = $_, last if /^$frame$/;
+    }
+
+    my $frame_text = '';
+    if ($effect =~ /[<>]/) {
+      # $frame can contain constant features from the change, as well as features from
+      # assimilation.  We only want the latter here.  
+      # Modifying the below to handle bidirectional assimilation is straightforward;
+      # I just haven't bothered since we generate no bidirectional assimilation yet.
+      my $filter_insig = undef;
+      if (defined $rule->{filter}) {
+        $frame_text = $rule->{bidirectional} ? "When the nearest $filter_text to either side is " :
+                        ($effect !~ />/ ? "When the previous $filter_text is " : 
+                        ($effect !~ /</ ? "When the next $filter_text is " : 'Assimilating to '));
+        $filter_insig = $rule->{filter}{condition};
+      } else {
+        $frame_text = $rule->{bidirectional} ? 'Next to ':
+                        ($effect !~ />/ ? 'After ' : 
+                        ($effect !~ /</ ? 'Before ' : 'Assimilating to '));
+      }
+      my $phone = $frame;
+      for (0..length($phone)-1) {
+        substr($phone, $_, 1) = '.' unless substr($effect, $_, 1) =~ /[<>]/;
+      }
+      my $phone = $FS->overwrite(($effect !~ />/ ? $old_pre : 
+                      ($effect !~ /</ ? $old_post : '.' x @{$FS->{features}})), $phone);
+      @_ = grep /^$phone$/, @{$sstate->{old_inventory}};
+      my @exceptions;
+      push @exceptions, split / /, $rule->{$locus-1}{except} if $effect =~ /</;
+      push @exceptions, split / /, $rule->{$locus+1}{except} if $effect =~ />/;
+      for my $phone (@exceptions) {
+          @_ = grep $_ !~ /^$phone$/, @_;
+      }
+      $frame_text .= $self->describe_set(\@_, $sstate->{old_inventory}, morpho => defined($filter_insig) ? 'bare' : 'indef', 
+          bar_nons => 1, etic => 1,
+          nobase => defined($filter_insig), insignificant => $filter_insig); 
+          # disallowing nons isn't right, but it makes the thing readable
+      if ($effect =~ /</) {
+        $frame_text .= ' or pause' if $pre_pause and $rule->{or_pause} =~ /^$frame$/;
+      }
+      if ($effect =~ />/) {
+        $frame_text .= ' or pause' if $post_pause and $rule->{or_pause} =~ /^$frame$/;
+      }
+      $frame_text .= ', ';
+    }
+
+    my %appeared_in_a_list = ();
+    DEVIATION: for my $deviation (sort {@{$dev_distilled{$frame}{$b}} <=> @{$dev_distilled{$frame}{$a}}} 
+                           @{$kept_deviations{$frame}}) {
+      my $all_deviants = $dev_distilled{$frame}{$deviation};
+      my @deviants = grep $outcome{$frame_representative}{$_} ne $_, @$all_deviants;
+      my @get_str_pattern;
+
+      my @undescribed_deviants = grep !defined $appeared_in_a_list{$_}, @deviants;
+      next DEVIATION unless @undescribed_deviants;
+
+      my $subject = $self->describe_set(\@deviants, $no_main_VP ? $sstate->{old_inventory} : \@susceptible,
+          morpho => 'plural', etic => 1, sort_phones => 1, get_str_pattern => \@get_str_pattern);
+      # if the subject is a list, redo, dropping things that have already appeared in some list
+      my $subject_is_list = ($subject =~ /^\[.*\]$/); # klugy
+      if ($subject_is_list) { 
+        @deviants = @undescribed_deviants;
+        $subject = $self->describe_set(\@deviants, $no_main_VP ? $sstate->{old_inventory} : \@susceptible,
+            morpho => 'plural', etic => 1, sort_phones => 1, get_str_pattern => \@get_str_pattern);
+            # duplicated code, ick
+      }
+      $frame_text .= $subject;
+
+      if (length($deviation) > 0) {
+        # Check whether some assimilation is left, because frames have been merged.
+        my $framed_effect = $FS->overwrite($effect, $frame);
+        my $assimilation_left = ($framed_effect =~ /[<>]/);
+
+        # If the subject is a list, make the object one too, unless it's entirely deletions.
+        # For deviations, it's less offputting to make the lists long.
+        if ($subject_is_list and !$assimilation_left) { 
+          %appeared_in_a_list = (%appeared_in_a_list, map(($_ => 1), @deviants));
+
+          if (grep $outcome{$frame_representative}{$_}, @deviants) {
+            $frame_text .= ' become [' . join(' ', map $self->{phonetic_alphabet}->spell_spaced_string($outcome{$frame_representative}{$_}, null => 1), @deviants) . ']';
+          } else {
+            $frame_text .= ' are deleted';
+          }
+        } else {
+          # Here again we aren't handling bidirectional assimilation right.
+          my $assimilation_text = '';
+          if ($assimilation_left) {
+            my @taken_care_of;
+            $_ = $effect;
+            y/01u<>/...11/;
+            my $significant = $framed_effect;
+            $significant =~ y/01u<>/...11/;              
+            $assimilation_text = ' and assimilate in ' .
+                $self->name_natural_class($_, undef, scheme => 'nominalised', nobase => 1, 
+                    str => $self->get_str($get_str_pattern[0]),
+                    significant => $significant, taken_care_of => \@taken_care_of); 
+
+            # This in particular rids $framed_effect of all <>s.
+            for (0..length($frame)-1) {
+              substr($framed_effect, $_, 1) = '.' if $taken_care_of[$_];
+            }
+          }
+
+          # Reintroduce parts of the deviation that necessarily occurred for everything in this set,
+          # but have been distilled out.  It seems a waste to do this here,
+          # but I didn't manage to figure out how to do this correctly during distillation
+          # (since we do want to genuinely lose the things we lose there).
+          my $necessary_deviations = '.' x length($deviation);
+          for my $deviation2 (@{$kept_deviations{$frame}}) {
+            unless (grep {
+              my $a = $_;
+              !grep $_ eq $a, @{$dev_distilled{$frame}{$deviation2}}
+            } @deviants) {
+              $necessary_deviations = $FS->overwrite($necessary_deviations, $deviation2);
+            }
+          }
+          
+          # We need accept_nothing => 1 so that weird things in the frame don't make the
+          # namer think impossible things are going on.  
+          my $phone = $FS->overwrite($FS->overwrite($FS->overwrite($precondition, $framed_effect), 
+              $get_str_pattern[0]), $necessary_deviations);
+
+          # Constant features of the frame which came from assimilations in the effect are still insignificant.
+          my $significant;
+          if ($no_main_VP) {
+            $significant = $FS->overwrite($precondition, $framed_effect);
+            for (0..length($significant)-1) {
+              substr($significant, $_, 1) = '.' if substr($effect, $_, 1) =~ /[<>]/;
+            }
+            $significant = $FS->overwrite($FS->overwrite($significant, $get_str_pattern[0]), $necessary_deviations);
+          } else {
+            $significant = $deviation;
+          }
+
+          $_ = $self->name_natural_class($phone, $sstate->{inventory},
+              significant => $significant,
+              morpho => 'plural', nobase => 1, accept_nothing => 1, use_dominant_str => 1); 
+          $frame_text .= " become $_";
+          $frame_text .= $assimilation_text if $assimilation_text;
+        }
+      } else { # deviation is length 0
+        $frame_text .= ' are deleted';
+      }
+      $frame_text .= '; ';
+    }
+    $frame_text = substr($frame_text, 0, -2) if $frame_text =~ /; $/; # eh
+    
+    $deviation_texts .= '. ' . ucfirst $frame_text;
+  } # frame
+  
+
+  my $environment_text = '';
+  my ($pre_text, $post_text);
+  my ($pre_phoneset, $post_phoneset);
+  my ($pre_filter_nontrivial, $post_filter_nontrivial);
+  # the 'or word-finally' aren't quite right, since the main rule might be a between.
+  # FIXME: there is too much 'no phone' for the word-extremal stuff.
+  if (defined $pre) {
+    $pre_phoneset = { %{$rule->{$locus-1}} };
+    $pre_phoneset->{condition} = $pre;
+    $pre_phoneset->{enriched_condition} = enrich($pre, $sstate->{old_inventory});
+    bless $pre_phoneset, 'PhoneSet';
+    $pre_phoneset->simplify($FS);
+    $pre_text = $self->name_phoneset($pre_phoneset, $sstate->{old_inventory}, morpho => 'indef', no_nothing => 1);
+  }
+  if (defined $post) {
+    $post_phoneset = { %{$rule->{$locus+1}} };
+    $post_phoneset->{condition} = $post;
+    $post_phoneset->{enriched_condition} = enrich($post, $sstate->{old_inventory});
+    bless $post_phoneset, 'PhoneSet';
+    $post_phoneset->simplify($FS);
+    $post_text = $self->name_phoneset($post_phoneset, $sstate->{old_inventory}, morpho => 'indef', no_nothing => 1);
+  }
+  if (defined $rule->{filter}) {
+    $pre_filter_nontrivial = grep((!$pre_phoneset->matches($_) and $rule->{filter}->matches($_)), @{$sstate->{old_inventory}})
+        if defined $pre;
+    $post_filter_nontrivial = grep((!$post_phoneset->matches($_) and $rule->{filter}->matches($_)), @{$sstate->{old_inventory}})
+        if defined $post;
+  }
+  
+
+  my $main_clause = '';
+  # It is friendliest not to describe rules which survive till before the _next_ rule as persistent.
+  # (Is my interpretation subject to an  off-by-one error?)
+  my $persistent = !(defined $rule->{inactive} and $rule->{inactive} <= $args{i} + 1);
+  my @get_str_pattern;
+
+  # For impersistent rules, no point favouring a featural description to a list.
+  if ($insusceptibles_exist or !$persistent) {
+    # Note that sounds excluded by {$locus}{except} are already outside of \@susceptible.
+    $main_clause .= $self->describe_set(\@susceptible, $sstate->{old_inventory}, within => $precondition, 
+        morpho => 'plural', etic => 1, sort_phones => 1, get_str_pattern => \@get_str_pattern);
+  } else {
+    $main_clause .= $self->name_natural_class($precondition, $sstate->{old_inventory}, morpho => 'plural');
+    $get_str_pattern[0] = $self->str_part($precondition);
+  }
+  $modified = $FS->overwrite($get_str_pattern[0], $modified) if length($modified);
+  my $subject_is_list = ($main_clause =~ /^\[.*\]$/); # klugy
+  my $both_are_lists = 0; # don't need deviations if both subj and obj are lists
+  my @example_sounds;
+  my $example_ellipsis = '';
+  unless ($subject_is_list) {
+    # Prepare the examples.
+    # Give all the examples if there are at most 4, and 3 representative ones otherwise.
+    # To consider: if there are enough deviates, just give everything as an example
+    # and skip the deviate descriptions?
+    %_ = ();
+    @susceptible = map $_{$_} ? () : ($_{$_} = 1 && $_), @susceptible; # uniq, keeping first instances
+    if (@susceptible <= 4) {
+      @example_sounds = @susceptible;
+    } else {
+      # Can we be more representative here?  Should we avoid naming deviates?
+      @example_sounds = @susceptible[0, @susceptible/3, 2*@susceptible/3]; 
+      $example_ellipsis = ' ...';
+    }
+    my $braces = ($main_clause =~ /\]/);
+    $main_clause .= ', i.e.' if $braces;
+    $main_clause .= ' [' . join(' ', map $self->{phonetic_alphabet}->name_phone($_), @example_sounds)
+        . "$example_ellipsis]";
+    $main_clause .= ',' if $braces;
+  }
+  
+  $main_clause .= ' persistently' if $persistent;
+
+  if ($modified eq '') { # this only happens if overwritten by a deviation
+    $main_clause .= ' are deleted';
+  } else {
+    my $main_VP;
+    if ($effect =~ /[01]/) {
+      my $any_nondeletions = 0;
+      FRAME_ANY_NONDELETIONS: for my $frame (keys %outcome) {
+        for my $phone (@susceptible) {
+          $any_nondeletions = 1, last FRAME_ANY_NONDELETIONS if $outcome{$frame}{$phone} ne '';
+        }
+      }
+      unless ($any_nondeletions) {
+        $main_VP .= ' are deleted';
+      } else {
+        my ($frame) = keys %outcome;        
+        $main_VP .= ' become ';
+        # if the subject is a _short_ list, make the complement one too
+        if ($subject_is_list and @susceptible <= 2 and scalar keys %outcome <= 1) { 
+          $both_are_lists = 1;
+          $main_VP .= '[' . join(' ', map $self->{phonetic_alphabet}->spell([split ' ', $outcome{$frame}{$_}], null => 1), @susceptible) . ']';
+        } else {
+          if ($main_VP =~ / and /) {
+            $main_VP .= ' respectively'; 
+          }
+          # There might be dots in the frame which have come from assimilations in the effect
+          # after frame mergers.  We want these to stomp on $modified.
+          for (0..length($modified)-1) {
+            substr($modified, $_, 1) = '.' if substr($frame, $_, 1) eq '.' and substr($effect, $_, 1) =~ /[<>]/;
+          }
+          $main_VP .= $self->name_natural_class($modified, $sstate->{inventory}, significant => $simple_effect, 
+              morpho => 'plural', nobase => 1, accept_nothing => 1, use_dominant_str => 1);
+        }
+        # examples
+        if (keys %outcome <= 1 and !$subject_is_list) {
+          $main_VP .= ' [' . join(' ', map $self->{phonetic_alphabet}->spell_spaced_string($outcome{$frame}{$_}, null => 1), @example_sounds)
+              . "$example_ellipsis]";
+        }
+      }
+    } # $effect =~ /[01]/
+    # FIXME: 'or word-finally' etc. is wrong when an assimilation only has one frame.  also, ' and become foo word-finally' has been wrong
+    if ($effect =~ /</) {
+      $_ = $effect;
+      y/01u<>/...1./;
+      $_ = $FS->overwrite($self->str_part(enrich($precondition, $sstate->{old_inventory})), $_);
+      $main_VP .= ' and' if $main_VP;
+      $main_VP .= ' assimilate in ' .
+          $self->name_natural_class($_, undef, scheme => 'nominalised', nobase => 1);
+      if (!defined($old_post) and !$far) {
+        my $filter_insig = undef;
+        my $appendage = '';
+        if (defined $rule->{filter}) {
+          if ($pre_filter_nontrivial) {
+            $main_VP .= ' to the ' . 
+                ($rule->{bidirectional} ? 'nearest' : 'previous') . 
+                " $filter_text on either side when it is ";
+            $filter_insig = $rule->{filter}{condition};
+          } else {
+            $main_VP .= ' to the ' . 
+                ($rule->{bidirectional} ? 'nearest ' : 'previous ');
+            $appendage .= ' on either side' if $rule->{bidirectional};
+          }
+        } else {
+          $main_VP .= ' to a' . ($rule->{bidirectional} ? 'n adjacent ' : ' preceding ');
+        }
+        @_ = grep /^$pre$/, @{$sstate->{old_inventory}};
+        for my $phone (split / /, $rule->{$locus-1}{except}) {
+          @_ = grep $_ !~ /^$phone$/, @_;
+        }
+        $main_VP .= $self->describe_set(\@_, $sstate->{old_inventory}, morpho => 'bare', etic => 1, 
+            nobase => defined($filter_insig), insignificant => $filter_insig);
+        $main_VP .= $appendage;
+        $pre = undef;
+      } else {
+        $main_VP .= ' to the ' . 
+            ($rule->{bidirectional} ? 'nearest ' : 'previous ') . 
+            defined $rule->{filter} ? $filter_text : 'phone';
+      }
+      if ($pre_pause) { # word-initial
+        my $pausal_effect = $effect;
+        for (0..length($pausal_effect)-1) {
+          substr($pausal_effect, $_, 1) = substr($rule->{$locus-1}{or_pause}, $_, 1)
+              if substr($pausal_effect, $_, 1) eq '<';
+        }
+        my $modified = $FS->overwrite($precondition, $pausal_effect); 
+        $modified =~ s/u/./g;
+        $main_VP .= ' and become ' . 
+                    $self->name_natural_class($modified, $sstate->{inventory}, significant => $pausal_effect, morpho => 'plural', nobase => 1);
+        $main_VP .= defined $rule->{filter} ? (" if no $filter_text " . ($rule->{bidirectional} ? 'is present' : 'precedes')) 
+            : ($rule->{bidirectional} ? ' word-extremally' : ' word-initially');
+      }
+    }
+    if ($effect =~ />/) {
+      $_ = $effect;
+      y/01u<>/....1/;
+      $_ = $FS->overwrite($self->str_part(enrich($precondition, $sstate->{old_inventory})), $_);
+      $main_VP .= ' and' if $main_VP;
+      $main_VP .= ' assimilate in ' .
+          $self->name_natural_class($_, undef, scheme => 'nominalised', nobase => 1);
+      if (!defined($old_pre) and !$far) {
+        my $filter_insig = undef;
+        my $appendage = '';
+        if (defined $rule->{filter}) {
+          if ($pre_filter_nontrivial) {
+            $main_VP .= ' to the ' . 
+                ($rule->{bidirectional} ? 'nearest' : 'next') . 
+                " $filter_text on either side when it is ";
+            $filter_insig = $rule->{filter}{condition};
+          } else {
+            $main_VP .= ' to the ' . 
+                ($rule->{bidirectional} ? 'nearest ' : 'next ');
+            $appendage .= ' on either side' if $rule->{bidirectional};
+          }
+        } else {
+          $main_VP .= ' to a' . ($rule->{bidirectional} ? 'n adjacent ' : ' following ');
+        }
+        @_ = grep /^$post$/, @{$sstate->{old_inventory}};
+        for my $phone (split / /, $rule->{$locus+1}{except}) {
+          @_ = grep $_ !~ /^$phone$/, @_;
+        }
+        $main_VP .= $self->describe_set(\@_, $sstate->{old_inventory}, morpho => 'bare', etic => 1,
+            nobase => defined($filter_insig), insignificant => $filter_insig);  
+        $main_VP .= $appendage;
+        $post = undef;
+      } else {
+        $main_VP .= ' to the ' . 
+            ($rule->{bidirectional} ? 'nearest ' : 'next ') . 
+            defined $rule->{filter} ? $filter_text : 'phone';
+      }
+      if ($post_pause) { # word-final
+        my $pausal_effect = $effect;
+        for (0..length($pausal_effect)-1) {
+          substr($pausal_effect, $_, 1) = substr($rule->{$locus+1}{or_pause}, $_, 1)
+              if substr($pausal_effect, $_, 1) eq '>';
+        }
+        my $modified = $FS->overwrite($precondition, $pausal_effect); 
+        $modified =~ s/u/./g;
+        $main_VP .= ' and become ' . 
+                    $self->name_natural_class($modified, $sstate->{inventory}, significant => $pausal_effect, morpho => 'plural', nobase => 1);
+        $main_VP .= defined $rule->{filter} ? (" if no $filter_text " . ($rule->{bidirectional} ? 'is present' : 'follows')) 
+            : ($rule->{bidirectional} ? ' word-extremally' : ' word-finally');
+      }
+    }
+    $main_clause .= $main_VP;
+  } # modified is not deletion
+
+
+  my $envbit;
+  if (defined $pre) {
+    $envbit = '';
+    if ($pre_text) {
+      if (defined $rule->{filter}) {
+        if ($pre_filter_nontrivial) {
+          $environment_text .= ' if ' . 
+              ($rule->{bidirectional} ? "the nearest $filter_text on either side" : "the previous $filter_text") . 
+              ' is';
+          # recompute, for significant
+          $pre_text = $self->name_phoneset($pre_phoneset, $sstate->{old_inventory}, morpho => 'bare', no_nothing => 1, 
+              nobase => 1, significant => $FS->subtract_features($pre_phoneset->{condition}, $rule->{filter}{condition}) );
+        } else {
+          $environment_text .= ' if there is ';
+          $envbit .= ($rule->{bidirectional} ? ' earlier' : ' elsewhere') . ' in the word';
+        }
+      } else {
+        $environment_text .= ($post_text ? ' between' : ($rule->{bidirectional} ? ' next to' : ' after'));
+      }
+      $environment_text .= " $pre_text" . $envbit;
+    } else {
+      $pre = undef;
+    }
+    if ($pre_pause) {
+      if (defined $rule->{filter}) {
+        if ($pre_text) {
+          $environment_text .= ' or there is none';
+        } else {
+          $environment_text .= ' when it is the ' . 
+              ($rule->{bidirectional} ? 'only' : 'first') . 
+              " $filter_text in the word";
+        }
+      } else {
+        $environment_text .= ' or' if $pre_text;
+        $environment_text .= $rule->{bidirectional} ? ' word-extremally' : ' word-initially';
+      }
+    }
+  } 
+  if (defined $post) {
+    $envbit = '';
+    if ($post_text) {
+      if (defined $rule->{filter}) {
+        if ($post_filter_nontrivial) {
+          # FIXME: "... is high or high semivowel".  Also: be less hung up on excepts!
+          $environment_text .= ' if ' . 
+              ($rule->{bidirectional} ? "the nearest $filter_text on either side" : "the next $filter_text") . 
+              ' is';
+          # recompute, for significant
+          $post_text = $self->name_phoneset($post_phoneset, $sstate->{old_inventory}, morpho => 'bare', no_nothing => 1, 
+              nobase => 1, significant => $FS->subtract_features($post_phoneset->{condition}, $rule->{filter}{condition}) );
+        } else {
+          $environment_text .= ' if there is ';
+          $envbit .= ($rule->{bidirectional} ? ' later' : ' elsewhere') . ' in the word';
+        }
+      } else {
+        $environment_text .= ($pre_text ? ' and' : ($rule->{bidirectional} ? ' next to' : ' before'));
+      }
+      $environment_text .= " $post_text" . $envbit;
+      $environment_text .= ' in either order' if ($pre_text and $rule->{bidirectional} and !defined $rule->{filter});
+    } else {
+      $post = undef;
+    }
+    if ($post_pause) {
+      if (defined $rule->{filter}) {
+        if ($pre_text) {
+          $environment_text .= ' or there is none';
+        } else {
+          $environment_text .= ' when it is the ' . 
+              ($rule->{bidirectional} ? 'only' : 'last') . 
+              " $filter_text in the word";
+        }
+      } else {
+        $environment_text .= ' or' if $post_text;
+        $environment_text .= $rule->{bidirectional} ? ' word-extremally' : ' word-finally';
+      }
+    }
+  }
+  if ($far) {
+    $environment_text .= ' under some conditions on nonadjacent phones'; # FIXME
+  }
+
+  $text .= $main_clause unless $no_main_VP;
+  $text .= ' persistently' if $no_main_VP and $persistent;
+  $text .= $environment_text unless $no_main_VP and $frames_start_with_PP;
+  if ($deviation_texts) {
+    if ($no_main_VP) {
+      $deviation_texts = ($text ? ', ' : '') . lcfirst substr($deviation_texts, 2);
+    }
+    $text .= $deviation_texts unless !$no_main_VP and ($all_all_deviates or $both_are_lists);
+  }
+
+  $text =~ s/^ *//;
+  return ucfirst $text . '. ';
 }
 
 sub describe_rules {
   my ($self, $pd, %args) = @_;
-  my $FS = $self->{FS};
   my %descriptions;
   my %to_be_numbered;
+  my %old_conditional_resolutions = ();
 
   # initial and final rules to present
   $args{start} = $pd->{start_sequences} unless defined $args{start};
   $args{end} = @{$pd->{phonology}} unless defined $args{end};
 
-  my $sstate = PhonologySynchronicState::initialise($pd, $FS, $args{start}, %args);
+  my $sstate = PhonologySynchronicState::initialise($pd, $self->{FS}, $args{start}, %args);
 
   RULE: for my $i ($args{start}..$args{end}-1) {
     printf STDERR "describing rule $i\n" if $Phonology::debug;
-    my $unsimplified_rule = $pd->{phonology}[$i];
+    my $rule = $pd->{phonology}[$i];
 
-    # Perhaps we discard pointless things too aggressively, given the chance for remaining active.
-    my %matcheds = $sstate->find_matches($unsimplified_rule);
-    my $rule = $sstate->simplify($unsimplified_rule, matches => \%matcheds);
-    next RULE if ($rule->{pointless});
-    my @update_data = $sstate->update($rule, $i, matches => \%matcheds, record_old_inventory => 1);
-    next RULE if ($rule->{pointless});
+    $descriptions{$i}{rule} = $self->describe_rule($rule, $sstate, %args, i => $i);
 
-    # For now, assume there's only one change.  
-    my @loci = ($rule->indices('effects'), $rule->indices('deletions'));
-    if (@loci > 1) {
-      $descriptions{$i}{rule} = '(some rule where multiple phones change at once)';
-      next;
+    # Catch and describe the old conditional rules.
+    for my $j (keys %{$sstate->{conditional_resolutions}}) {
+      next if defined $old_conditional_resolutions{$j};      
+      push @{$descriptions{$i}{post}}, "(TEMPORARY $j) " . 
+          $self->describe_rule($pd->{phonology}[$j], $sstate, %args, i => $j);
     }
+    %old_conditional_resolutions = %{$sstate->{conditional_resolutions}};
 
-    my $locus = $loci[0];
-    my %outcome = %{$update_data[0]{$locus}};
-    my %frames_examined = %{$update_data[1]{$locus}};
-    my $effect = defined $rule->{$locus}{effects} ? $rule->{$locus}{effects} : '.' x @{$FS->{features}};
-    my $old_effect = $effect;
-    my $precondition = $rule->{$locus}{condition};
-    my ($pre, $old_pre, $post, $old_post);
-    $old_pre = $pre = $rule->{$locus-1}{condition} if defined $rule->{$locus-1} and defined $rule->{$locus-1}{condition};
-    $old_post = $post = $rule->{$locus+1}{condition} if defined $rule->{$locus+1} and defined $rule->{$locus+1}{condition};
-    my $far = grep(($_ != $locus-1 and $_ != $locus and $_ != $locus+1), $rule->indices('condition'));
-
-    if (defined $rule->{filter}) {
-      $precondition = $FS->intersect($rule->{filter}{condition}, $precondition);
-      $old_pre = $pre = $FS->intersect($rule->{filter}{condition}, $pre) if defined $pre;
-      $old_post = $post = $FS->intersect($rule->{filter}{condition}, $post) if defined $post;
-    }
-
-    # whether or_pause specifications in the rule can actually happen
-    my ($pre_pause, $post_pause) = (defined $rule->{$locus-1}{or_pause}, defined $rule->{$locus+1}{or_pause});
-    # If only one frame causes change, rewrite to a non-assimilatory rule.  
-    # We need to fix the values of both effect and influencer.
-    if (keys %outcome <= 1) {
-      $rule->{pointless} = 1, next RULE if keys %outcome <= 0 and !defined $rule->{$locus}{deletions};
-      if (keys %frames_examined > 1) {
-        my($frame, $dummy) = each %outcome;
-        my ($pre_frame, $post_frame) = ($frame, $frame);
-        for (0..length($effect)-1) {
-          substr($pre_frame, $_, 1) = '.' if substr($effect, $_, 1) ne '<';
-          substr($post_frame, $_, 1) = '.' if substr($effect, $_, 1) ne '>';
-          substr($effect, $_, 1) = substr($frame, $_, 1);
-        }
-        $pre = $FS->intersect($pre, $pre_frame);
-        $post = $FS->intersect($post, $post_frame);
-        $pre_pause = undef unless $FS->compatible($rule->{$locus-1}{or_pause}, $pre_frame);
-        $post_pause = undef unless $FS->compatible($rule->{$locus+1}{or_pause}, $post_frame);
-      }
-    }
-
-    # Exceptionality describing time!  We are comparing to $FS->add_entailments $FS->overwrite($phone, $frame).
-    # Note that this doesn't have any particular handling of 
-    # "foos do A, except for bar foos, which do B instead".
-
-    my @susceptible;
-    my $insusceptibles_exist = 0;
-    my %any_nondeviates; # is there any phone which behaves normally?
-    my %dev_distilled; # %dev_distilled maps frames to maps from conditions to lists of phones.
-    for my $frame (keys %outcome) {
-      # %deviations maps deviations to the list of sounds that give them
-      my %deviations;
-
-      # Collect the deviations.
-      for my $phone (@{$matcheds{$locus}}) {
-        my $susceptible = 0;
-        my $outcome = $outcome{$frame}{$phone};
-        if ($outcome =~ / /) { 
-          warn "multiple sound outcome in finding deviations!"; # FIXME: multiple sound outcomes
-        }
-        my $changed = $FS->add_entailments($FS->overwrite($phone, $frame)); # duplicative :-/
-        if (length($outcome)) { # one phone
-          # Just filling in undefineds isn't good enough here, since it's not good enough below.
-          for (0..length($outcome)-1) {
-            substr($outcome, $_, 1) = '.' if substr($outcome, $_, 1) eq substr($changed, $_, 1)
-                                          or substr($changed, $_, 1) eq 'u';
-          }
-          push @{$deviations{$outcome}}, $phone;
-
-          # Only announce the main clause of this rule if there's a nondeviate that actually changes.
-          $any_nondeviates{$frame} = 1 if $outcome eq '.' x length($frame)
-                                      and $outcome{$frame}{$phone} ne $phone; 
-        } else { # no phones: deletion is a deviation
-          push @{$deviations{''}}, $phone;              
-        }
-
-        $susceptible = 1, push @susceptible, $phone # can't jump out or we might miss exceptionality
-            if $outcome{$frame}{$phone} ne $phone;
-        $insusceptibles_exist = 1 unless $susceptible;
-      } # phone
-
-      # Distill the deviations.  
-      #
-      # Deviations form a partial order, where D > D' if D makes every change D' makes.
-      # For D a deviation running smallest to largest, 
-      # as a general rule we want to handle the whole up-set of D, if we can.
-      # So we want to just name D within its down-set and transfer that naming to the up-set.
-      my $any_deviations;
-      do {
-        $any_deviations = 0;
-        for my $dev (sort {grep(1,($a =~ /[^.]/g)) <=> grep(1,($b =~ /[^.]/g))} keys %deviations) { # D
-          next if $dev !~ /[^.]/ and length($dev);
-          next unless @{$deviations{$dev}};
-          $any_deviations = 1;
-          
-          my @downset;
-          if (length($dev) > 0) { # deviation is not deletion
-            for (keys %deviations) {
-              push @downset, @{$deviations{$_}} if $dev =~ /^$_$/;
-            }
-          }
-          else { # deviation is deletion
-            @downset = @{$matcheds{$locus}};
-          }
-
-          my %extension = map(($_ => 1), 
-              $self->describe_set($deviations{$dev}, \@downset, extend => $matcheds{$locus}));
-          
-          my @covered;
-          for my $dev2 (keys %deviations) { # a member of the up-set of D
-            if ($dev2 =~ /^$dev$/ or length($dev2) == 0) {
-              push @covered, grep defined($extension{$_}), @{$deviations{$dev2}};
-              if (length($dev2) > 0) { 
-                # This aspect of the deviation is handled.  Don't remark on it again.
-                my $stripped_dev2 = $dev2;
-                for my $f (0..length($dev2)-1) {
-                  if (substr($dev2, $f, 1) eq substr($dev, $f, 1)) {
-                    substr($stripped_dev2, $f, 1) = '.';
-                  }
-                }
-                push @{$deviations{$stripped_dev2}}, grep defined($extension{$_}), @{$deviations{$dev2}};
-                @{$deviations{$dev2}} = grep !defined($extension{$_}), @{$deviations{$dev2}};
-              }
-            }
-          } # dev2
-          delete $deviations{''} if ($dev eq '');
-          
-          # Throw out distilled deviations which do nothing aside from fill in undefineds.
-          my $only_undefineds = 0;
-          if ($dev ne '') {
-            $only_undefineds = 1;
-            ONLY_UNDEF: for my $phone (@covered) {
-              for (0..length($phone)-1) {
-                $only_undefineds = 0, last ONLY_UNDEF if substr($dev, $_, 1) =~ /[01]/ and substr($phone, $_, 1) ne 'u';
-              }
-            }
-          }
-
-          push @{$dev_distilled{$frame}{$dev}}, @covered unless $only_undefineds;
-        } # dev
-      } while ($any_deviations);
-
-    } # frame
-
-    # Merge deviations with identical effects across frames.  
-    # We merge two at a time, but since the feature system is binary we can get away with that.
-    my @frames_to_merge = keys %dev_distilled;
-    for (my $i = 1; $i < @frames_to_merge; $i++) {
-      my $f0 = $frames_to_merge[$i];
-      next unless keys %{$dev_distilled{$f0}};
-      MERGE_DEV_J: for (my $j = 0; $j < $i; $j++) {
-        my $f1 = $frames_to_merge[$j];
-        next unless keys %{$dev_distilled{$f1}};
-
-        my $union = $f0;
-        for (0..length($f1)-1) {
-          substr($union, $_, 1) = '.' if substr($union, $_, 1) ne substr($f1, $_, 1);
-        }
-        # Don't merge if it would falsely subsume other frames.
-        for my $f (grep /^$union$/, keys %outcome) { 
-          next MERGE_DEV_J unless $f =~ /^$f0$/ or $f =~ /^$f1$/;
-        }
-
-        my $added_this_merge = 0;
-        for my $dev (keys %{$dev_distilled{$f0}}) {
-          next unless defined $dev_distilled{$f1}{$dev};
-          for (my $k = $#{$dev_distilled{$f0}{$dev}}; $k >= 0; --$k) {
-            my $phone = $dev_distilled{$f0}{$dev}[$k];
-            if (grep $_ eq $phone, @{$dev_distilled{$f1}{$dev}}) {
-              unless ($added_this_merge) {
-                push @frames_to_merge, $union;
-                $added_this_merge = 1;
-              }
-              push @{$dev_distilled{$union}{$dev}}, $phone;
-              @{$dev_distilled{$f1}{$dev}} = grep $_ ne $phone, @{$dev_distilled{$f1}{$dev}};
-              splice @{$dev_distilled{$f0}{$dev}}, $k, 1;
-            }
-          }
-          delete $dev_distilled{$f0}{$dev} unless @{$dev_distilled{$f0}{$dev}};
-          delete $dev_distilled{$f1}{$dev} unless @{$dev_distilled{$f1}{$dev}}; 
-        }
-      } # j
-    } # i
-    for (keys %dev_distilled) {
-      delete $dev_distilled{$_} unless keys %{$dev_distilled{$_}};
-    }
-
-    # Start to prepare the textual description.  First, what the change does.
-
-    # Some of the features may appear redundant to list in the rule, given the current inventory.
-    # But I leave them, just so that there isn't another thing to revise when persistence happens.
-    my $simple_effect = $effect;
-    $simple_effect =~ y/<>/../;
-    my $modified = $FS->add_entailments($FS->overwrite($precondition, $simple_effect)); 
-    # $FS->add_entailments there seems necessary to wipe out things that are forced undefined 
-    # when deviations allow them to be defined again.  I hope it doesn't break anything else.
-
-    my $text = '';
-
-    # Describe the deviations.
-    my $deviation_texts = '';
-    my $frames_start_with_PP = ($effect =~ /[<>]/);
-    my $all_all_deviates = 1;
-    my %kept_deviations; # maps frame to a list
-    for my $frame (keys %outcome) {
-      $all_all_deviates = 0 if $any_nondeviates{$frame};
-    } 
-    for my $frame (keys %dev_distilled) {
-      keys %{$dev_distilled{$frame}}; # reset each()
-      while (my ($deviation, $all_deviants) = each %{$dev_distilled{$frame}}) {
-        next unless grep $outcome{$frame}{$_} ne $_, @$all_deviants;
-        push @{$kept_deviations{$frame}}, $deviation;
-      }
-    }
-
-    # If all frames have all deviates, we don't want to use the default complement.
-    # If there is just one deviation, use it instead.
-    # If there is more than one, even after frame-merging and list-consolidation,
-    # it is best just not to have a main VP or subject, just the environment PP there.
-    my $no_main_VP = 0;
-    if (keys %kept_deviations and $all_all_deviates) {
-      if (keys %kept_deviations <= 1) {
-        @_ = keys %kept_deviations;
-        my $frame = $_[0];
-        if (@{$kept_deviations{$frame}} <= 1) {
-          my $dev = $kept_deviations{$frame}[0];
-          if ($dev ne '') { # deviation can be deletion
-            $modified = $FS->overwrite($modified, $dev);
-          } else {
-            $modified = ''; # this has a special meaning
-          }
-        } else {
-          $no_main_VP = 1;
-        }
-      } else {
-        $no_main_VP = 1;
-      }
-    }
-
-
-    my $filter_text;
-    if (defined $rule->{filter}) {
-      $filter_text = $self->name_phoneset($rule->{filter}, $sstate->{old_inventory});
-    }
-
-
-    for my $frame (keys %kept_deviations) {
-      # This frame might be a consolidated one.  We need to make an actual representative of it
-      # to look things up in %outcome.
-      my $frame_representative;
-      for (keys %outcome) {
-        $frame_representative = $_, last if /^$frame$/;
-      }
-
-      my $frame_text = '';
-      if ($effect =~ /[<>]/) {
-        # $frame can contain constant features from the change, as well as features from
-        # assimilation.  We only want the latter here.  
-        # Modifying the below to handle bidirectional assimilation is straightforward;
-        # I just haven't bothered since we generate no bidirectional assimilation yet.
-        my $filter_insig = undef;
-        if (defined $rule->{filter}) {
-          $frame_text = $rule->{bidirectional} ? "When the nearest $filter_text to either side is " :
-                          ($effect !~ />/ ? "When the previous $filter_text is " : 
-                          ($effect !~ /</ ? "When the next $filter_text is " : 'Assimilating to '));
-          $filter_insig = $rule->{filter}{condition};
-        } else {
-          $frame_text = $rule->{bidirectional} ? 'Next to ':
-                          ($effect !~ />/ ? 'After ' : 
-                          ($effect !~ /</ ? 'Before ' : 'Assimilating to '));
-        }
-        my $phone = $frame;
-        for (0..length($phone)-1) {
-          substr($phone, $_, 1) = '.' unless substr($effect, $_, 1) =~ /[<>]/;
-        }
-        my $phone = $FS->overwrite(($effect !~ />/ ? $old_pre : 
-                        ($effect !~ /</ ? $old_post : '.' x @{$FS->{features}})), $phone);
-        @_ = grep /^$phone$/, @{$sstate->{old_inventory}};
-        my @exceptions;
-        push @exceptions, split / /, $rule->{$locus-1}{except} if $effect =~ /</;
-        push @exceptions, split / /, $rule->{$locus+1}{except} if $effect =~ />/;
-        for my $phone (@exceptions) {
-            @_ = grep $_ !~ /^$phone$/, @_;
-        }
-        $frame_text .= $self->describe_set(\@_, $sstate->{old_inventory}, morpho => defined($filter_insig) ? 'bare' : 'indef', 
-            bar_nons => 1, etic => 1,
-            nobase => defined($filter_insig), insignificant => $filter_insig); 
-            # disallowing nons isn't right, but it makes the thing readable
-        if ($effect =~ /</) {
-          $frame_text .= ' or pause' if $pre_pause and $rule->{or_pause} =~ /^$frame$/;
-        }
-        if ($effect =~ />/) {
-          $frame_text .= ' or pause' if $post_pause and $rule->{or_pause} =~ /^$frame$/;
-        }
-        $frame_text .= ', ';
-      }
-
-      my %appeared_in_a_list = ();
-      DEVIATION: for my $deviation (sort {@{$dev_distilled{$frame}{$b}} <=> @{$dev_distilled{$frame}{$a}}} 
-                             @{$kept_deviations{$frame}}) {
-        my $all_deviants = $dev_distilled{$frame}{$deviation};
-        my @deviants = grep $outcome{$frame_representative}{$_} ne $_, @$all_deviants;
-        my @get_str_pattern;
-
-        my @undescribed_deviants = grep !defined $appeared_in_a_list{$_}, @deviants;
-        next DEVIATION unless @undescribed_deviants;
-
-        my $subject = $self->describe_set(\@deviants, $no_main_VP ? $sstate->{old_inventory} : \@susceptible,
-            morpho => 'plural', etic => 1, sort_phones => 1, get_str_pattern => \@get_str_pattern);
-        # if the subject is a list, redo, dropping things that have already appeared in some list
-        my $subject_is_list = ($subject =~ /^\[.*\]$/); # klugy
-        if ($subject_is_list) { 
-          @deviants = @undescribed_deviants;
-          $subject = $self->describe_set(\@deviants, $no_main_VP ? $sstate->{old_inventory} : \@susceptible,
-              morpho => 'plural', etic => 1, sort_phones => 1, get_str_pattern => \@get_str_pattern);
-              # duplicated code, ick
-        }
-        $frame_text .= $subject;
-
-        if (length($deviation) > 0) {
-          # Check whether some assimilation is left, because frames have been merged.
-          my $framed_effect = $FS->overwrite($effect, $frame);
-          my $assimilation_left = ($framed_effect =~ /[<>]/);
-
-          # If the subject is a list, make the object one too, unless it's entirely deletions.
-          # For deviations, it's less offputting to make the lists long.
-          if ($subject_is_list and !$assimilation_left) { 
-            %appeared_in_a_list = (%appeared_in_a_list, map(($_ => 1), @deviants));
-
-            if (grep $outcome{$frame_representative}{$_}, @deviants) {
-              $frame_text .= ' become [' . join(' ', map $self->{phonetic_alphabet}->spell_spaced_string($outcome{$frame_representative}{$_}, null => 1), @deviants) . ']';
-            } else {
-              $frame_text .= ' are deleted';
-            }
-          } else {
-            # Here again we aren't handling bidirectional assimilation right.
-            my $assimilation_text = '';
-            if ($assimilation_left) {
-              my @taken_care_of;
-              $_ = $effect;
-              y/01u<>/...11/;
-              my $significant = $framed_effect;
-              $significant =~ y/01u<>/...11/;              
-              $assimilation_text = ' and assimilate in ' .
-                  $self->name_natural_class($_, undef, scheme => 'nominalised', nobase => 1, 
-                      str => $self->get_str($get_str_pattern[0]),
-                      significant => $significant, taken_care_of => \@taken_care_of); 
-
-              # This in particular rids $framed_effect of all <>s.
-              for (0..length($frame)-1) {
-                substr($framed_effect, $_, 1) = '.' if $taken_care_of[$_];
-              }
-            }
-
-            # Reintroduce parts of the deviation that necessarily occurred for everything in this set,
-            # but have been distilled out.  It seems a waste to do this here,
-            # but I didn't manage to figure out how to do this correctly during distillation
-            # (since we do want to genuinely lose the things we lose there).
-            my $necessary_deviations = '.' x length($deviation);
-            for my $deviation2 (@{$kept_deviations{$frame}}) {
-              unless (grep {
-                my $a = $_;
-                !grep $_ eq $a, @{$dev_distilled{$frame}{$deviation2}}
-              } @deviants) {
-                $necessary_deviations = $FS->overwrite($necessary_deviations, $deviation2);
-              }
-            }
-            
-            # We need accept_nothing => 1 so that weird things in the frame don't make the
-            # namer think impossible things are going on.  
-            my $phone = $FS->overwrite($FS->overwrite($FS->overwrite($precondition, $framed_effect), 
-                $get_str_pattern[0]), $necessary_deviations);
-
-            # Constant features of the frame which came from assimilations in the effect are still insignificant.
-            my $significant;
-            if ($no_main_VP) {
-              $significant = $FS->overwrite($precondition, $framed_effect);
-              for (0..length($significant)-1) {
-                substr($significant, $_, 1) = '.' if substr($effect, $_, 1) =~ /[<>]/;
-              }
-              $significant = $FS->overwrite($FS->overwrite($significant, $get_str_pattern[0]), $necessary_deviations);
-            } else {
-              $significant = $deviation;
-            }
-
-            $_ = $self->name_natural_class($phone, $sstate->{inventory},
-                significant => $significant,
-                morpho => 'plural', nobase => 1, accept_nothing => 1, use_dominant_str => 1); 
-            $frame_text .= " become $_";
-            $frame_text .= $assimilation_text if $assimilation_text;
-          }
-        } else { # deviation is length 0
-          $frame_text .= ' are deleted';
-        }
-        $frame_text .= '; ';
-      }
-      $frame_text = substr($frame_text, 0, -2) if $frame_text =~ /; $/; # eh
-      
-      $deviation_texts .= '. ' . ucfirst $frame_text;
-    } # frame
-    
-
-    my $environment_text = '';
-    my ($pre_text, $post_text);
-    my ($pre_phoneset, $post_phoneset);
-    my ($pre_filter_nontrivial, $post_filter_nontrivial);
-    # the 'or word-finally' aren't quite right, since the main rule might be a between.
-    # FIXME: there is too much 'no phone' for the word-extremal stuff.
-    if (defined $pre) {
-      $pre_phoneset = { %{$rule->{$locus-1}} };
-      $pre_phoneset->{condition} = $pre;
-      $pre_phoneset->{enriched_condition} = enrich($pre, $sstate->{old_inventory});
-      bless $pre_phoneset, 'PhoneSet';
-      $pre_phoneset->simplify($FS);
-      $pre_text = $self->name_phoneset($pre_phoneset, $sstate->{old_inventory}, morpho => 'indef', no_nothing => 1);
-    }
-    if (defined $post) {
-      $post_phoneset = { %{$rule->{$locus+1}} };
-      $post_phoneset->{condition} = $post;
-      $post_phoneset->{enriched_condition} = enrich($post, $sstate->{old_inventory});
-      bless $post_phoneset, 'PhoneSet';
-      $post_phoneset->simplify($FS);
-      $post_text = $self->name_phoneset($post_phoneset, $sstate->{old_inventory}, morpho => 'indef', no_nothing => 1);
-    }
-    if (defined $rule->{filter}) {
-      $pre_filter_nontrivial = grep((!$pre_phoneset->matches($_) and $rule->{filter}->matches($_)), @{$sstate->{old_inventory}})
-          if defined $pre;
-      $post_filter_nontrivial = grep((!$post_phoneset->matches($_) and $rule->{filter}->matches($_)), @{$sstate->{old_inventory}})
-          if defined $post;
-    }
-    
-
-    my $main_clause = '';
-    # It is friendliest not to describe rules which survive till before the _next_ rule as persistent.
-    # (Is my interpretation subject to an  off-by-one error?)
-    my $persistent = !(defined $rule->{inactive} and $rule->{inactive} <= $i + 1);
-    my @get_str_pattern;
-
-    # For impersistent rules, no point favouring a featural description to a list.
-    if ($insusceptibles_exist or !$persistent) {
-      # Note that sounds excluded by {$locus}{except} are already outside of \@susceptible.
-      $main_clause .= $self->describe_set(\@susceptible, $sstate->{old_inventory}, within => $precondition, 
-          morpho => 'plural', etic => 1, sort_phones => 1, get_str_pattern => \@get_str_pattern);
-    } else {
-      $main_clause .= $self->name_natural_class($precondition, $sstate->{old_inventory}, morpho => 'plural');
-      $get_str_pattern[0] = $self->str_part($precondition);
-    }
-    $modified = $FS->overwrite($get_str_pattern[0], $modified) if length($modified);
-    my $subject_is_list = ($main_clause =~ /^\[.*\]$/); # klugy
-    my $both_are_lists = 0; # don't need deviations if both subj and obj are lists
-    my @example_sounds;
-    my $example_ellipsis = '';
-    unless ($subject_is_list) {
-      # Prepare the examples.
-      # Give all the examples if there are at most 4, and 3 representative ones otherwise.
-      # To consider: if there are enough deviates, just give everything as an example
-      # and skip the deviate descriptions?
-      %_ = ();
-      @susceptible = map $_{$_} ? () : ($_{$_} = 1 && $_), @susceptible; # uniq, keeping first instances
-      if (@susceptible <= 4) {
-        @example_sounds = @susceptible;
-      } else {
-        # Can we be more representative here?  Should we avoid naming deviates?
-        @example_sounds = @susceptible[0, @susceptible/3, 2*@susceptible/3]; 
-        $example_ellipsis = ' ...';
-      }
-      my $braces = ($main_clause =~ /\]/);
-      $main_clause .= ', i.e.' if $braces;
-      $main_clause .= ' [' . join(' ', map $self->{phonetic_alphabet}->name_phone($_), @example_sounds)
-          . "$example_ellipsis]";
-      $main_clause .= ',' if $braces;
-    }
-    
-    $main_clause .= ' persistently' if $persistent;
-
-    if ($modified eq '') { # this only happens if overwritten by a deviation
-      $main_clause .= ' are deleted';
-    } else {
-      my $main_VP;
-      if ($effect =~ /[01]/) {
-        my $any_nondeletions = 0;
-        FRAME_ANY_NONDELETIONS: for my $frame (keys %outcome) {
-          for my $phone (@susceptible) {
-            $any_nondeletions = 1, last FRAME_ANY_NONDELETIONS if $outcome{$frame}{$phone} ne '';
-          }
-        }
-        unless ($any_nondeletions) {
-          $main_VP .= ' are deleted';
-        } else {
-          my ($frame) = keys %outcome;        
-          $main_VP .= ' become ';
-          # if the subject is a _short_ list, make the complement one too
-          if ($subject_is_list and @susceptible <= 2 and scalar keys %outcome <= 1) { 
-            $both_are_lists = 1;
-            $main_VP .= '[' . join(' ', map $self->{phonetic_alphabet}->spell([split ' ', $outcome{$frame}{$_}], null => 1), @susceptible) . ']';
-          } else {
-            if ($main_VP =~ / and /) {
-              $main_VP .= ' respectively'; 
-            }
-            # There might be dots in the frame which have come from assimilations in the effect
-            # after frame mergers.  We want these to stomp on $modified.
-            for (0..length($modified)-1) {
-              substr($modified, $_, 1) = '.' if substr($frame, $_, 1) eq '.' and substr($effect, $_, 1) =~ /[<>]/;
-            }
-            $main_VP .= $self->name_natural_class($modified, $sstate->{inventory}, significant => $simple_effect, 
-                morpho => 'plural', nobase => 1, accept_nothing => 1, use_dominant_str => 1);
-          }
-          # examples
-          if (keys %outcome <= 1 and !$subject_is_list) {
-            $main_VP .= ' [' . join(' ', map $self->{phonetic_alphabet}->spell_spaced_string($outcome{$frame}{$_}, null => 1), @example_sounds)
-                . "$example_ellipsis]";
-          }
-        }
-      } # $effect =~ /[01]/
-      # FIXME: 'or word-finally' etc. is wrong when an assimilation only has one frame.  also, ' and become foo word-finally' has been wrong
-      if ($effect =~ /</) {
-        $_ = $effect;
-        y/01u<>/...1./;
-        $_ = $FS->overwrite($self->str_part(enrich($precondition, $sstate->{old_inventory})), $_);
-        $main_VP .= ' and' if $main_VP;
-        $main_VP .= ' assimilate in ' .
-            $self->name_natural_class($_, undef, scheme => 'nominalised', nobase => 1);
-        if (!defined($old_post) and !$far) {
-          my $filter_insig = undef;
-          my $appendage = '';
-          if (defined $rule->{filter}) {
-            if ($pre_filter_nontrivial) {
-              $main_VP .= ' to the ' . 
-                  ($rule->{bidirectional} ? 'nearest' : 'previous') . 
-                  " $filter_text on either side when it is ";
-              $filter_insig = $rule->{filter}{condition};
-            } else {
-              $main_VP .= ' to the ' . 
-                  ($rule->{bidirectional} ? 'nearest ' : 'previous ');
-              $appendage .= ' on either side' if $rule->{bidirectional};
-            }
-          } else {
-            $main_VP .= ' to a' . ($rule->{bidirectional} ? 'n adjacent ' : ' preceding ');
-          }
-          @_ = grep /^$pre$/, @{$sstate->{old_inventory}};
-          for my $phone (split / /, $rule->{$locus-1}{except}) {
-            @_ = grep $_ !~ /^$phone$/, @_;
-          }
-          $main_VP .= $self->describe_set(\@_, $sstate->{old_inventory}, morpho => 'bare', etic => 1, 
-              nobase => defined($filter_insig), insignificant => $filter_insig);
-          $main_VP .= $appendage;
-          $pre = undef;
-        } else {
-          $main_VP .= ' to the ' . 
-              ($rule->{bidirectional} ? 'nearest ' : 'previous ') . 
-              defined $rule->{filter} ? $filter_text : 'phone';
-        }
-        if ($pre_pause) { # word-initial
-          my $pausal_effect = $effect;
-          for (0..length($pausal_effect)-1) {
-            substr($pausal_effect, $_, 1) = substr($rule->{$locus-1}{or_pause}, $_, 1)
-                if substr($pausal_effect, $_, 1) eq '<';
-          }
-          my $modified = $FS->overwrite($precondition, $pausal_effect); 
-          $modified =~ s/u/./g;
-          $main_VP .= ' and become ' . 
-                      $self->name_natural_class($modified, $sstate->{inventory}, significant => $pausal_effect, morpho => 'plural', nobase => 1);
-          $main_VP .= defined $rule->{filter} ? (" if no $filter_text " . ($rule->{bidirectional} ? 'is present' : 'precedes')) 
-              : ($rule->{bidirectional} ? ' word-extremally' : ' word-initially');
-        }
-      }
-      if ($effect =~ />/) {
-        $_ = $effect;
-        y/01u<>/....1/;
-        $_ = $FS->overwrite($self->str_part(enrich($precondition, $sstate->{old_inventory})), $_);
-        $main_VP .= ' and' if $main_VP;
-        $main_VP .= ' assimilate in ' .
-            $self->name_natural_class($_, undef, scheme => 'nominalised', nobase => 1);
-        if (!defined($old_pre) and !$far) {
-          my $filter_insig = undef;
-          my $appendage = '';
-          if (defined $rule->{filter}) {
-            if ($pre_filter_nontrivial) {
-              $main_VP .= ' to the ' . 
-                  ($rule->{bidirectional} ? 'nearest' : 'next') . 
-                  " $filter_text on either side when it is ";
-              $filter_insig = $rule->{filter}{condition};
-            } else {
-              $main_VP .= ' to the ' . 
-                  ($rule->{bidirectional} ? 'nearest ' : 'next ');
-              $appendage .= ' on either side' if $rule->{bidirectional};
-            }
-          } else {
-            $main_VP .= ' to a' . ($rule->{bidirectional} ? 'n adjacent ' : ' following ');
-          }
-          @_ = grep /^$post$/, @{$sstate->{old_inventory}};
-          for my $phone (split / /, $rule->{$locus+1}{except}) {
-            @_ = grep $_ !~ /^$phone$/, @_;
-          }
-          $main_VP .= $self->describe_set(\@_, $sstate->{old_inventory}, morpho => 'bare', etic => 1,
-              nobase => defined($filter_insig), insignificant => $filter_insig);  
-          $main_VP .= $appendage;
-          $post = undef;
-        } else {
-          $main_VP .= ' to the ' . 
-              ($rule->{bidirectional} ? 'nearest ' : 'next ') . 
-              defined $rule->{filter} ? $filter_text : 'phone';
-        }
-        if ($post_pause) { # word-final
-          my $pausal_effect = $effect;
-          for (0..length($pausal_effect)-1) {
-            substr($pausal_effect, $_, 1) = substr($rule->{$locus+1}{or_pause}, $_, 1)
-                if substr($pausal_effect, $_, 1) eq '>';
-          }
-          my $modified = $FS->overwrite($precondition, $pausal_effect); 
-          $modified =~ s/u/./g;
-          $main_VP .= ' and become ' . 
-                      $self->name_natural_class($modified, $sstate->{inventory}, significant => $pausal_effect, morpho => 'plural', nobase => 1);
-          $main_VP .= defined $rule->{filter} ? (" if no $filter_text " . ($rule->{bidirectional} ? 'is present' : 'follows')) 
-              : ($rule->{bidirectional} ? ' word-extremally' : ' word-finally');
-        }
-      }
-      $main_clause .= $main_VP;
-    } # modified is not deletion
-
-
-    my $envbit;
-    if (defined $pre) {
-      $envbit = '';
-      if ($pre_text) {
-        if (defined $rule->{filter}) {
-          if ($pre_filter_nontrivial) {
-            $environment_text .= ' if ' . 
-                ($rule->{bidirectional} ? "the nearest $filter_text on either side" : "the previous $filter_text") . 
-                ' is';
-            # recompute, for significant
-            $pre_text = $self->name_phoneset($pre_phoneset, $sstate->{old_inventory}, morpho => 'bare', no_nothing => 1, 
-                nobase => 1, significant => $FS->subtract_features($pre_phoneset->{condition}, $rule->{filter}{condition}) );
-          } else {
-            $environment_text .= ' if there is ';
-            $envbit .= ($rule->{bidirectional} ? ' earlier' : ' elsewhere') . ' in the word';
-          }
-        } else {
-          $environment_text .= ($post_text ? ' between' : ($rule->{bidirectional} ? ' next to' : ' after'));
-        }
-        $environment_text .= " $pre_text" . $envbit;
-      } else {
-        $pre = undef;
-      }
-      if ($pre_pause) {
-        if (defined $rule->{filter}) {
-          if ($pre_text) {
-            $environment_text .= ' or there is none';
-          } else {
-            $environment_text .= ' when it is the ' . 
-                ($rule->{bidirectional} ? 'only' : 'first') . 
-                " $filter_text in the word";
-          }
-        } else {
-          $environment_text .= ' or' if $pre_text;
-          $environment_text .= $rule->{bidirectional} ? ' word-extremally' : ' word-initially';
-        }
-      }
-    } 
-    if (defined $post) {
-      $envbit = '';
-      if ($post_text) {
-        if (defined $rule->{filter}) {
-          if ($post_filter_nontrivial) {
-            # FIXME: "... is high or high semivowel".  Also: be less hung up on excepts!
-            $environment_text .= ' if ' . 
-                ($rule->{bidirectional} ? "the nearest $filter_text on either side" : "the next $filter_text") . 
-                ' is';
-            # recompute, for significant
-            $post_text = $self->name_phoneset($post_phoneset, $sstate->{old_inventory}, morpho => 'bare', no_nothing => 1, 
-                nobase => 1, significant => $FS->subtract_features($post_phoneset->{condition}, $rule->{filter}{condition}) );
-          } else {
-            $environment_text .= ' if there is ';
-            $envbit .= ($rule->{bidirectional} ? ' later' : ' elsewhere') . ' in the word';
-          }
-        } else {
-          $environment_text .= ($pre_text ? ' and' : ($rule->{bidirectional} ? ' next to' : ' before'));
-        }
-        $environment_text .= " $post_text" . $envbit;
-        $environment_text .= ' in either order' if ($pre_text and $rule->{bidirectional} and !defined $rule->{filter});
-      } else {
-        $post = undef;
-      }
-      if ($post_pause) {
-        if (defined $rule->{filter}) {
-          if ($pre_text) {
-            $environment_text .= ' or there is none';
-          } else {
-            $environment_text .= ' when it is the ' . 
-                ($rule->{bidirectional} ? 'only' : 'last') . 
-                " $filter_text in the word";
-          }
-        } else {
-          $environment_text .= ' or' if $post_text;
-          $environment_text .= $rule->{bidirectional} ? ' word-extremally' : ' word-finally';
-        }
-      }
-    }
-    if ($far) {
-      $environment_text .= ' under some conditions on nonadjacent phones'; # FIXME
-    }
-
-    # Again, rules which survive one rule shouldn't be described as persistent.
+    # Rules which survive one rule shouldn't be described as persistent.
     if (defined $rule->{inactive} and $rule->{inactive} > $i + 1) {
       $to_be_numbered{$i} = 1;
       push @{$descriptions{$rule->{inactive}}{pre}}, "Rule ($i) becomes inactive.";
     }
-
-    $text .= $main_clause unless $no_main_VP;
-    $text .= ' persistently' if $no_main_VP and $persistent;
-    $text .= $environment_text unless $no_main_VP and $frames_start_with_PP;
-    if ($deviation_texts) {
-      if ($no_main_VP) {
-        $deviation_texts = ($text ? ', ' : '') . lcfirst substr($deviation_texts, 2);
-      }
-      $text .= $deviation_texts unless !$no_main_VP and ($all_all_deviates or $both_are_lists);
-    }
-
-    $text =~ s/^ *//;
-    $descriptions{$i}{rule} = ucfirst $text . '. ';
+    # TODO: (proximal) describe what happens to the remaining ones.
   }
 
   for my $i (keys %to_be_numbered) {
@@ -1799,7 +1810,7 @@ sub describe_rules {
   my @final_list;
   for (sort keys %descriptions) {
     push @final_list, @{$descriptions{$_}{pre}} if defined $descriptions{$_}{pre};
-    push @final_list, $descriptions{$_}{rule} if defined $descriptions{$_}{rule};
+    push @final_list, $descriptions{$_}{rule} if $descriptions{$_}{rule};
     push @final_list, @{$descriptions{$_}{post}} if defined $descriptions{$_}{post};
   }
   \@final_list;
