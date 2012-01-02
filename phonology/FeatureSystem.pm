@@ -34,7 +34,9 @@ sub parse {
   my @a = split / /, $fs;
   for my $f (@a) {
     if ($f =~ /^([^\w\s])(.*)/) {
-      substr($phone, $self->{feature_index}{$2}, 1) = $1 eq '+' ? '1' : $1 eq '-' ? '0' : $1; 
+      my ($a, $b) = ($1, $2);
+      $a =~ tr/-+?/01u/;
+      substr($phone, $self->{feature_index}{$b}, 1) = $a; # $1 eq '+' ? '1' : $1 eq '-' ? '0' : $1; 
     } else {
       substr($phone, $self->{feature_index}{$f}, 1) = '1';
     }

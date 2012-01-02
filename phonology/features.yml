@@ -362,6 +362,15 @@ features:
     generated:
       - {condition: "+syllabic", contrast: 1, prob: 0.375, by_family_prob: 0.05, by_family: vowel_length, each_family_prob: 0.5} 
     default:
+      - condition: ""
+        repair: # complete echoage of epenthetic V
+          condition: ", ?low"
+          filter:
+            condition: "+syllabic dorsal"
+          prob: 0.125
+          direction: {"": 1, reverse: 1, both: 2}
+          resolve: 
+            "r <low <high <front <back <round <ATR 1": 1
       - {condition: "+syllabic", value: 0.333333}
       - {condition: "", value: 0}
 
@@ -1401,6 +1410,16 @@ marked:
     extras: {"-resonant 0": 0.8, "-resonant 1": 0.333333}
     resolve: {"r }high 0": 1}
 
+  # C uvularisation harmony.  a little suspect that it doesn't interact with Vs though
+  - condition: ", "
+    filter:
+      condition: "dorsal"
+      extras: {"-syllabic 0": 0.9875, "!+resonant -lateral -tap_or_trill 0": 0.95}
+    prob: 0.01
+    direction: {"": 1, reverse: 0.5}
+    resolve: 
+      "r {high 1": 1
+
   # vowelÊlowering near uvulars
   - condition: "dorsal +resonant -lateral -tap_or_trill, -high dorsal"
     except: {1: "dorsal +resonant -lateral -tap_or_trill"}
@@ -1820,7 +1839,7 @@ marked:
   - condition: "+syllabic dorsal +resonant -lateral -tap_or_trill, +syllabic dorsal +resonant -lateral -tap_or_trill"
     filter:
       except: "-dorsal -coronal -labial"
-    prob: 0.02
+    prob: 0.025
     contrast_probs:
       "-dorsal -coronal -labial +front; -front": 0
       "-dorsal -coronal -labial +back; -back": 0

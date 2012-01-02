@@ -665,8 +665,15 @@ sub generate {
     $initial_threshold = $FS->{marked}[$k]{initial_prob};
   }
 
+  # Catch the default rules which are really repair rules.
+  if ($kind eq 'default' and defined $FS->{features}[$k]{default}[$rest]{repair}) {
+    $kind = 'repair_default';
+    $threshold = 1;
+    $initial_threshold = $FS->{features}[$k]{default}[$rest]{repair}{prob};
+  }
+
   my $skip_me = 0;
-  if (!$args{dont_skip} and ($kind eq 'repair')) {
+  if (!$args{dont_skip} and ($kind eq 'repair' or $kind eq 'repair_default')) {
     $skip_me = (rand() > $initial_threshold);
   }
   my $add_a_condition = 0;
@@ -674,7 +681,6 @@ sub generate {
     $add_a_condition = (rand() < ($skip_me ? $threshold * 2/5.0 : 1/15.0)); # magic constants
   }
   return if $skip_me and !$add_a_condition;
-
   
   my (@resolutions, @weights);
   my $total_base_weight = 0;
@@ -734,12 +740,16 @@ sub generate {
   } 
   
   elsif ($kind =~ /^repair/) {
-    my $unsplit_d = $FS->{marked}[$k];
-    my $d;
-    if ($kind =~ /_split$/) {
-      $d = $unsplit_d->{split}[$rest];
+    my ($unsplit_d, $d); 
+    if ($kind eq 'repair_default') {
+      $d = $unsplit_d = $FS->{features}[$k]{default}[$rest]{repair};
     } else {
-      $d = $unsplit_d;
+      $unsplit_d = $FS->{marked}[$k];
+      if ($kind =~ /_split$/) {
+        $d = $unsplit_d->{split}[$rest];
+      } else {
+        $d = $unsplit_d;
+      }
     }
 
     my $base_rule = PhoneSet::parse($d, 1, FS => $FS, 
