@@ -476,7 +476,7 @@ sub gen_extra_condition {
     } grep((defined $args{generable_val}[0][$_] && @{$args{generable_val}[0][$_]} && 
             defined $args{generable_val}[1][$_] && @{$args{generable_val}[1][$_]}), 
         0..length($effect)-1);
-    # TODO: handle this when there's no generable_val.  also, a more uniform way of dropping ungenerables for the later types
+        # TODO: handle this when there's no generable_val.  also, a more uniform way of dropping ungenerables for the later types
     for my $f (@family_features) {
       next if substr($self->{$locus}{condition}, $f, 1) ne '.';
       for my $v (0..1) {
@@ -691,11 +691,19 @@ sub generate {
         if defined $FS->{features}[$k]{requires};
     substr($precondition, $k, 1) = 'u';
 
+    # Check for the case where defaults are different if a contrast exists.
+    my $expected_value = $FS->{features}[$k]{default}[$rest]{value};
+    my ($precondition0, $precondition1) = ($precondition, $precondition);
+    substr($precondition0, $k, 1) = '0'; substr($precondition1, $k, 1) = '1'; 
+    if (defined $FS->{features}[$k]{default}[$rest]{contrast_value} and 
+        $args{phonology}->generatedly_contrast($precondition0, $precondition1)) {
+      $expected_value = $FS->{features}[$k]{default}[$rest]{contrast_value};
+    }
+
     for (0..1) {
       my $effects = '.' x @{$FS->{features}}; 
       substr($effects, $k, 1) = $_;
-      my $weight = $_ ? $FS->{features}[$k]{default}[$rest]{value} :
-                    1 - $FS->{features}[$k]{default}[$rest]{value};
+      my $weight = $_ ? $expected_value : 1 - $expected_value;
       my $rule = {
         0 => {condition => $precondition, effects => $effects},
         recastability => 1 - $weight,

@@ -252,7 +252,7 @@ features:
     default:
       - {condition: "+implosive", value: 1}
       - {condition: "+prenasalised", value: 1}
-      - {condition: "-resonant +nasal", value: 1}
+      - {condition: "+nasal", value: 1}
       - {condition: "+resonant", value: 1}
       - {condition: "", value: 0} # glottals here
     slots:
@@ -385,7 +385,7 @@ features:
     default:
       - {condition: "+low", value: 0}
       - {condition: "+fricative", value: 0.85}
-      - {condition: "+syllabic", value: 0.95}
+      - {condition: "+syllabic", value: 0.966667, contrast_value: 0.5}
       - {condition: "", value: 1}
     slots:
       coda: [0, 0, 0.125]
@@ -403,7 +403,7 @@ features:
     default:
       - {condition: "+low", value: 0.1}
       - {condition: "+syllabic", value: 0.625}
-      - {condition: "-syllabic +resonant dorsal", value: 0.6} # hopefully this cuts down on /w/
+      - {condition: "-syllabic +resonant dorsal", value: 0.6}
       - {condition: "", value: 0}
     slots:
       coda: [0, 0, 0.125]
@@ -431,8 +431,8 @@ features:
     default:
       - {condition: "+lateral", value: 0} # bit ugly eh
       - {condition: "+tap_or_trill", value: 0}
-      - {condition: "-syllabic +resonant dorsal -front", value: 1} # I don't think this is the right place to try to cut down /w/ frequency
-      - {condition: "+resonant dorsal -front -low", value: 1}
+      - {condition: "-syllabic +resonant dorsal -front", value: 1}
+      - {condition: "+syllabic +resonant dorsal -front -low", value: 1, contrast_value: 0.125}
       - {condition: "", value: 0}
     slots:
       coda: [0, 0, 0.125]
