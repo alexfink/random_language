@@ -751,6 +751,7 @@ sub generate {
     my ($unsplit_d, $d); 
     if ($kind eq 'repair_default') {
       $d = $unsplit_d = $FS->{features}[$k]{default}[$rest]{repair};
+
     } else {
       $unsplit_d = $FS->{marked}[$k];
       if ($kind =~ /_split$/) {
@@ -770,6 +771,15 @@ sub generate {
 
     if (defined $d->{filter}) {
       $base_rule->{filter} = PhoneSet::parse($d->{filter}, 0, FS => $FS);
+    }
+
+    # Invalidate previous resolutions if directed.  This is intended to be used for cases
+    # where typical epenthetic segments differ from typical phonemic segments.
+    if ($kind eq 'repair_default' and defined $FS->{features}[$k]{default}[$rest]{inactivate_previous}) {
+      for my $i (0..$#{$args{phonology}{phonology}}) {
+        push @{$base_rule->{inactivate}}, $i if ($args{phonology}{phonology}[$i]{tag} =~ /^default $k\W/);
+      }
+      $threshold = 1;
     }
 
     my @unsplit_phones = map $FS->parse($_), split /, */, $unsplit_d->{condition}, -1;
