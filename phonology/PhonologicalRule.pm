@@ -777,7 +777,13 @@ sub generate {
     # where typical epenthetic segments differ from typical phonemic segments.
     if ($kind eq 'repair_default' and defined $FS->{features}[$k]{default}[$rest]{inactivate_previous}) {
       for my $i (0..$#{$args{phonology}{phonology}}) {
-        push @{$base_rule->{inactivate}}, $i if ($args{phonology}{phonology}[$i]{tag} =~ /^default $k\W/);
+        if ($args{phonology}{phonology}[$i]{tag} =~ /^default $k\W/) {
+          my $extant_cd = $args{phonology}{phonology}[$i]{0}{condition};
+          $extant_cd =~ y/u/./;
+          my $new_cd = $base_rule->{0}{condition};
+          $new_cd =~ y/u/./;
+          push @{$base_rule->{inactivate}}, $i if $extant_cd =~ /^$new_cd$/;
+        }
       }
       $threshold = 1;
     }

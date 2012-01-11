@@ -370,14 +370,14 @@ features:
           prob: 0.25 # since schwa overwrites it often
           direction: {"": 1, reverse: 1, both: 2}
           resolve: {"r <low <high <front <back <round <ATR 1": 1}
-      - {condition: "+syllabic", value: 0.333333}
-      - {condition: "", value: 0}
+      - {condition: "+syllabic +resonant", value: 0.333333}
       - condition: ""
         inactivate_previous: 1
         repair: # schwa is by far the most common epenthetic vowel, though that doesn't mean it's frequently phonemic
-          condition: "+resonant ?low ?high"
+          condition: "+syllabic +resonant ?low ?high"
           prob: 0.666667
           resolve: {"r -low -high -front -back -round 0": 1}
+      - {condition: "", value: 0}
 
   - name: high
     families: height length_height place
@@ -1006,15 +1006,16 @@ marked:
     resolve: {"r <dorsal <coronal <labial <front <back <round <retroflex <labiodental <anterior <laminal <high <palatalised_velar -affricate 1": 1}
 
   # make sequences like [ts\)c cts\)] totally assimilate.
-  - condition: "-resonant dorsal +front, -resonant coronal -anterior -retroflex"
+  - condition: "-resonant dorsal +front, -resonant coronal -retroflex"
     prob: 0.75
+    extras: {"-anterior 1": 0.666667, "!+anterior -front 1": 0.8}
     direction: {"": 1, reverse: 0.125, both: 0.375}
     resolve: {"r >dorsal >coronal >anterior 0": 1}
 
   # not unified, 'cause the or would be ugly
-  - condition: "-resonant coronal -anterior -retroflex, -resonant dorsal +front"
+  - condition: "-resonant coronal -retroflex, -resonant dorsal +front"
     prob: 0.75
-    extras: {"+front 0": 0.5}
+    extras: {"+front 0": 0.5, "-anterior 0": 0.5, "!+anterior -front 0": 0.8}
     direction: {"": 1, reverse: 0.125, both: 0.375}
     resolve: {"r >dorsal >coronal >anterior >front -affricate 0": 1}
 
@@ -1861,6 +1862,7 @@ marked:
 
   # another rhotacism
   - condition: "+resonant, +resonant -syllabic -long, +resonant"
+    except: {1: "dorsal +resonant -lateral -tap_or_trill"}
     prob: 0.02
     extras: {"coronal 1": 0.75, "!dorsal 1": 0.8}
     resolve: {"r +tap_or_trill 1": 1}
