@@ -28,6 +28,7 @@ my $credits = 'Gleb, a phonology generator, by Alex Fink' .
               "version $version";
 
 my $verbose;
+my $show_seed;
 my $use_html;
 my $CGI;
 my $seed =  time ^ $$ ^ $$<<15; 
@@ -49,14 +50,6 @@ $credits
 
 Usage: $0 [options]
 
--o <filename>   Phonology output file.  Defaults to no output.  The output is a 
-                YAML-formatted collection of the data needed to run the 
-                phonology generator.  It's not the human-readable form;
-                that comes on standard output.
--O <filename>   As above, with a little extra annotation for 
-                readability, like translations of the internal phone notation.
--i <filename>   Input the phonology from the named file, rather than generating
-                a new one.
 -I              Produce a segmental inventory, with frequencies of appearance
                 in each syllable position.
 -d              Produce English descriptions of the phonology's rules, etc.
@@ -64,10 +57,20 @@ Usage: $0 [options]
 -c              When generating random words, also compute canonical phonemic 
                 representations, which don't require unnecessary rules.
 -h              Use HTML.
--p <string>     Do some conversions between phone formats.  Do nothing else.
+
+-o <filename>   Phonology output file.  Defaults to no output.  The output is a 
+                YAML-formatted, not human-friendly, collection of the data 
+                needed to run the phonology generator.  
+-O <filename>   As above, with a little extra annotation for 
+                like translations of the internal phone notation.
+                (Still not human-friendly.)
+-i <filename>   Input the phonology from the named file, rather than generating
+                a new one.
+
 -r N            Use N as the random seed.
 -v              Verbose.  Show progress and a few other things.
 -D              Show some debugging output.
+-p <string>     Do some conversions between phone formats.  Do nothing else.
 
 USAGE
   exit 1;
@@ -103,6 +106,9 @@ sub parse_args {
     }
     elsif ($arg eq '-v') {
       $verbose = $Phonology::verbose = 1;
+    }
+    elsif ($arg eq '--showseed') {
+      $show_seed = 1;
     }
     elsif ($arg eq '-w') {
       $num_words = shift;
@@ -180,7 +186,7 @@ if (defined $phone_to_interpret) {
   exit 0;
 }
 
-print STDERR "seed $seed\n" if $verbose; 
+print STDERR "seed $seed\n" if $verbose or $show_seed; 
 srand $seed; 
 
 my $pd;
