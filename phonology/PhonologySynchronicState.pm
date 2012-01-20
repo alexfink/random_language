@@ -162,69 +162,71 @@ sub update {
   my @new_inventory = @{$self->{inventory}};
   my (%outcomes, %frames_examineds);
   for my $locus ($rule->indices('effects'), $rule->indices('deletions')) {
-    my $effect = defined $rule->{$locus}{effects} ? $rule->{$locus}{effects} : '.' x @{$self->{FS}->{features}};
-    my $entailed_effect = $self->{FS}->add_entailments($effect);
+    my $effect = defined $rule->{$locus}{effects} ? $rule->{$locus}{effects} : '.' x @{$self->{FS}{features}}; # might be many phones!
     my %outcome;
     my $pointless = 1;
     my %frames_examined;
     my @template_set;
-    push @template_set, @{$matcheds{$locus-1}} if $entailed_effect =~ /</;
-    push @template_set, @{$matcheds{$locus+1}} if $entailed_effect =~ />/;
-    push @template_set, '.' x length($entailed_effect) unless @template_set;
+    push @template_set, @{$matcheds{$locus-1}} if $effect =~ /</;
+    push @template_set, @{$matcheds{$locus+1}} if $effect =~ />/;
+    push @template_set, '.' x @{$self->{FS}{features}} unless @template_set;
     for my $template (@template_set) {
-      my $frame = $entailed_effect; # why?  this seems only to be important for antitheticals
-      my $frame_is_worthwhile = 0;
-      for (0..length($frame)-1) {
-        # unlikely issue: not right for assimilation of some features in each direction.   and elsewhere
-        substr($frame, $_, 1) = substr($template, $_, 1) if substr($frame, $_, 1) =~ /[<>]/;
-      }
-      next if defined $frames_examined{$frame};
-      $frames_examined{$frame} = 1;
+      my @pieces_of_frame = split / /, $effect;
+      for my $frame (@pieces_of_frame) { 
+        $frame = $self->{FS}->add_entailments($frame); # why entailed?  for antitheticals?
+        my $frame_is_worthwhile = 0;
+        for (0..length($frame)-1) {
+          # unlikely issue: not right for assimilation of some features in each direction.   and elsewhere
+          substr($frame, $_, 1) = substr($template, $_, 1) if substr($frame, $_, 1) =~ /[<>]/;
+        }
+        next if defined $frames_examined{$frame};
+        $frames_examined{$frame} = 1;
 
-      for my $phone (@{$matcheds{$locus}}) {
-        my $outcome;
-        if (defined $rule->{$locus}{deletions} and $rule->{$locus}{deletions}) {
-          $outcome = '';
-        } else {
-          my $changed = $self->{FS}->add_entailments($self->{FS}->overwrite($phone, $frame));
-          if (!defined $self->{resolutions}{$changed}) {
-            my $word = [$changed];
-            my $expiry = [];
-            my $context_dependent = {};
-            $self->{pd}->run
-               ($word,
-                cleanup => $i, 
-                change_record => [FeatureSystem::change_record($phone, $changed)],
-                track_expiry => $expiry,
-                nopause => 1,
-                context_dependent => $context_dependent);
-            $self->{resolutions}{$changed} = join ' ', @$word;
-            push @{$self->{resolution_expiries}{$expiry->[0]}}, $changed if $expiry->[0] < INF;
-            while (my ($k, $outcome_before) = each %$context_dependent) {
-              next if $k >= $self->{start};
-              $self->{conditional_resolutions}{$k}{$changed} = join ' ', @$outcome_before;
-              if (defined $self->{pd}{phonology}[$k]{inactive}) {
-                push @{$self->{conditional_resolution_expiries}{$self->{pd}{phonology}[$k]{inactive}}}, $k;
+        for my $phone (@{$matcheds{$locus}}) {
+          my $outcome;
+          if (defined $rule->{$locus}{deletions} and $rule->{$locus}{deletions}) {
+            $outcome = '';
+          } else {
+            my $changed = $self->{FS}->add_entailments($self->{FS}->overwrite($phone, $frame));
+            if (!defined $self->{resolutions}{$changed}) {
+              my $word = [$changed];
+              my $expiry = [];
+              my $context_dependent = {};
+              $self->{pd}->run
+                 ($word,
+                  cleanup => $i, 
+                  change_record => [FeatureSystem::change_record($phone, $changed)],
+                  track_expiry => $expiry,
+                  nopause => 1,
+                  context_dependent => $context_dependent);
+              $self->{resolutions}{$changed} = join ' ', @$word;
+              push @{$self->{resolution_expiries}{$expiry->[0]}}, $changed if $expiry->[0] < INF;
+              while (my ($k, $outcome_before) = each %$context_dependent) {
+                next if $k >= $self->{start};
+                $self->{conditional_resolutions}{$k}{$changed} = join ' ', @$outcome_before;
+                if (defined $self->{pd}{phonology}[$k]{inactive}) {
+                  push @{$self->{conditional_resolution_expiries}{$self->{pd}{phonology}[$k]{inactive}}}, $k;
+                }
+              }
+              push @new_inventory, @$word;             
+            }
+
+            # For description in rules we want not the ultimate outcome but the nearest one.
+            $outcome = $self->{resolutions}{$changed};
+            unless ($args{no_old_conditionals}) {
+              for my $k (sort {$a <=> $b} keys %{$self->{conditional_resolutions}}) {
+                $outcome = $self->{conditional_resolutions}{$k}{$changed}, last 
+                    if defined $self->{conditional_resolutions}{$k}{$changed};
               }
             }
-            push @new_inventory, @$word;             
           }
-
-          # For description in rules we want not the ultimate outcome but the nearest one.
-          $outcome = $self->{resolutions}{$changed};
-          unless ($args{no_old_conditionals}) {
-            for my $k (sort {$a <=> $b} keys %{$self->{conditional_resolutions}}) {
-              $outcome = $self->{conditional_resolutions}{$k}{$changed}, last 
-                  if defined $self->{conditional_resolutions}{$k}{$changed};
-            }
-          }
+          $pointless = 0 unless ($phone eq $outcome and $phone !~ /^$effect$/);
+          $outcome{$frame}{$phone} = $outcome;
+          $frame_is_worthwhile = 1 if $outcome ne $phone;
         }
-        $pointless = 0 unless ($phone eq $outcome and $phone !~ /^$effect$/);
-        $outcome{$frame}{$phone} = $outcome;
-        $frame_is_worthwhile = 1 if $outcome ne $phone;
-      }
-      delete $outcome{$frame} unless $frame_is_worthwhile;
-    }
+        delete $outcome{$frame} unless $frame_is_worthwhile;
+      } # $frame (pieces of a split)
+    } # $template
     $rule->{pointless} = 1 if $pointless;
 
     $outcomes{$locus} = \%outcome;

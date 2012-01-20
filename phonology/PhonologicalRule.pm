@@ -218,6 +218,7 @@ sub matches_word {
 
 
 # Return a left-right reversed copy of this rule.
+# TODO: this should reverse outcomes internally.
 sub reverse_rule {
   my $self = shift;
   my $a = { %$self };
@@ -250,6 +251,12 @@ sub reverse_rule {
 # will be pushed.  These tags are:
 # "c $v $f" -- feature $f was changed to value $v
 # "d" -- a segment was deleted
+# "r" -- a segment was replicated (as prelude to some kind of breaking or metathesis)
+
+# HERE: the current big thing in progress is implementing changes which epenthesise.
+# I currently envision doing these entirely by multiplying the outcomes of a single phone.
+# After this is finished, don't forget the various collision-detecting machinery!
+# Furrther down the line, can deletions be eliminated as a special kind of thing?
 
 sub run {
   my ($rule, $unfiltered_word, %args) = (shift, shift, @_);
@@ -271,7 +278,7 @@ sub run {
       @inverse_filter = grep $rule->{filter}->matches($unfiltered_word->[$_]), @inverse_filter;
       $word = [grep $rule->{filter}->matches($_), @$word];
     }
-    my @surviving = (1,) x @$word;
+    my @surviving = (1,) x @$word; # actually a count
 
     # iterate in the direction specified
     my @displs = -1..@$word;   # start at -1 for assimilations to word-initial pause, and end at @$word for word-final with {-1,0}
@@ -284,39 +291,51 @@ sub run {
 
       for my $displ ($rule->indices('effects')) {
         next if ($i + $displ < 0 or $i + $displ >= @$word);
-        my $effects = $rule->{$displ}{effects};
+        my @effects = split / /, $rule->{$displ}{effects};
         if (defined $args{alternate_effects}) {
-          $effects = $rule->{$displ}{alternate_effects} if $args{alternate_effects};
+          @effects = $rule->{$displ}{alternate_effects} if $args{alternate_effects}; # for generation only?
         }
-        
-        # Handle the assimilation characters. 
-        if ($effects =~ /[<>]/) {
-          my ($next_before, $next_after) = (undef, undef);
-          for ($rule->indices('condition')) {
-            $next_before = $_ if (!defined $next_before or $next_before < $_) and $_ < $displ;
-            $next_after = $_ if (!defined $next_after or $next_after > $_) and $_ > $displ;
-          }
-          while ($effects =~ /</) {
-            my $c = index($effects, '<');
-            substr($effects, $c, 1) = 
-                substr($i+$next_before >= 0 ? $word->[$i+$next_before] : $rule->{$next_before}{or_pause}, $c, 1);
-          }
-          while ($effects =~ />/) {
-            my $c = index($effects, '>');
-            substr($effects, $c, 1) =
-                substr($i+$next_after < @$word ? $word->[$i+$next_after] : $rule->{$next_after}{or_pause}, $c, 1);
-          }
-          # We must entail the effects, not just the overwritten phone, since otherwise
-          # jumps over the middle point on an antithetical scale won't always work.
-          $effects = $rule->{FS}->add_entailments($effects);
-        }
-        my $newphone = $rule->{FS}->overwrite($word->[$i+$displ], $effects);
-        
-        if ($word->[$i+$displ] ne $newphone) {
+        if (@effects != 1) {
           $changed = 1;
-          push @{$args{changes}}, FeatureSystem::change_record($word->[$i+$displ], $newphone) if defined $args{changes};
+          push @{$args{changes}}, ('r') x (@effects - 1);
         }
-        $word->[$i+$displ] = $newphone;
+        
+        for my $j (0..$#effects) {
+          my $effects = $effects[$j];
+          # Handle the assimilation characters.  This is still okay for multi-phone resolutions;
+          # there is no reason to use an assimilation character except out across an edge.
+          if ($effects =~ /[<>]/) {
+            my ($next_before, $next_after) = (undef, undef);
+            for ($rule->indices('condition')) {
+              $next_before = $_ if (!defined $next_before or $next_before < $_) and $_ < $displ;
+              $next_after = $_ if (!defined $next_after or $next_after > $_) and $_ > $displ;
+            }
+            while ($effects =~ /</) {
+              my $c = index($effects, '<');
+              substr($effects, $c, 1) = 
+                  substr($i+$next_before >= 0 ? $word->[$i+$next_before] : $rule->{$next_before}{or_pause}, $c, 1);
+            }
+            while ($effects =~ />/) {
+              my $c = index($effects, '>');
+              substr($effects, $c, 1) =
+                  substr($i+$next_after < @$word ? $word->[$i+$next_after] : $rule->{$next_after}{or_pause}, $c, 1);
+            }
+            # We must entail the effects, not just the overwritten phone, since otherwise
+            # jumps over the middle point on an antithetical scale won't always work.
+            $effects = $rule->{FS}->add_entailments($effects);
+          }
+          my $newphone = $rule->{FS}->overwrite($word->[$i+$displ], $effects);
+          $effects[$j] = $newphone;
+          
+          if ($word->[$i+$displ] ne $newphone) {
+            $changed = 1;
+            push @{$args{changes}}, FeatureSystem::change_record($word->[$i+$displ], $newphone) if defined $args{changes};
+          }
+        } # $j
+        
+#TODO: (proximal) reverse internally if necessary.
+        splice @$word, $i+$displ, 1, @effects;
+        @surviving[$i+$displ] = scalar @effects;
       }
       
       if (scalar $rule->indices('deletions')) {
@@ -336,15 +355,17 @@ sub run {
     } 
 
     if ($operating_on_subword) {
-      my $j = 0;
-      for my $i (0..$#inverse_filter) {
-        if ($surviving[$i]) {
-          $unfiltered_word->[$inverse_filter[$i]] = $word->[$j++];
-        } else {
-          splice @$unfiltered_word, $inverse_filter[$i], 1;
-          if (defined $args{sources}) {
-            splice @{$args{sources}}, $inverse_filter[$i], 1;
-          }
+      # Assume @inverse_filter is either ordered or reverse-ordered.
+      my @indices = (0..$#inverse_filter);
+      @indices = reverse @indices if (@inverse_filter >= 2 and $inverse_filter[0] < $inverse_filter[1]);
+      my $a = 0;
+      my @splice_ranges = (0, map $a += $_, @surviving);
+      my @word = @$word;
+
+      for my $i (@indices) {
+        splice @$unfiltered_word, $inverse_filter[$i], 1, (@word[($splice_ranges[$i])..($splice_ranges[$i+1]-1)]);
+        if (defined $args{sources}) {
+          splice @{$args{sources}}, $inverse_filter[$i], 1, (($args{sources}[$inverse_filter[$i]]) x $surviving[$i]);
         }
       } # i
     }
