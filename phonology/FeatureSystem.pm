@@ -1,5 +1,6 @@
 package FeatureSystem;
 use strict;
+use Carp;#gd?
 
 # There is no package for phones, since they are just strings.  The FeatureSystem object 
 # is the one that knows how to handle its phones.
@@ -99,6 +100,7 @@ sub load_file {
 # Takes a phone and a phone with dots.  Replaces features in the first with non-dots in the second.
 sub overwrite {
   my ($self, $a, $b) = @_;
+  carp "length mismatch, '$a' vs. '$b'" if length($a) != length($b); #gd
   for my $i (0..(length $b)-1) {
     substr($a, $i, 1) = substr($b, $i, 1) if substr($b, $i, 1) ne '.';
   }

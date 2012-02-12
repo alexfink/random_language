@@ -211,8 +211,11 @@ sub run {
         my @changes;
         if (($first_time and defined $args{cleanup}) or
             $phonology->[$i]->run($word, %args, changes => \@changes)) {
+          my $length_after_one = @$word;
           if (scalar($phonology->[$i]->indices()) > 1) { # an optimization.  helpful?
-            1 while $phonology->[$i]->run($word, %args);
+            while ($phonology->[$i]->run($word, %args)) { #gdgd
+              $length_after_one = INF, warn "possible epenthesis loop, rule $i" if @$word >= $length_after_one + 8;
+            }
           }
           print STDERR "@$word (after $i)\n" if $debug >= 1;
 
@@ -626,6 +629,7 @@ sub generate_preliminary {
             # Using $rule{prob}[0] here of course isn't especially correct, but it'll do.
             $family_inventories{$fam}{$FS->overwrite($phone, $rule{0}{effects})} += 
               $family_inventories{$fam}{$phone} * $rule{prob}[0] if ($rule{prob}[0] > 0);
+            $rule{antieffects}{0} = '.' x @{$FS->{features}} unless defined $rule{antieffects}{0};
             $family_inventories{$fam}{$FS->overwrite($phone, $rule{antieffects}{0})} += 
               $family_inventories{$fam}{$phone} * (1 - $rule{prob}[0]) if ($rule{prob}[0] < 1);
             delete $family_inventories{$fam}{$phone}; 
@@ -1023,7 +1027,8 @@ sub generate_form {
 # and /aksa/ consists of extant phonemes and has the same outcome, we may as well present it as /aksa/.
 # Returns (outcome, canonicalised); we may as well, since we end up with both.
 
-# TODO: when morphology gets here, respect it.  Also new types of change?
+# FIXME: broken, haven't tested why.
+# Distant future TODO: when morphology gets here, respect it.  
 
 sub canonicalise_phonemic_form {
   my ($self, $word) = (shift, shift);
