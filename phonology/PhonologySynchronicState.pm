@@ -5,7 +5,7 @@ use constant INF => 9**9**9; # is there really nothing sensible better?
 # This keeps track of certain data in a phonology in a more accessible way than the list of rules
 # which define it.  To wit, it currently keeps a list of phones and records which phones resolve
 # to others.
-# TODO: this is where the frequency table of bigrams will go.
+# In a future version, this is where the frequency table of bigrams will go.
 
 # If there is a conditioned outcome of one of the single phones that are supposed to be resolved,
 # that will be stored in {conditional_resolutions}, which is a hash from rule numbers to
@@ -39,9 +39,14 @@ sub initialise {
       conditional_resolution_expiries => {},
 
       # These next things are data used by the describer, and are updated here on running one rule.
-      nearest_outcomes => {},
-      frames_examineds => {},
-      matcheds => {},
+      # By "frame" we mean a phone in the effect
+      #   with its assimilation characters replaced by things they might assimilate to.
+      # relevant_frames{$locus}[$h] is the frames relevant to the $h-th phone in the effects
+      relevant_frames => {},
+      # outcomes{$frame}{$phone} is what $phone turns into in $frame
+      outcomes => {},
+      # matcheds{$displ} is a list of phones which can be at $displ when this is triggered
+      matcheds => {}, 
   };
   bless $s;
 }
@@ -56,8 +61,8 @@ sub initialise {
 
 sub clear_rule_data {
   my $self = shift;
+  $self->{relevant_frames} = {};
   $self->{outcomes} = {};
-  $self->{frames_examineds} = {};
   $self->{matcheds} = {};
 }
 
@@ -151,7 +156,7 @@ sub update {
   }
 
   # There should be no resolutions whose expiry is _strictly less than_ $i.
-  # TODO: when this is being done dynamically, one will have to take a different approach to finding these.
+  # TODO: when this is being done dynamically, one will have to take a different approach to finding these.  (what, why?)
   if (defined $self->{resolution_expiries}{$i}) {
     delete $self->{resolutions}{$_} for @{$self->{resolution_expiries}{$i}};
   }
@@ -160,20 +165,22 @@ sub update {
   }
 
   my @new_inventory = @{$self->{inventory}};
-  my (%outcomes, %frames_examineds);
   for my $locus ($rule->indices('effects'), $rule->indices('deletions')) {
     my $effect = defined $rule->{$locus}{effects} ? $rule->{$locus}{effects} : '.' x @{$self->{FS}{features}}; # might be many phones!
-    my %outcome;
     my $pointless = 1;
-    my %frames_examined;
     my @template_set;
     push @template_set, @{$matcheds{$locus-1}} if $effect =~ /</;
     push @template_set, @{$matcheds{$locus+1}} if $effect =~ />/;
     push @template_set, '.' x @{$self->{FS}{features}} unless @template_set;
-    for my $template (@template_set) {
-      my @pieces_of_frame = split / /, $effect;
-      for my $frame (@pieces_of_frame) { 
-        $frame = $self->{FS}->add_entailments($frame); # why entailed?  for antitheticals?
+    $self->{outcomes}{$locus} = {};
+    $self->{relevant_frames}{$locus} = [];
+    
+    my @pieces_of_frame = split / /, $effect;
+    for my $original_frame (@pieces_of_frame) { 
+      my %outcome = ();
+      my %frames_examined = ();
+      for my $template (@template_set) {
+        my $frame = $self->{FS}->add_entailments($original_frame); # why entailed?  for antitheticals?
         my $frame_is_worthwhile = 0;
         for (0..length($frame)-1) {
           # unlikely issue: not right for assimilation of some features in each direction.   and elsewhere
@@ -225,19 +232,17 @@ sub update {
           $frame_is_worthwhile = 1 if $outcome ne $phone;
         }
         delete $outcome{$frame} unless $frame_is_worthwhile;
-      } # $frame (pieces of a split)
-    } # $template
-    $rule->{pointless} = 1 if $pointless;
+      } # $template
 
-    $outcomes{$locus} = \%outcome;
-    $frames_examineds{$locus} = \%frames_examined;
+      push @{$self->{relevant_frames}{$locus}}, [keys %outcome];
+
+      %{$self->{outcomes}{$locus}} = (%{$self->{outcomes}{$locus}}, %outcome);
+    } # $original_frame in @pieces_of_frame
+    $rule->{pointless} = 1 if $pointless;
   } # $locus
 
   %_ = map(($_ => 1), @new_inventory);
   @{$self->{inventory}} = keys %_; # uniq
-
-  $self->{outcomes} = \%outcomes;
-  $self->{frames_examineds} = \%frames_examineds;
 }
 
 1;
