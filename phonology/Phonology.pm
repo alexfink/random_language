@@ -555,7 +555,7 @@ sub generate_preliminary {
           # probability peaks, and has the right effect for some particular cases 
           # (e.g. lateral).
           if (!@by_families) {
-            my ($max_phone, $max_value) = ('', 0);
+            my ($max_phone, $max_value) = ('.' x @{$FS->{features}}, 0);
             for (my ($phone, $value) = each %{$family_inventories{$sit->{by_family}}}) {
               next if defined $f->{requires} and $phone !~ /^$requires$/;
               ($max_phone, $max_value) = ($phone, $value) if $value > $max_value;
@@ -602,6 +602,7 @@ sub generate_preliminary {
             delete $slot->{features}{$phone};
             if (defined $f->{slots}{$slot->{tag}}) {
               if ($r < $f->{slots}{$slot->{tag}}[0]) {
+                $rule{antieffects}{0} = '.' x @{$FS->{features}} unless defined $rule{antieffects}{0};
                 $phone = $FS->overwrite($phone, $rule{antieffects}{0});
               } elsif ($r < $f->{slots}{$slot->{tag}}[0] + $f->{slots}{$slot->{tag}}[1]) {
                 $phone = $FS->overwrite($phone, $rule{0}{effects});

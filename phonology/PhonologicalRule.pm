@@ -333,7 +333,7 @@ sub run {
           }
         } # $j
         
-#TODO: (proximal) reverse internally if necessary.
+        #TODO: (proximal) reverse internally if necessary.
         splice @$word, $i+$displ, 1, @effects;
         @surviving[$i+$displ] = scalar @effects;
       }
@@ -868,6 +868,7 @@ sub generate {
                     and substr($parsed_effect, $i, 1) eq substr($parsed_effect, $_, 1);
                 substr($requirements, $i, 1) = '.' if substr($parsed_effect, $i, 1) eq substr($requirements, $i, 1);
               }
+              $rule->{$target}{condition} = '.' x @{$FS->{features}} unless defined $rule->{$target}{condition};
               $rule->{$target}{condition} = $FS->intersect($rule->{$target}{condition}, $requirements);
               if (substr($parsed_effect, $_, 1) =~ /[<>]/) {
                 my $source = (substr($parsed_effect, $_, 1) eq '>') ? $target + 1 : $target - 1;
