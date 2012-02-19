@@ -50,7 +50,7 @@ sub dump_file {
         $rule->{$displ}{condition_humane} = $FS->feature_string($rule->{$displ}{condition}, 1);
       }
       for my $displ ($rule->indices('effects')) {
-        $rule->{$displ}{effects_humane} = $FS->feature_string($rule->{$displ}{effects}, 1);
+        $rule->{$displ}{effects_humane} = join ' | ', map $FS->feature_string($_, 1), split / /, $rule->{$displ}{effects};
       }
     }
     $pd->{phonology}[$_]{number} = $_ for 0..@{$pd->{phonology}}-1;
