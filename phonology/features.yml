@@ -1426,7 +1426,7 @@ marked:
     resolve: 
       "r {high 1": 1
 
-  # vowel lowering near uvulars
+  # vowel lowering near uvulars
   - condition: "dorsal +resonant -lateral -tap_or_trill, -high dorsal"
     except: {1: "dorsal +resonant -lateral -tap_or_trill"}
     prob: 0.657407 # raise when glide formation is in?
