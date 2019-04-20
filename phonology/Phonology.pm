@@ -545,7 +545,7 @@ sub generate_preliminary {
         if (defined $sit->{by_family} and rand() < $sit->{by_family_prob}) {
           for my $phone (keys %{$family_inventories{$sit->{by_family}}}) {
             next if defined $requires and !$FS->compatible($phone, $requires);
-            push @by_families, $phone if rand() < $sit->{each_family_prob} * 
+            push @by_families, $phone if rand() < $sit->{each_family_prob} *
                 sqrt($family_inventories{$sit->{by_family}}{$phone});
           }
           # If we didn't make the contrast anywhere on the first pass, introduce it on the
@@ -593,8 +593,9 @@ sub generate_preliminary {
         $generable_val[1][$fi] = [];
         
         for my $slot (@syllable_structure) {
-          my $r = rand(); 
-          while (my ($phone, $weight) = each %{$slot->{features}}) {
+          my $r = rand();
+          my %static_features = %{$slot->{features}};
+          while (my ($phone, $weight) = each %static_features) {
             $_ = $phone;
             s/u/./g;
             next unless $FS->compatible($_, $precondition);
@@ -618,7 +619,7 @@ sub generate_preliminary {
             } else {
               $slot->{features}{$phone} = $weight;
             }
-          } # each %{$slot->{features}}
+          } # each %static_features
         } # @syllable_structure
 
         for my $fam (split / /, $f->{families}) {
@@ -735,7 +736,7 @@ sub generate_preliminary {
 
   my @rule_tags;
   push @rule_tags, "stripping $_" for (0..@{$FS->{strippings}}-1);
-  push @rule_tags, "default $_" for keys %special_filling;
+  push @rule_tags, "default $_" for sort keys %special_filling;
   for my $i (0..@{$FS->{features}}) {
     push @rule_tags, "default $feature_at_position[$i-1]" unless $i <= 0 or defined $special_filling{$feature_at_position[$i-1]};
     push @rule_tags, @{$repair_rule_tags[$i]} if defined $repair_rule_tags[$i];
