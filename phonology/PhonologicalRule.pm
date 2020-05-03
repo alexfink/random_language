@@ -55,9 +55,11 @@ sub weighted_one_of {
   my $sum = 0; 
   $sum += $_[2*$_+1] for 0..@_/2-1;
   $sum = rand $sum;
-  while (@_) { 
-    my ($a, $b) = (shift, shift);
-    return $a if ($sum -= $b) < 0;
+  # Sort again, just in case the argument really was a hash
+  # (because it'll be randomly ordered, breaking determinism when the seed is constant).
+  my %distribution = @_;
+  for my $a (sort keys %distribution) {
+    return $a if ($sum - $distribution{$a}) < 0;
   }
 }
 
@@ -431,7 +433,7 @@ sub persistence_variants {
       }
     }
     my %pch = map(($_ => 1), @potential_conflicts);
-    @potential_conflicts = keys %pch; # uniq
+    @potential_conflicts = sort keys %pch; # uniq
 
     my @conflict_indices;
     for my $j (@potential_conflicts) {
@@ -827,10 +829,12 @@ sub generate {
     # (This is intended for marked single phoneme rules.  In particular, the last-resort deletion
     # that these rules once had is now no more.)
     my %resolutions;
-    %resolutions = %{$d->{resolve}} if defined %{$d->{resolve}};
+    %resolutions = %{$d->{resolve}} if defined $d->{resolve};
     $resolutions{'free 0'} = 1 unless keys %resolutions;
 
-    while (($_, my $weight) = each %resolutions) {
+    my @resolution_keys = sort keys %resolutions;
+    for (@resolution_keys) {
+      my $weight = $resolutions{$_};
       /^([^ ]*) +(.*)$/;
       my ($reskind, $arg) = ($1, $2);
 
@@ -1000,7 +1004,7 @@ sub generate {
         push @resolutions, $_->[0];
         push @weights, $_->[1] * $weight / $total_weight;
       }
-    } # each %resolutions
+    } # @resolution_keys
 
     # Record which split resolutions we will need to do.
     # Recursive splits don't in fact work, as this is currently implemented.
@@ -1110,7 +1114,7 @@ sub generate {
     $selected_rule = $selected_rule->reverse_rule();
   }
 
-  # Choose an application direction.  
+  # Choose an application direction.
   $selected_rule->{direction} = rand(2) >= 1.0 ? -1 : 1;
 
   # It's correct for extra condition rules to have no tag, so that they

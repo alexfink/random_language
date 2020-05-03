@@ -14,6 +14,8 @@ use strict;
 use YAML::Any;
 use CGI;
 
+use lib '.';
+
 use FeatureSystem;
 use PhoneSet;
 use PhonologicalRule;
@@ -22,7 +24,7 @@ use PhonologySynchronicState;
 use Transcription;
 use PhonologyDescriber;
 
-my $version = '0.3.1b';
+my $version = '0.3.2';
 my $credits = 'Gleb, a phonology generator, by Alex Fink' . 
               (' ' x (29 - length($version))) . # for a total length of 78
               "version $version";
@@ -142,7 +144,10 @@ if ($0 =~ /\.cgi$/) {
   $CGI = CGI->new;
 
   $use_html = 1;
-  # lazily not taking genuine query arguments for now
+  # lazily not taking query arguments for now, except for this one
+  if (defined $CGI->param('r') and ($CGI->param('r') =~ /^\-?[0-9]+$/)) {
+    $seed = $CGI->param('r');
+  }
   $show_inventory = $show_all = 1;
   $num_words = 30;
 
